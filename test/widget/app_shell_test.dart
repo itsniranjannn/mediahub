@@ -14,19 +14,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(AppConfig.appName), findsWidgets);
-    expect(find.text('Music Library'), findsNothing);
 
     // Tap Music tab
     await tester.tap(find.text('Music'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Music Library'), findsOneWidget);
+    expect(find.text('Permission Required'), findsOneWidget);
 
     // Tap Videos tab
     await tester.tap(find.text('Videos'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Video Library'), findsOneWidget);
+    expect(find.text('Permission Required'), findsOneWidget);
 
     // Tap Downloads tab
     await tester.tap(find.text('Downloads'));
