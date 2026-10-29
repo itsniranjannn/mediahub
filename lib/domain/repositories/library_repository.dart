@@ -25,4 +25,7 @@ abstract class LibraryRepository {
 
   /// Records a play event (updates lastPlayed and increments playCount).
   Future<void> recordPlay(String id);
+
+  /// Updates availability state for a media item.
+  Future<void> updateAvailability(String id, MediaAvailability availability);
 }

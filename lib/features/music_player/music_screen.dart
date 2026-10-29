@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
@@ -10,6 +11,7 @@ import '../../domain/models/media_item.dart';
 import '../../shared/widgets/empty_state_widget.dart';
 import '../../shared/widgets/media_item_tile.dart';
 import '../library/library_notifier.dart';
+import 'playback_notifier.dart';
 
 class MusicScreen extends ConsumerStatefulWidget {
   const MusicScreen({super.key});
@@ -20,6 +22,27 @@ class MusicScreen extends ConsumerStatefulWidget {
 
 class _MusicScreenState extends ConsumerState<MusicScreen> {
   final TextEditingController _searchController = TextEditingController();
+  bool _notificationPermissionRequested = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Listen for playback error snackbars
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.listenManual(playbackErrorStreamProvider, (previous, next) {
+        next.whenData((msg) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(msg),
+                backgroundColor: AppColors.error,
+              ),
+            );
+          }
+        });
+      });
+    });
+  }
 
   @override
   void dispose() {
@@ -27,10 +50,24 @@ class _MusicScreenState extends ConsumerState<MusicScreen> {
     super.dispose();
   }
 
+  Future<void> _requestNotificationPermissionOnce() async {
+    if (_notificationPermissionRequested) return;
+    _notificationPermissionRequested = true;
+    try {
+      // POST_NOTIFICATIONS is requested only when the first track plays
+      // so the user has immediate context: notifications display lockscreen/status bar playback controls.
+      // If denied, audio playback still continues normally without crashing.
+      await Permission.notification.request();
+    } catch (e) {
+      debugPrint('Notification permission request error: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(musicLibraryProvider);
     final notifier = ref.read(musicLibraryProvider.notifier);
+    final playbackNotifier = ref.read(playbackNotifierProvider.notifier);
 
     return Scaffold(
       appBar: AppBar(
@@ -77,7 +114,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> {
           ],
         ],
       ),
-      body: _buildBody(context, state, notifier),
+      body: _buildBody(context, state, notifier, playbackNotifier),
     );
   }
 
@@ -85,6 +122,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> {
     BuildContext context,
     LibraryState state,
     BaseLibraryNotifier notifier,
+    PlaybackNotifier playbackNotifier,
   ) {
     if (state.permissionState == MediaPermissionState.denied) {
       return Center(
@@ -188,9 +226,10 @@ class _MusicScreenState extends ConsumerState<MusicScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: AppSpacing.xxl24),
-              ElevatedButton(
+              ElevatedButton.icon(
                 onPressed: () => notifier.scanDevice(),
-                child: const Text('Retry'),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Try again'),
               ),
             ],
           ),
@@ -253,8 +292,27 @@ class _MusicScreenState extends ConsumerState<MusicScreen> {
                     final song = state.items[index];
                     return MediaItemTile(
                       item: song,
-                      onTap: () {
-                        // Player action in Task 3
+                      onTap: () async {
+                        await _requestNotificationPermissionOnce();
+                        await playbackNotifier.playTrack(song, state.items);
+                      },
+                      onPlayNext: () {
+                        playbackNotifier.playNext(song);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Playing next: ${song.title}'),
+                            duration: const Duration(seconds: 1),
+                          ),
+                        );
+                      },
+                      onAddToQueue: () {
+                        playbackNotifier.addToQueue(song);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Added to queue: ${song.title}'),
+                            duration: const Duration(seconds: 1),
+                          ),
+                        );
                       },
                     );
                   },

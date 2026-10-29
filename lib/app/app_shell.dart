@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../features/music_player/mini_player.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_spacing.dart';
 import 'theme/app_typography.dart';
@@ -27,10 +28,9 @@ class AppShell extends StatelessWidget {
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Reserved slot for future mini-player
-          const SizedBox(
+          // Persistent mini-player above the bottom nav
+          const MiniPlayer(
             key: ValueKey('mini_player_slot'),
-            height: 0,
           ),
           _CustomBottomNavBar(
             currentIndex: navigationShell.currentIndex,
@@ -158,8 +158,8 @@ class _CustomBottomNavBar extends StatelessWidget {
                         curve: MotionTokens.easeOut,
                         style: AppTypography.label.copyWith(
                           color: isSelected
-                              ? AppColors.primary
-                              : AppColors.textMuted,
+                                ? AppColors.primary
+                                : AppColors.textMuted,
                           fontWeight:
                               isSelected ? FontWeight.w600 : FontWeight.w500,
                         ),

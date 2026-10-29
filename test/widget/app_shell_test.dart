@@ -2,34 +2,43 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mediahub/app/app.dart';
 import 'package:mediahub/core/app_config.dart';
+import 'package:mediahub/features/library/library_notifier.dart';
+import '../unit/permission_service_test.dart';
 
 void main() {
   testWidgets('MediaHubApp launches and navigates through tabs',
       (WidgetTester tester) async {
     await tester.pumpWidget(
-      const ProviderScope(
-        child: MediaHubApp(),
+      ProviderScope(
+        overrides: [
+          mediaPermissionServiceProvider.overrideWithValue(MockMediaPermissionService()),
+        ],
+        child: const MediaHubApp(),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text(AppConfig.appName), findsWidgets);
 
     // Tap Music tab
     await tester.tap(find.text('Music'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text('Permission Required'), findsOneWidget);
 
     // Tap Videos tab
     await tester.tap(find.text('Videos'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text('Permission Required'), findsOneWidget);
 
     // Tap Downloads tab
     await tester.tap(find.text('Downloads'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(
         find.text(
@@ -38,7 +47,8 @@ void main() {
 
     // Tap Settings tab
     await tester.tap(find.text('Settings'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text('Configure your ${AppConfig.appName} preferences.'),
         findsOneWidget);

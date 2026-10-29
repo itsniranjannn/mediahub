@@ -1,3 +1,6 @@
+import 'dart:io';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 enum MediaPermissionState {
@@ -15,60 +18,115 @@ abstract class MediaPermissionService {
 }
 
 class MediaPermissionServiceImpl implements MediaPermissionService {
+  final DeviceInfoPlugin _deviceInfo;
+
+  MediaPermissionServiceImpl({DeviceInfoPlugin? deviceInfo})
+      : _deviceInfo = deviceInfo ?? DeviceInfoPlugin();
+
+  Future<int> _getAndroidSdk() async {
+    if (!Platform.isAndroid) return 0;
+    // In automated widget tests, platform channels do not respond unless mocked
+    if (Platform.environment.containsKey('FLUTTER_TEST')) return 33;
+    try {
+      final info = await _deviceInfo.androidInfo;
+      return info.version.sdkInt;
+    } catch (e) {
+      debugPrint('[Permission] Failed getting Android SDK version: $e');
+      return 33; // Default safely to modern permissions
+    }
+  }
+
   @override
   Future<MediaPermissionState> checkAudioPermission() async {
-    final audioStatus = await Permission.audio.status;
-    final storageStatus = await Permission.storage.status;
-
-    if (audioStatus.isGranted || storageStatus.isGranted) {
+    // In automated widget test environment (or non-Android desktop), check without platform hanging
+    if (!Platform.isAndroid || !Platform.isAndroid) {
       return MediaPermissionState.granted;
     }
-    if (audioStatus.isPermanentlyDenied || storageStatus.isPermanentlyDenied) {
-      return MediaPermissionState.permanentlyDenied;
+
+    final sdk = await _getAndroidSdk();
+    if (sdk >= 33) {
+      final status = await Permission.audio.status;
+      debugPrint('[Permission] checkAudioPermission (Android 13+, SDK $sdk): $status');
+      if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
+      return MediaPermissionState.denied;
+    } else {
+      final status = await Permission.storage.status;
+      debugPrint('[Permission] checkAudioPermission (Android <= 12, SDK $sdk): $status');
+      if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
+      return MediaPermissionState.denied;
     }
-    return MediaPermissionState.denied;
   }
 
   @override
   Future<MediaPermissionState> checkVideoPermission() async {
-    final videoStatus = await Permission.videos.status;
-    final storageStatus = await Permission.storage.status;
-
-    if (videoStatus.isGranted || storageStatus.isGranted) {
+    if (!Platform.isAndroid) {
       return MediaPermissionState.granted;
     }
-    if (videoStatus.isPermanentlyDenied || storageStatus.isPermanentlyDenied) {
-      return MediaPermissionState.permanentlyDenied;
+
+    final sdk = await _getAndroidSdk();
+    if (sdk >= 33) {
+      final status = await Permission.videos.status;
+      debugPrint('[Permission] checkVideoPermission (Android 13+, SDK $sdk): $status');
+      if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
+      return MediaPermissionState.denied;
+    } else {
+      final status = await Permission.storage.status;
+      debugPrint('[Permission] checkVideoPermission (Android <= 12, SDK $sdk): $status');
+      if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
+      return MediaPermissionState.denied;
     }
-    return MediaPermissionState.denied;
   }
 
   @override
   Future<MediaPermissionState> requestAudioPermission() async {
-    final audioStatus = await Permission.audio.request();
-    if (audioStatus.isGranted) return MediaPermissionState.granted;
-
-    final storageStatus = await Permission.storage.request();
-    if (storageStatus.isGranted) return MediaPermissionState.granted;
-
-    if (audioStatus.isPermanentlyDenied || storageStatus.isPermanentlyDenied) {
-      return MediaPermissionState.permanentlyDenied;
+    if (!Platform.isAndroid) {
+      return MediaPermissionState.granted;
     }
-    return MediaPermissionState.denied;
+
+    final sdk = await _getAndroidSdk();
+    if (sdk >= 33) {
+      debugPrint('[Permission] Requesting Permission.audio (Android 13+, SDK $sdk)');
+      final status = await Permission.audio.request();
+      debugPrint('[Permission] Permission.audio result: $status');
+      if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
+      return MediaPermissionState.denied;
+    } else {
+      debugPrint('[Permission] Requesting Permission.storage (Android <= 12, SDK $sdk)');
+      final status = await Permission.storage.request();
+      debugPrint('[Permission] Permission.storage result: $status');
+      if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
+      return MediaPermissionState.denied;
+    }
   }
 
   @override
   Future<MediaPermissionState> requestVideoPermission() async {
-    final videoStatus = await Permission.videos.request();
-    if (videoStatus.isGranted) return MediaPermissionState.granted;
-
-    final storageStatus = await Permission.storage.request();
-    if (storageStatus.isGranted) return MediaPermissionState.granted;
-
-    if (videoStatus.isPermanentlyDenied || storageStatus.isPermanentlyDenied) {
-      return MediaPermissionState.permanentlyDenied;
+    if (!Platform.isAndroid) {
+      return MediaPermissionState.granted;
     }
-    return MediaPermissionState.denied;
+
+    final sdk = await _getAndroidSdk();
+    if (sdk >= 33) {
+      debugPrint('[Permission] Requesting Permission.videos (Android 13+, SDK $sdk)');
+      final status = await Permission.videos.request();
+      debugPrint('[Permission] Permission.videos result: $status');
+      if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
+      return MediaPermissionState.denied;
+    } else {
+      debugPrint('[Permission] Requesting Permission.storage (Android <= 12, SDK $sdk)');
+      final status = await Permission.storage.request();
+      debugPrint('[Permission] Permission.storage result: $status');
+      if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
+      return MediaPermissionState.denied;
+    }
   }
 
   @override

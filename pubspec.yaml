@@ -40,7 +40,12 @@ dependencies:
   sqlite3_flutter_libs: ^0.6.0+eol
   permission_handler: ^13.0.2
   path_provider: ^2.1.6
-  on_audio_query_pluse: ^3.0.7
+  just_audio: ^0.10.6
+  audio_service: ^0.18.19
+  audio_session: ^0.2.4
+  video_player: ^2.14.1
+  wakelock_plus: ^1.8.2
+  device_info_plus: ^13.3.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

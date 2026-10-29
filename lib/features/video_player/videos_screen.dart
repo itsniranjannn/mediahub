@@ -10,6 +10,8 @@ import '../../domain/models/media_item.dart';
 import '../../shared/widgets/empty_state_widget.dart';
 import '../../shared/widgets/media_item_tile.dart';
 import '../library/library_notifier.dart';
+import 'video_player_notifier.dart';
+import 'video_player_screen.dart';
 
 class VideosScreen extends ConsumerStatefulWidget {
   const VideosScreen({super.key});
@@ -27,10 +29,19 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
     super.dispose();
   }
 
+  void _openPlayer(BuildContext context, MediaItem item) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => VideoPlayerScreen(item: item),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(videoLibraryProvider);
     final notifier = ref.read(videoLibraryProvider.notifier);
+    final progressListAsync = ref.watch(allVideoProgressStreamProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -73,7 +84,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           ],
         ],
       ),
-      body: _buildBody(context, state, notifier),
+      body: _buildBody(context, state, notifier, progressListAsync.value ?? []),
     );
   }
 
@@ -81,6 +92,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
     BuildContext context,
     LibraryState state,
     BaseLibraryNotifier notifier,
+    List<dynamic> progressList,
   ) {
     if (state.permissionState == MediaPermissionState.denied) {
       return Center(
@@ -184,15 +196,25 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: AppSpacing.xxl24),
-              ElevatedButton(
+              ElevatedButton.icon(
                 onPressed: () => notifier.scanDevice(),
-                child: const Text('Retry'),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Try again'),
               ),
             ],
           ),
         ),
       );
     }
+
+    // Build progress map
+    final progressMap = {for (var p in progressList) p.mediaId: p};
+
+    // Find items for "Continue watching"
+    final continueWatchingItems = state.items.where((item) {
+      final prog = progressMap[item.id];
+      return prog != null && prog.positionMs > 0;
+    }).toList();
 
     return Column(
       children: [
@@ -234,6 +256,97 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
             ),
           ),
         ),
+
+        // Continue watching horizontal row if available
+        if (continueWatchingItems.isNotEmpty && _searchController.text.isEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.lg16,
+              vertical: AppSpacing.xs4,
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.history_rounded, size: 20, color: AppColors.accent),
+                const SizedBox(width: AppSpacing.xs4),
+                Text(
+                  'Continue Watching',
+                  style: AppTypography.sectionTitle.copyWith(fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 100,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+              scrollDirection: Axis.horizontal,
+              itemCount: continueWatchingItems.length,
+              separatorBuilder: (context, index) => const SizedBox(width: AppSpacing.md12),
+              itemBuilder: (context, index) {
+                final item = continueWatchingItems[index];
+                final prog = progressMap[item.id];
+                final ratio = (prog != null && prog.durationMs > 0)
+                    ? (prog.positionMs / prog.durationMs).clamp(0.0, 1.0)
+                    : 0.0;
+
+                return GestureDetector(
+                  onTap: () => _openPlayer(context, item),
+                  child: Container(
+                    width: 140,
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceElevated,
+                      borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Container(
+                                color: Colors.black26,
+                                child: const Center(
+                                  child: Icon(Icons.movie_outlined, color: AppColors.accent, size: 28),
+                                ),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                left: 0,
+                                right: 0,
+                                child: LinearProgressIndicator(
+                                  value: ratio,
+                                  minHeight: 3,
+                                  backgroundColor: Colors.transparent,
+                                  valueColor: const AlwaysStoppedAnimation<Color>(AppColors.accent),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(AppSpacing.xs4),
+                          child: Text(
+                            item.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.metadata.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm8),
+        ],
+
         Expanded(
           child: state.items.isEmpty
               ? EmptyStateWidget(
@@ -247,11 +360,15 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
                   itemCount: state.items.length,
                   itemBuilder: (context, index) {
                     final video = state.items[index];
+                    final prog = progressMap[video.id];
+                    final ratio = (prog != null && prog.durationMs > 0)
+                        ? (prog.positionMs / prog.durationMs).clamp(0.0, 1.0)
+                        : null;
+
                     return MediaItemTile(
                       item: video,
-                      onTap: () {
-                        // Player action in Task 4
-                      },
+                      progress: ratio,
+                      onTap: () => _openPlayer(context, video),
                     );
                   },
                 ),

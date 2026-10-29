@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/permissions/media_permission_service.dart';
@@ -99,31 +100,53 @@ abstract class BaseLibraryNotifier extends Notifier<LibraryState> {
   }
 
   Future<void> requestPermission() async {
-    final newState = mediaType == MediaType.audio
-        ? await _permissionService.requestAudioPermission()
-        : await _permissionService.requestVideoPermission();
+    try {
+      final newState = mediaType == MediaType.audio
+          ? await _permissionService.requestAudioPermission()
+          : await _permissionService.requestVideoPermission();
 
-    state = state.copyWith(permissionState: newState);
+      debugPrint('[LibraryNotifier] Permission request result: $newState');
+      state = state.copyWith(permissionState: newState, errorMessage: null);
 
-    if (newState == MediaPermissionState.granted) {
-      state = state.copyWith(status: LibraryStatus.loading);
-      await scanDevice();
-      _subscribeToMediaItems();
+      if (newState == MediaPermissionState.granted) {
+        state = state.copyWith(status: LibraryStatus.loading);
+        await scanDevice();
+        _subscribeToMediaItems();
+      }
+    } catch (e, stack) {
+      debugPrint('[LibraryNotifier] Error in requestPermission: $e\n$stack');
+      state = state.copyWith(
+        status: LibraryStatus.error,
+        errorMessage: 'Unable to grant permission: $e',
+      );
     }
   }
 
   Future<void> openSettings() async {
-    await _permissionService.openSettings();
+    try {
+      await _permissionService.openSettings();
+    } catch (e) {
+      debugPrint('[LibraryNotifier] Error opening settings: $e');
+    }
   }
 
   Future<void> scanDevice() async {
-    if (state.permissionState != MediaPermissionState.granted) return;
+    if (state.permissionState != MediaPermissionState.granted) {
+      debugPrint('[LibraryNotifier] scanDevice skipped: permission is not granted (${state.permissionState})');
+      return;
+    }
 
-    state = state.copyWith(isScanning: true);
+    state = state.copyWith(isScanning: true, errorMessage: null);
     try {
+      debugPrint('[LibraryNotifier] Starting scanDeviceMedia()...');
       await _repository.scanDeviceMedia();
-    } catch (e) {
-      state = state.copyWith(errorMessage: 'Scanning failed: $e');
+      debugPrint('[LibraryNotifier] scanDeviceMedia() finished successfully.');
+    } catch (e, stack) {
+      debugPrint('[LibraryNotifier] scanDevice failed: $e\n$stack');
+      state = state.copyWith(
+        status: LibraryStatus.error,
+        errorMessage: 'Media scan failed: $e',
+      );
     } finally {
       state = state.copyWith(isScanning: false);
     }
