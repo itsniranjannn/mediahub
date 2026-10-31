@@ -69,11 +69,8 @@ class QueueController {
   }
 
   void reorderQueue(int oldIndex, int newIndex) {
-    if (oldIndex < 0 || oldIndex >= _queue.length || newIndex < 0 || newIndex > _queue.length) {
+    if (oldIndex < 0 || oldIndex >= _queue.length || newIndex < 0 || newIndex >= _queue.length) {
       return;
-    }
-    if (oldIndex < newIndex) {
-      newIndex -= 1;
     }
     final item = _queue.removeAt(oldIndex);
     _queue.insert(newIndex, item);
@@ -159,9 +156,24 @@ void main() {
       expect(controller.currentIndex, 1);
     });
 
-    test('reorderQueue updates positions and follows current item', () {
+    test('reorderQueue moves item 0 to 1, 1 to 0, and follows current item', () {
+      // 1. Move item 0 to 1
       controller.loadQueue([item1, item2, item3], startIndex: 0);
-      controller.reorderQueue(0, 3);
+      controller.reorderQueue(0, 1);
+      expect(controller.queue[0].id, '2');
+      expect(controller.queue[1].id, '1');
+      expect(controller.queue[2].id, '3');
+      expect(controller.currentIndex, 1);
+
+      // 2. Move item 1 to 0
+      controller.reorderQueue(1, 0);
+      expect(controller.queue[0].id, '1');
+      expect(controller.queue[1].id, '2');
+      expect(controller.queue[2].id, '3');
+      expect(controller.currentIndex, 0);
+
+      // 3. Move current item from 0 to 2
+      controller.reorderQueue(0, 2);
       expect(controller.queue[0].id, '2');
       expect(controller.queue[1].id, '3');
       expect(controller.queue[2].id, '1');

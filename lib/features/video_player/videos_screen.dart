@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/app_config.dart';
 import '../../core/permissions/media_permission_service.dart';
+import '../../core/widgets/artwork_thumbnail.dart';
 import '../../domain/models/media_item.dart';
 import '../../shared/widgets/empty_state_widget.dart';
 import '../../shared/widgets/media_item_tile.dart';
 import '../library/library_notifier.dart';
 import 'video_player_notifier.dart';
-import 'video_player_screen.dart';
 
 class VideosScreen extends ConsumerStatefulWidget {
   const VideosScreen({super.key});
@@ -30,11 +31,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
   }
 
   void _openPlayer(BuildContext context, MediaItem item) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => VideoPlayerScreen(item: item),
-      ),
-    );
+    context.push('/video_player', extra: item);
   }
 
   @override
@@ -94,6 +91,10 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
     BaseLibraryNotifier notifier,
     List<dynamic> progressList,
   ) {
+    if (state.permissionState == MediaPermissionState.checking) {
+      return const SizedBox.shrink();
+    }
+
     if (state.permissionState == MediaPermissionState.denied) {
       return Center(
         child: Padding(
@@ -218,6 +219,37 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
 
     return Column(
       children: [
+        if (state.permissionState == MediaPermissionState.limited)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.lg16,
+              vertical: AppSpacing.xs4,
+            ),
+            padding: const EdgeInsets.all(AppSpacing.md12),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceElevated,
+              borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+              border: Border.all(color: AppColors.divider),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline_rounded,
+                    color: AppColors.accent, size: 20),
+                const SizedBox(width: AppSpacing.sm8),
+                Expanded(
+                  child: Text(
+                    'You gave access to selected items only. To see all your media, grant full access in Settings.',
+                    style: AppTypography.metadata,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => notifier.openSettings(),
+                  child: const Text('Settings'),
+                ),
+              ],
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.lg16,
@@ -305,11 +337,11 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
                           child: Stack(
                             alignment: Alignment.center,
                             children: [
-                              Container(
-                                color: Colors.black26,
-                                child: const Center(
-                                  child: Icon(Icons.movie_outlined, color: AppColors.accent, size: 28),
-                                ),
+                              ArtworkThumbnail(
+                                uri: item.uri,
+                                size: 140,
+                                borderRadius: 0,
+                                placeholderIcon: Icons.movie_outlined,
                               ),
                               Positioned(
                                 bottom: 0,
@@ -328,7 +360,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
                         Padding(
                           padding: const EdgeInsets.all(AppSpacing.xs4),
                           child: Text(
-                            item.title,
+                            item.title.replaceAll(RegExp(r'\.[a-zA-Z0-9]{2,4}$'), ''),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: AppTypography.metadata.copyWith(
@@ -353,8 +385,8 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
                   icon: Icons.videocam_off_outlined,
                   title: 'No Videos Found',
                   message: state.searchQuery.isNotEmpty
-                      ? 'No videos matching "${state.searchQuery}".'
-                      : 'Tap the scan button in the top right to scan your device for video files.',
+                  ? 'No videos matching "${state.searchQuery}".'
+                  : 'Tap the scan button in the top right to scan your device for video files.',
                 )
               : ListView.builder(
                   itemCount: state.items.length,

@@ -72,4 +72,42 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
     expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
   });
+
+  testWidgets('Tapping the mini-player twice opens only one Now Playing sheet',
+      (tester) async {
+    int openCount = 0;
+    DateTime lastTap = DateTime.fromMillisecondsSinceEpoch(0);
+    bool isOpen = false;
+
+    void openSheet() {
+      final now = DateTime.now();
+      if (now.difference(lastTap).inMilliseconds < 400) return;
+      lastTap = now;
+      if (isOpen) return;
+      isOpen = true;
+      openCount++;
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: ElevatedButton(
+              onPressed: openSheet,
+              child: const Text('Tap Me'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Tap rapidly twice
+    await tester.tap(find.text('Tap Me'));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('Tap Me'), warnIfMissed: false);
+    await tester.pump();
+
+    // Debounce & single-open guard ensures sheet opened exactly once
+    expect(openCount, equals(1));
+  });
 }

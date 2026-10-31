@@ -4,7 +4,10 @@ import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/artwork_thumbnail.dart';
+import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/playback_state.dart' as domain;
+import '../library/media_context_menu.dart';
 import 'playback_notifier.dart';
 import 'queue_sheet.dart';
 
@@ -95,216 +98,324 @@ class _NowPlayingSheetState extends ConsumerState<NowPlayingSheet> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              // Artwork placeholder
-              Center(
-                child: Container(
-                  width: 280,
-                  height: 280,
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceElevated,
-                    borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.4),
-                        blurRadius: 16,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.music_note_rounded,
-                      size: 96,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                ),
-              ),
-
-              // Title & Artist
-              Column(
-                children: [
-                  Text(
-                    currentItem?.title ?? 'No track playing',
-                    style: AppTypography.screenTitle.copyWith(fontSize: 22),
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: AppSpacing.xs4),
-                  Text(
-                    currentItem?.artist ?? 'Unknown Artist',
-                    style: AppTypography.metadata.copyWith(fontSize: 16),
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-
-              // Slider & Tabular Figures Times
-              Column(
-                children: [
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 6,
-                      ),
-                      overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 14,
-                      ),
-                      activeTrackColor: AppColors.primary,
-                      inactiveTrackColor: AppColors.surfaceElevated,
-                      thumbColor: AppColors.primary,
-                    ),
-                    child: Slider(
-                      min: 0.0,
-                      max: maxDurationMs,
-                      value: sliderValue,
-                      onChanged: (val) {
-                        setState(() {
-                          _dragValue = val;
-                        });
-                      },
-                      onChangeEnd: (val) {
-                        notifier.seek(Duration(milliseconds: val.toInt()));
-                        setState(() {
-                          _dragValue = null;
-                        });
-                      },
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.sm8,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          formatDuration(
-                            Duration(milliseconds: sliderValue.toInt()),
-                          ),
-                          style: AppTypography.tabularFigures,
-                        ),
-                        Text(
-                          formatDuration(duration),
-                          style: AppTypography.tabularFigures,
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onVerticalDragEnd: (details) {
+          if (details.primaryVelocity != null && details.primaryVelocity! > 250) {
+            Navigator.of(context).pop();
+          }
+        },
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                // Artwork thumbnail with 20dp radius, soft shadow, and Hero
+                Center(
+                  child: Container(
+                    width: 280,
+                    height: 280,
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceElevated,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 24,
+                          offset: const Offset(0, 10),
+                          spreadRadius: 2,
                         ),
                       ],
                     ),
-                  ),
-                ],
-              ),
-
-              // Playback Controls Row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Shuffle button
-                  Semantics(
-                    label: playbackState.shuffle ? 'Shuffle enabled' : 'Shuffle disabled',
-                    button: true,
-                    child: IconButton(
-                      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      icon: Icon(
-                        Icons.shuffle_rounded,
-                        color: playbackState.shuffle
-                            ? AppColors.primary
-                            : AppColors.textMuted,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: Hero(
+                        tag: 'now_playing_artwork',
+                        child: currentItem != null
+                            ? ArtworkThumbnail(
+                                uri: currentItem.uri,
+                                size: 280,
+                                borderRadius: 20,
+                              )
+                            : const Center(
+                                child: Icon(
+                                  Icons.music_note_rounded,
+                                  size: 96,
+                                  color: AppColors.primary,
+                                ),
+                              ),
                       ),
-                      onPressed: () => notifier.toggleShuffle(),
                     ),
                   ),
+                ),
 
-                  // Previous button
-                  Semantics(
-                    label: 'Previous track',
-                    button: true,
-                    child: IconButton(
-                      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      icon: const Icon(
-                        Icons.skip_previous_rounded,
-                        size: 36,
-                        color: AppColors.textPrimary,
-                      ),
-                      onPressed: () => notifier.skipToPrevious(),
-                    ),
-                  ),
-
-                  // Play / Pause button
-                  Semantics(
-                    label: playbackState.isPlaying ? 'Pause' : 'Play',
-                    button: true,
-                    child: Container(
-                      width: 64,
-                      height: 64,
-                      decoration: const BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
-                      ),
+                // Title, Artist, & Favorite toggle (with animated scale)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Semantics(
+                      label: currentItem?.isFavorite ?? false
+                          ? 'Remove from favorites'
+                          : 'Add to favorites',
+                      button: true,
                       child: IconButton(
                         constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                        icon: Icon(
-                          playbackState.isPlaying
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                          size: 38,
-                          color: Colors.black,
+                        icon: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 160),
+                          transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
+                          child: Icon(
+                            currentItem?.isFavorite ?? false
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            key: ValueKey<bool>(currentItem?.isFavorite ?? false),
+                            color: currentItem?.isFavorite ?? false
+                                ? AppColors.error
+                                : AppColors.textSecondary,
+                          ),
                         ),
-                        onPressed: () {
-                          if (playbackState.isPlaying) {
-                            notifier.pause();
-                          } else {
-                            notifier.play();
-                          }
+                        onPressed: currentItem != null
+                            ? () {
+                                ref.read(libraryRepositoryProvider).toggleFavorite(currentItem.id);
+                              }
+                            : null,
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Text(
+                            currentItem?.title ?? 'No track playing',
+                            style: AppTypography.screenTitle.copyWith(fontSize: 22),
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: AppSpacing.xs4),
+                          Text(
+                            currentItem?.artist ?? 'Unknown Artist',
+                            style: AppTypography.metadata.copyWith(fontSize: 16),
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Semantics(
+                      label: 'More options',
+                      button: true,
+                      child: IconButton(
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                        icon: const Icon(Icons.more_vert_rounded),
+                        onPressed: currentItem != null
+                            ? () => MediaContextMenu.show(context, ref, currentItem)
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+
+                // Slider & Tabular Figures Times
+                Column(
+                  children: [
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 6,
+                        ),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 14,
+                        ),
+                        activeTrackColor: AppColors.primary,
+                        inactiveTrackColor: AppColors.surfaceElevated,
+                        thumbColor: AppColors.primary,
+                      ),
+                      child: Slider(
+                        min: 0.0,
+                        max: maxDurationMs,
+                        value: sliderValue,
+                        onChanged: (val) {
+                          setState(() {
+                            _dragValue = val;
+                          });
+                        },
+                        onChangeEnd: (val) {
+                          notifier.seek(Duration(milliseconds: val.toInt()));
+                          setState(() {
+                            _dragValue = null;
+                          });
                         },
                       ),
                     ),
-                  ),
-
-                  // Next button
-                  Semantics(
-                    label: 'Next track',
-                    button: true,
-                    child: IconButton(
-                      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      icon: const Icon(
-                        Icons.skip_next_rounded,
-                        size: 36,
-                        color: AppColors.textPrimary,
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.sm8,
                       ),
-                      onPressed: () => notifier.skipToNext(),
-                    ),
-                  ),
-
-                  // Repeat button
-                  Semantics(
-                    label: 'Repeat mode: ${playbackState.repeatMode.name}',
-                    button: true,
-                    child: IconButton(
-                      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      icon: Icon(
-                        playbackState.repeatMode == domain.PlaybackRepeatMode.one
-                            ? Icons.repeat_one_rounded
-                            : Icons.repeat_rounded,
-                        color: playbackState.repeatMode != domain.PlaybackRepeatMode.off
-                            ? AppColors.primary
-                            : AppColors.textMuted,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            formatDuration(
+                              Duration(milliseconds: sliderValue.toInt()),
+                            ),
+                            style: AppTypography.tabularFigures,
+                          ),
+                          Text(
+                            formatDuration(duration),
+                            style: AppTypography.tabularFigures,
+                          ),
+                        ],
                       ),
-                      onPressed: () => notifier.cycleRepeatMode(),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md12),
-            ],
+                  ],
+                ),
+
+                // Playback Controls Row
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Shuffle button with active dot indicator
+                    Semantics(
+                      label: playbackState.shuffle ? 'Shuffle enabled' : 'Shuffle disabled',
+                      button: true,
+                      child: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            IconButton(
+                              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                              icon: Icon(
+                                Icons.shuffle_rounded,
+                                color: playbackState.shuffle
+                                    ? AppColors.primary
+                                    : AppColors.textMuted,
+                              ),
+                              onPressed: () => notifier.toggleShuffle(),
+                            ),
+                            if (playbackState.shuffle)
+                              Positioned(
+                                bottom: 6,
+                                child: Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // Previous button (48dp touch target)
+                    Semantics(
+                      label: 'Previous track',
+                      button: true,
+                      child: IconButton(
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                        icon: const Icon(
+                          Icons.skip_previous_rounded,
+                          size: 36,
+                          color: AppColors.textPrimary,
+                        ),
+                        onPressed: () => notifier.skipToPrevious(),
+                      ),
+                    ),
+
+                    // Play / Pause button (64dp filled circle)
+                    Semantics(
+                      label: playbackState.isPlaying ? 'Pause' : 'Play',
+                      button: true,
+                      child: Container(
+                        width: 64,
+                        height: 64,
+                        decoration: const BoxDecoration(
+                          color: AppColors.primary,
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          constraints: const BoxConstraints(minWidth: 64, minHeight: 64),
+                          icon: Icon(
+                            playbackState.isPlaying
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            size: 38,
+                            color: Colors.black,
+                          ),
+                          onPressed: () {
+                            if (playbackState.isPlaying) {
+                              notifier.pause();
+                            } else {
+                              notifier.play();
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+
+                    // Next button (48dp touch target)
+                    Semantics(
+                      label: 'Next track',
+                      button: true,
+                      child: IconButton(
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                        icon: const Icon(
+                          Icons.skip_next_rounded,
+                          size: 36,
+                          color: AppColors.textPrimary,
+                        ),
+                        onPressed: () => notifier.skipToNext(),
+                      ),
+                    ),
+
+                    // Repeat button with active dot and repeat-one badge
+                    Semantics(
+                      label: 'Repeat mode: ${playbackState.repeatMode.name}',
+                      button: true,
+                      child: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            IconButton(
+                              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                              icon: Icon(
+                                playbackState.repeatMode == domain.PlaybackRepeatMode.one
+                                    ? Icons.repeat_one_rounded
+                                    : Icons.repeat_rounded,
+                                color: playbackState.repeatMode != domain.PlaybackRepeatMode.off
+                                    ? AppColors.primary
+                                    : AppColors.textMuted,
+                              ),
+                              onPressed: () => notifier.cycleRepeatMode(),
+                            ),
+                            if (playbackState.repeatMode != domain.PlaybackRepeatMode.off)
+                              Positioned(
+                                bottom: 6,
+                                child: Container(
+                                  width: 4,
+                                  height: 4,
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md12),
+              ],
+            ),
           ),
         ),
       ),

@@ -30,13 +30,16 @@ class PlaybackNotifier extends Notifier<domain.PlaybackState> {
   StreamSubscription<domain.PlaybackState>? _stateSub;
   Timer? _persistenceTimer;
   DateTime _lastSavedAt = DateTime.now();
+  bool _isDisposed = false;
 
   MusicAudioHandler get _handler => ref.read(audioHandlerProvider);
   PlaybackRepository get _repo => ref.read(playbackRepositoryProvider);
 
   @override
   domain.PlaybackState build() {
+    _isDisposed = false;
     ref.onDispose(() {
+      _isDisposed = true;
       _stateSub?.cancel();
       _persistenceTimer?.cancel();
     });
@@ -49,16 +52,20 @@ class PlaybackNotifier extends Notifier<domain.PlaybackState> {
   }
 
   Future<void> _init() async {
+    if (_isDisposed) return;
     // 1. Try restoring last session from DB
     final savedState = await _repo.loadLastPlaybackState();
+    if (_isDisposed) return;
     if (savedState != null && savedState.queue.isNotEmpty) {
       await _handler.restoreSession(savedState);
+      if (_isDisposed) return;
       state = _handler.getCurrentDomainState();
     }
 
     // 2. Listen to audio handler updates
     _stateSub?.cancel();
     _stateSub = _handler.domainStateStream.listen((newState) {
+      if (_isDisposed) return;
       final oldState = state;
       state = newState;
 
@@ -74,7 +81,9 @@ class PlaybackNotifier extends Notifier<domain.PlaybackState> {
 
     // 3. Periodic timer every ~10s while playing
     _persistenceTimer?.cancel();
+    if (_isDisposed) return;
     _persistenceTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (_isDisposed) return;
       if (state.isPlaying) {
         if (DateTime.now().difference(_lastSavedAt).inSeconds >= 9) {
           _persistCurrentState();
@@ -93,6 +102,9 @@ class PlaybackNotifier extends Notifier<domain.PlaybackState> {
   }
 
   // Playback actions
+  Future<void> loadQueue(List<domain_models.MediaItem> items, {int startIndex = 0, bool autoPlay = true}) =>
+      _handler.loadQueue(items, startIndex: startIndex, autoPlay: autoPlay);
+
   Future<void> playTrack(domain_models.MediaItem item, List<domain_models.MediaItem> allItems) async {
     int index = allItems.indexWhere((m) => m.id == item.id);
     if (index == -1) {
@@ -104,6 +116,7 @@ class PlaybackNotifier extends Notifier<domain.PlaybackState> {
 
   Future<void> play() => _handler.play();
   Future<void> pause() => _handler.pause();
+  Future<void> togglePlayPause() => state.isPlaying ? pause() : play();
   Future<void> seek(Duration pos) => _handler.seek(pos);
   Future<void> skipToNext() => _handler.skipToNext();
   Future<void> skipToPrevious() => _handler.skipToPrevious();

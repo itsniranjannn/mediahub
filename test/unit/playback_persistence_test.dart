@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' hide isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/data/database/app_database.dart';
@@ -30,6 +31,20 @@ void main() {
         durationMs: 215000,
         sizeBytes: 4096000,
         dateAdded: DateTime(2026, 2, 1, 10, 0),
+      );
+
+      await db.into(db.mediaItemsTable).insert(
+        MediaItemsTableCompanion.insert(
+          id: item.id,
+          uri: item.uri,
+          mediaType: item.mediaType.name,
+          title: item.title,
+          artist: Value(item.artist),
+          album: Value(item.album),
+          durationMs: item.durationMs,
+          sizeBytes: item.sizeBytes,
+          dateAdded: item.dateAdded,
+        ),
       );
 
       final stateToSave = PlaybackState(

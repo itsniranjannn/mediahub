@@ -124,10 +124,15 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
   }
 
   Future<void> _initPlayer() async {
-    // 1. Pause any background music playback via AudioSession
+    // 1. Explicitly pause music audio handler & request audio focus
     try {
-      AudioSession.instance.then((session) => session.setActive(true)).ignore();
-    } catch (_) {}
+      debugPrint('[VideoPlayer] Starting video, paused music playback');
+      await ref.read(audioHandlerProvider).pause();
+      final session = await AudioSession.instance;
+      await session.setActive(true);
+    } catch (e) {
+      debugPrint('[VideoPlayer] Error pausing music playback: $e');
+    }
 
     // Enter immersive mode
     try {
