@@ -1,57 +1,70 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'app_colors.dart';
 
-// Note: Fonts should be bundled as assets before release for offline use.
+// Note: Inter font is bundled as a local asset for reliable offline use.
 abstract class AppTypography {
-  static TextStyle get screenTitle => GoogleFonts.inter(
+  static TextStyle get screenTitle => const TextStyle(
+        fontFamily: 'Inter',
         fontSize: 26,
         fontWeight: FontWeight.w600,
         color: AppColors.textPrimary,
       );
 
-  static TextStyle get sectionTitle => GoogleFonts.inter(
+  static TextStyle get sectionTitle => const TextStyle(
+        fontFamily: 'Inter',
         fontSize: 19,
         fontWeight: FontWeight.w600,
         color: AppColors.textPrimary,
       );
 
-  static TextStyle get playerTitle => GoogleFonts.inter(
+  static TextStyle get playerTitle => const TextStyle(
+        fontFamily: 'Inter',
         fontSize: 22,
         fontWeight: FontWeight.w600,
         color: AppColors.textPrimary,
       );
 
-  static TextStyle get body => GoogleFonts.inter(
+  static TextStyle get body => const TextStyle(
+        fontFamily: 'Inter',
         fontSize: 15,
         fontWeight: FontWeight.w400,
         color: AppColors.textPrimary,
       );
 
-  static TextStyle get metadata => GoogleFonts.inter(
+  static TextStyle get metadata => const TextStyle(
+        fontFamily: 'Inter',
         fontSize: 13,
         fontWeight: FontWeight.w400,
         color: AppColors.textSecondary,
       );
 
-  static TextStyle get label => GoogleFonts.inter(
+  static TextStyle get label => const TextStyle(
+        fontFamily: 'Inter',
         fontSize: 12,
         fontWeight: FontWeight.w500,
         color: AppColors.textMuted,
       );
 
   /// Tabular figures style helper for time/progress text.
-  static TextStyle get tabularFigures => GoogleFonts.inter(
+  static TextStyle get tabularFigures => const TextStyle(
+        fontFamily: 'Inter',
         fontSize: 13,
         fontWeight: FontWeight.w400,
         color: AppColors.textSecondary,
-        fontFeatures: const [FontFeature.tabularFigures()],
+        fontFeatures: [FontFeature.tabularFigures()],
+      );
+
+  static TextStyle get caption => const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 11,
+        fontWeight: FontWeight.w400,
+        color: AppColors.textMuted,
       );
 
   static TextTheme get textTheme => TextTheme(
-        headlineLarge: screenTitle,
-        headlineMedium: playerTitle,
+        headlineMedium: screenTitle,
         titleLarge: sectionTitle,
+        titleMedium: playerTitle,
         bodyLarge: body,
         bodyMedium: metadata,
         labelMedium: label,

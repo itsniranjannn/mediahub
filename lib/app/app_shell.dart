@@ -23,20 +23,31 @@ class AppShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: navigationShell,
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Persistent mini-player above the bottom nav
-          const MiniPlayer(
-            key: ValueKey('mini_player_slot'),
-          ),
-          _CustomBottomNavBar(
-            currentIndex: navigationShell.currentIndex,
-            onTap: _onTap,
-          ),
-        ],
+    // Predictive back / Back navigation handling
+    // If not on Home (index 0), back button goes to Home
+    // If already on Home, back exits app
+    return PopScope(
+      canPop: navigationShell.currentIndex == 0,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && navigationShell.currentIndex != 0) {
+          _onTap(0);
+        }
+      },
+      child: Scaffold(
+        body: navigationShell,
+        bottomNavigationBar: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Persistent mini-player above the bottom nav
+            const MiniPlayer(
+              key: ValueKey('mini_player_slot'),
+            ),
+            _CustomBottomNavBar(
+              currentIndex: navigationShell.currentIndex,
+              onTap: _onTap,
+            ),
+          ],
+        ),
       ),
     );
   }

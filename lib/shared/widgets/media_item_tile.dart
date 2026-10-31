@@ -3,6 +3,7 @@ import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/artwork_thumbnail.dart';
 import '../../domain/models/media_item.dart';
 
 class MediaItemTile extends StatelessWidget {
@@ -25,8 +26,18 @@ class MediaItemTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final isVideo = item.mediaType == MediaType.video;
 
+    final displayTitle = isVideo
+        ? item.title.replaceAll(RegExp(r'\.[a-zA-Z0-9]{2,4}$'), '')
+        : item.title;
+
+    final videoInfo = item.width != null && item.height != null && item.width! > 0 && item.height! > 0
+        ? '${item.width}x${item.height}'
+        : (item.durationMs > 0
+            ? formatDuration(Duration(milliseconds: item.durationMs))
+            : 'Video');
+
     return Semantics(
-      label: '${item.title}, ${item.artist ?? 'Unknown artist'}',
+      label: '$displayTitle, ${item.artist ?? 'Unknown artist'}',
       button: true,
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(
@@ -37,18 +48,11 @@ class MediaItemTile extends StatelessWidget {
         leading: Stack(
           alignment: Alignment.bottomCenter,
           children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: AppColors.surfaceElevated,
-                borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-              ),
-              child: Icon(
-                isVideo ? Icons.movie_outlined : Icons.music_note_rounded,
-                color: isVideo ? AppColors.accent : AppColors.primary,
-                size: 24,
-              ),
+            ArtworkThumbnail(
+              uri: item.uri,
+              size: 48,
+              borderRadius: AppSpacing.buttonRadius,
+              placeholderIcon: isVideo ? Icons.movie_outlined : Icons.music_note_rounded,
             ),
             if (isVideo && progress != null && progress! > 0)
               ClipRRect(
@@ -66,14 +70,14 @@ class MediaItemTile extends StatelessWidget {
           ],
         ),
         title: Text(
-          item.title,
+          displayTitle,
           style: AppTypography.body,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
           isVideo
-              ? '${formatFileSize(item.sizeBytes)} • ${item.artist ?? 'Local Video'}'
+              ? '$videoInfo • ${formatFileSize(item.sizeBytes)}'
               : (item.artist ?? 'Unknown Artist'),
           style: AppTypography.metadata,
           maxLines: 1,
@@ -107,24 +111,12 @@ class MediaItemTile extends StatelessWidget {
                   if (onPlayNext != null)
                     const PopupMenuItem(
                       value: 'play_next',
-                      child: Row(
-                        children: [
-                          Icon(Icons.playlist_play_rounded, size: 20),
-                          SizedBox(width: 8),
-                          Text('Play next'),
-                        ],
-                      ),
+                      child: Text('Play next'),
                     ),
                   if (onAddToQueue != null)
                     const PopupMenuItem(
                       value: 'add_to_queue',
-                      child: Row(
-                        children: [
-                          Icon(Icons.queue_music_rounded, size: 20),
-                          SizedBox(width: 8),
-                          Text('Add to queue'),
-                        ],
-                      ),
+                      child: Text('Add to queue'),
                     ),
                 ],
               ),
