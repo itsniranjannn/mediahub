@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 enum MediaPermissionState {
+  checking,
   granted,
+  limited,
   denied,
   permanentlyDenied,
 }
@@ -14,6 +16,7 @@ abstract class MediaPermissionService {
   Future<MediaPermissionState> checkVideoPermission();
   Future<MediaPermissionState> requestAudioPermission();
   Future<MediaPermissionState> requestVideoPermission();
+  Future<bool> isVisualUserSelected();
   Future<bool> openSettings();
 }
 
@@ -37,9 +40,22 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
   }
 
   @override
+  Future<bool> isVisualUserSelected() async {
+    if (!Platform.isAndroid || Platform.environment.containsKey('FLUTTER_TEST')) {
+      return false;
+    }
+    final sdk = await _getAndroidSdk();
+    if (sdk >= 34) {
+      final status = await Permission.photos.status;
+      final videoStatus = await Permission.videos.status;
+      return status.isLimited || videoStatus.isLimited;
+    }
+    return false;
+  }
+
+  @override
   Future<MediaPermissionState> checkAudioPermission() async {
-    // In automated widget test environment (or non-Android desktop), check without platform hanging
-    if (!Platform.isAndroid || !Platform.isAndroid) {
+    if (!Platform.isAndroid) {
       return MediaPermissionState.granted;
     }
 
@@ -48,12 +64,14 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
       final status = await Permission.audio.status;
       debugPrint('[Permission] checkAudioPermission (Android 13+, SDK $sdk): $status');
       if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isLimited) return MediaPermissionState.limited;
       if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
       return MediaPermissionState.denied;
     } else {
       final status = await Permission.storage.status;
       debugPrint('[Permission] checkAudioPermission (Android <= 12, SDK $sdk): $status');
       if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isLimited) return MediaPermissionState.limited;
       if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
       return MediaPermissionState.denied;
     }
@@ -70,12 +88,14 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
       final status = await Permission.videos.status;
       debugPrint('[Permission] checkVideoPermission (Android 13+, SDK $sdk): $status');
       if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isLimited) return MediaPermissionState.limited;
       if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
       return MediaPermissionState.denied;
     } else {
       final status = await Permission.storage.status;
       debugPrint('[Permission] checkVideoPermission (Android <= 12, SDK $sdk): $status');
       if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isLimited) return MediaPermissionState.limited;
       if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
       return MediaPermissionState.denied;
     }
@@ -93,6 +113,7 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
       final status = await Permission.audio.request();
       debugPrint('[Permission] Permission.audio result: $status');
       if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isLimited) return MediaPermissionState.limited;
       if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
       return MediaPermissionState.denied;
     } else {
@@ -100,6 +121,7 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
       final status = await Permission.storage.request();
       debugPrint('[Permission] Permission.storage result: $status');
       if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isLimited) return MediaPermissionState.limited;
       if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
       return MediaPermissionState.denied;
     }
@@ -117,6 +139,7 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
       final status = await Permission.videos.request();
       debugPrint('[Permission] Permission.videos result: $status');
       if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isLimited) return MediaPermissionState.limited;
       if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
       return MediaPermissionState.denied;
     } else {
@@ -124,6 +147,7 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
       final status = await Permission.storage.request();
       debugPrint('[Permission] Permission.storage result: $status');
       if (status.isGranted) return MediaPermissionState.granted;
+      if (status.isLimited) return MediaPermissionState.limited;
       if (status.isPermanentlyDenied) return MediaPermissionState.permanentlyDenied;
       return MediaPermissionState.denied;
     }

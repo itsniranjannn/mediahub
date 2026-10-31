@@ -128,4 +128,46 @@ class MediaItem {
         isFavorite,
         availability,
       ]);
+
+  Map<String, dynamic> toJsonMap() {
+    return {
+      'id': id,
+      'uri': uri,
+      'mediaType': mediaType.name,
+      'title': title,
+      'artist': artist,
+      'album': album,
+      'durationMs': durationMs,
+      'sizeBytes': sizeBytes,
+      'format': format,
+      'width': width,
+      'height': height,
+      'dateAdded': dateAdded.toIso8601String(),
+      'lastPlayed': lastPlayed?.toIso8601String(),
+      'playCount': playCount,
+      'isFavorite': isFavorite,
+      'availability': availability.name,
+    };
+  }
+
+  factory MediaItem.fromJsonMap(Map<String, dynamic> map) {
+    return MediaItem(
+      id: map['id'] as String,
+      uri: map['uri'] as String,
+      mediaType: MediaType.values.firstWhere((e) => e.name == map['mediaType'], orElse: () => MediaType.audio),
+      title: map['title'] as String,
+      artist: map['artist'] as String?,
+      album: map['album'] as String?,
+      durationMs: map['durationMs'] as int? ?? 0,
+      sizeBytes: map['sizeBytes'] as int? ?? 0,
+      format: map['format'] as String?,
+      width: map['width'] as int?,
+      height: map['height'] as int?,
+      dateAdded: map['dateAdded'] != null ? DateTime.parse(map['dateAdded'] as String) : DateTime.now(),
+      lastPlayed: map['lastPlayed'] != null ? DateTime.parse(map['lastPlayed'] as String) : null,
+      playCount: map['playCount'] as int? ?? 0,
+      isFavorite: map['isFavorite'] as bool? ?? false,
+      availability: MediaAvailability.values.firstWhere((e) => e.name == map['availability'], orElse: () => MediaAvailability.available),
+    );
+  }
 }

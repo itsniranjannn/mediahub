@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/permissions/media_permission_service.dart';
@@ -10,6 +10,68 @@ import '../../domain/repositories/library_repository.dart';
 final mediaPermissionServiceProvider = Provider<MediaPermissionService>((ref) {
   return MediaPermissionServiceImpl();
 });
+
+final audioPermissionStateProvider = NotifierProvider<AudioPermissionNotifier, MediaPermissionState>(() {
+  return AudioPermissionNotifier();
+});
+
+final videoPermissionStateProvider = NotifierProvider<VideoPermissionNotifier, MediaPermissionState>(() {
+  return VideoPermissionNotifier();
+});
+
+class AudioPermissionNotifier extends Notifier<MediaPermissionState> with WidgetsBindingObserver {
+  @override
+  MediaPermissionState build() {
+    WidgetsBinding.instance.addObserver(this);
+    ref.onDispose(() => WidgetsBinding.instance.removeObserver(this));
+    Future.microtask(() => checkPermission());
+    return MediaPermissionState.checking;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      checkPermission();
+    }
+  }
+
+  Future<void> checkPermission() async {
+    final service = ref.read(mediaPermissionServiceProvider);
+    final result = await service.checkAudioPermission();
+    state = result;
+  }
+
+  void updateState(MediaPermissionState newState) {
+    state = newState;
+  }
+}
+
+class VideoPermissionNotifier extends Notifier<MediaPermissionState> with WidgetsBindingObserver {
+  @override
+  MediaPermissionState build() {
+    WidgetsBinding.instance.addObserver(this);
+    ref.onDispose(() => WidgetsBinding.instance.removeObserver(this));
+    Future.microtask(() => checkPermission());
+    return MediaPermissionState.checking;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      checkPermission();
+    }
+  }
+
+  Future<void> checkPermission() async {
+    final service = ref.read(mediaPermissionServiceProvider);
+    final result = await service.checkVideoPermission();
+    state = result;
+  }
+
+  void updateState(MediaPermissionState newState) {
+    state = newState;
+  }
+}
 
 enum LibraryStatus { initial, loading, success, error }
 
@@ -71,13 +133,29 @@ abstract class BaseLibraryNotifier extends Notifier<LibraryState> {
       _subscription?.cancel();
     });
 
-    Future.microtask(() => checkPermissionAndInit());
+    final permState = mediaType == MediaType.audio
+        ? ref.watch(audioPermissionStateProvider)
+        : ref.watch(videoPermissionStateProvider);
 
-    return const LibraryState(
-      permissionState: MediaPermissionState.denied,
-      status: LibraryStatus.initial,
-      items: [],
+    Future.microtask(() => _handlePermissionChange(permState));
+
+    return LibraryState(
+      permissionState: permState,
+      status: (permState == MediaPermissionState.granted || permState == MediaPermissionState.limited)
+          ? LibraryStatus.loading
+          : (permState == MediaPermissionState.checking ? LibraryStatus.initial : LibraryStatus.success),
+      items: const [],
     );
+  }
+
+  void _handlePermissionChange(MediaPermissionState permState) {
+    state = state.copyWith(permissionState: permState);
+    if (permState == MediaPermissionState.granted || permState == MediaPermissionState.limited) {
+      if (_subscription == null) {
+        state = state.copyWith(status: LibraryStatus.loading);
+        _subscribeToMediaItems();
+      }
+    }
   }
 
   Future<void> checkPermissionAndInit() async {
@@ -85,9 +163,15 @@ abstract class BaseLibraryNotifier extends Notifier<LibraryState> {
         ? await _permissionService.checkAudioPermission()
         : await _permissionService.checkVideoPermission();
 
-    if (permState == MediaPermissionState.granted) {
+    if (mediaType == MediaType.audio) {
+      ref.read(audioPermissionStateProvider.notifier).updateState(permState);
+    } else {
+      ref.read(videoPermissionStateProvider.notifier).updateState(permState);
+    }
+
+    if (permState == MediaPermissionState.granted || permState == MediaPermissionState.limited) {
       state = state.copyWith(
-        permissionState: MediaPermissionState.granted,
+        permissionState: permState,
         status: LibraryStatus.loading,
       );
       _subscribeToMediaItems();
@@ -105,10 +189,16 @@ abstract class BaseLibraryNotifier extends Notifier<LibraryState> {
           ? await _permissionService.requestAudioPermission()
           : await _permissionService.requestVideoPermission();
 
+      if (mediaType == MediaType.audio) {
+        ref.read(audioPermissionStateProvider.notifier).updateState(newState);
+      } else {
+        ref.read(videoPermissionStateProvider.notifier).updateState(newState);
+      }
+
       debugPrint('[LibraryNotifier] Permission request result: $newState');
       state = state.copyWith(permissionState: newState, errorMessage: null);
 
-      if (newState == MediaPermissionState.granted) {
+      if (newState == MediaPermissionState.granted || newState == MediaPermissionState.limited) {
         state = state.copyWith(status: LibraryStatus.loading);
         await scanDevice();
         _subscribeToMediaItems();
@@ -131,7 +221,7 @@ abstract class BaseLibraryNotifier extends Notifier<LibraryState> {
   }
 
   Future<void> scanDevice() async {
-    if (state.permissionState != MediaPermissionState.granted) {
+    if (state.permissionState != MediaPermissionState.granted && state.permissionState != MediaPermissionState.limited) {
       debugPrint('[LibraryNotifier] scanDevice skipped: permission is not granted (${state.permissionState})');
       return;
     }

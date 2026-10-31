@@ -25,6 +25,9 @@ class MockMediaPermissionService implements MediaPermissionService {
   }
 
   @override
+  Future<bool> isVisualUserSelected() async => false;
+
+  @override
   Future<bool> openSettings() async {
     settingsOpened = true;
     return true;
