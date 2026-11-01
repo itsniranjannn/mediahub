@@ -9,6 +9,24 @@ import 'url_policy.dart';
 
 typedef DnsResolver = Future<List<InternetAddress>> Function(String host);
 
+class SafeStreamResponse {
+  final int statusCode;
+  final String reasonPhrase;
+  final HttpHeaders headers;
+  final Uri finalUri;
+  final Stream<List<int>> body;
+  final void Function() close;
+
+  const SafeStreamResponse({
+    required this.statusCode,
+    required this.reasonPhrase,
+    required this.headers,
+    required this.finalUri,
+    required this.body,
+    required this.close,
+  });
+}
+
 class SafeHttpResponse {
   final int statusCode;
   final String reasonPhrase;
@@ -63,7 +81,44 @@ class SafeHttpClient {
 
   /// Performs a secure request with DNS pinning, manual redirect handling,
   /// IP verification on each hop, and body size limits.
+  /// Default maxBodySize is 1 MB so it can never buffer large bodies.
   Future<SafeHttpResponse> request(
+    Uri initialUri, {
+    String method = 'GET',
+    Map<String, String>? headers,
+    List<int>? body,
+    int? maxBodySize = 1024 * 1024,
+  }) async {
+    final streamResponse = await openStream(
+      initialUri,
+      method: method,
+      headers: headers,
+      body: body,
+      maxBodySize: maxBodySize,
+    );
+
+    final bodyBuilder = BytesBuilder(copy: false);
+    try {
+      await for (final chunk in streamResponse.body) {
+        bodyBuilder.add(chunk);
+      }
+    } finally {
+      streamResponse.close();
+    }
+
+    return SafeHttpResponse(
+      statusCode: streamResponse.statusCode,
+      reasonPhrase: streamResponse.reasonPhrase,
+      headers: streamResponse.headers,
+      bodyBytes: bodyBuilder.takeBytes(),
+      finalUri: streamResponse.finalUri,
+    );
+  }
+
+  /// Opens a streaming connection with DNS pinning, manual redirect handling,
+  /// IP verification on each hop, arriving byte limit enforcement, and an idle
+  /// chunk timeout of 20 seconds.
+  Future<SafeStreamResponse> openStream(
     Uri initialUri, {
     String method = 'GET',
     Map<String, String>? headers,
@@ -146,15 +201,13 @@ class SafeHttpClient {
       // 3. Setup HttpClient with custom connectionFactory pinned to the validated IP
       final client = HttpClient(context: _customSecurityContext);
       client.findProxy = (uri) => 'DIRECT'; // Prevent system proxy bypass
-      // Ensure badCertificateCallback is NOT set (strict TLS validation)
-      client.badCertificateCallback = null;
+      client.badCertificateCallback = null; // Strict certificate validation
       client.connectionTimeout = connectionTimeout * addresses.length;
       client.autoUncompress = false; // autoUncompress is off
 
       client.connectionFactory = (uri, proxyHost, proxyPort) {
         final completer = Completer<Socket>();
 
-        // Try validated addresses in order; on failure try the next validated address
         Future<void> tryConnect(int index) async {
           if (index >= addresses.length) {
             if (!completer.isCompleted) {
@@ -171,9 +224,9 @@ class SafeHttpClient {
             try {
               final secureSocket = await SecureSocket.secure(
                 rawSocket,
-                host: uri.host, // SNI and certificate hostname matching with original host
+                host: uri.host,
                 context: _customSecurityContext ?? SecurityContext.defaultContext,
-                onBadCertificate: null, // strict certificate validation
+                onBadCertificate: null,
               );
               if (!completer.isCompleted) {
                 completer.complete(secureSocket);
@@ -242,6 +295,10 @@ class SafeHttpClient {
       // Check redirect codes (301, 302, 303, 307, 308)
       final status = httpResponse.statusCode;
       if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+        // Drain redirect body or close connection cleanly
+        try {
+          await httpResponse.drain().timeout(const Duration(seconds: 2));
+        } catch (_) {}
         client.close(force: true);
 
         redirectCount++;
@@ -285,7 +342,6 @@ class SafeHttpClient {
           );
         }
 
-        // Switch method to GET on 303 or on 301/302 for POST
         if (status == 303 || ((status == 301 || status == 302) && method.toUpperCase() == 'POST')) {
           method = 'GET';
           body = null;
@@ -299,43 +355,141 @@ class SafeHttpClient {
       final requestedRange = activeHeaders[HttpHeaders.rangeHeader];
       if (requestedRange != null && requestedRange.trim() == 'bytes=0-0' && status == 200) {
         client.close(force: true);
-        return SafeHttpResponse(
+        return SafeStreamResponse(
           statusCode: 200,
           reasonPhrase: httpResponse.reasonPhrase,
           headers: httpResponse.headers,
-          bodyBytes: const [],
           finalUri: normalizedUri,
+          body: const Stream.empty(),
+          close: () {},
         );
       }
 
-      // Read response body with size limit
-      final bodyBuilder = BytesBuilder(copy: false);
-      try {
-        await for (final chunk in httpResponse.timeout(readTimeout)) {
-          bodyBuilder.add(chunk);
-          if (maxBodySize != null && bodyBuilder.length > maxBodySize) {
-            client.close(force: true);
-            DiagnosticsService.instance.logEvent('safe_http_blocked', {
-              'code': 'max_body_size_exceeded',
-              'host': normalizedUri.host,
-            });
-            throw SafeHttpClientException(
-              'Response body exceeded maximum allowed limit of $maxBodySize bytes.',
-              code: 'max_body_size_exceeded',
-              host: normalizedUri.host,
-            );
-          }
-        }
-      } finally {
-        client.close();
+      // Build streaming response with chunk idle timeout (20s) and maxBodySize enforcement
+      final bodyController = StreamController<List<int>>();
+      int receivedBytes = 0;
+      bool isClosed = false;
+      bool sizeLimitExceeded = false;
+      StreamSubscription<List<int>>? subscription;
+      Timer? idleTimer;
+
+      void cancelIdleTimer() {
+        idleTimer?.cancel();
+        idleTimer = null;
       }
 
-      return SafeHttpResponse(
+      void resetIdleTimer() {
+        cancelIdleTimer();
+        if (!isClosed) {
+          idleTimer = Timer(const Duration(seconds: 20), () {
+            if (!isClosed) {
+              isClosed = true;
+              client.close(force: true);
+              subscription?.cancel();
+              final err = SafeHttpClientException(
+                'Stream stalled: no data received for 20 seconds.',
+                code: 'connection_error',
+                host: normalizedUri.host,
+              );
+              if (!bodyController.isClosed) {
+                bodyController.addError(err);
+                bodyController.close();
+              }
+            }
+          });
+        }
+      }
+
+      void doClose({bool force = false}) {
+        if (!isClosed) {
+          isClosed = true;
+          cancelIdleTimer();
+          subscription?.cancel();
+          client.close(force: force);
+        }
+      }
+
+      bodyController.onListen = () {
+        resetIdleTimer();
+        subscription = httpResponse.listen(
+          (chunk) {
+            if (sizeLimitExceeded || isClosed) return;
+            resetIdleTimer();
+            receivedBytes += chunk.length;
+            if (maxBodySize != null && receivedBytes > maxBodySize) {
+              sizeLimitExceeded = true;
+              isClosed = true;
+              cancelIdleTimer();
+              final err = SafeHttpClientException(
+                'Response body exceeded maximum allowed limit of $maxBodySize bytes.',
+                code: 'max_body_size_exceeded',
+                host: normalizedUri.host,
+              );
+              if (!bodyController.isClosed) {
+                bodyController.addError(err);
+                bodyController.close();
+              }
+              final sub = subscription;
+              subscription = null;
+              sub?.cancel();
+              client.close(force: true);
+              return;
+            }
+            if (!bodyController.isClosed) {
+              bodyController.add(chunk);
+            }
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            if (sizeLimitExceeded) return;
+            if (isClosed) return;
+            isClosed = true;
+            cancelIdleTimer();
+            if (!bodyController.isClosed) {
+              final err = (error is HttpException || error is SocketException)
+                  ? SafeHttpClientException(
+                      'Connection error while receiving stream data: $error',
+                      code: 'connection_error',
+                      host: normalizedUri.host,
+                    )
+                  : error;
+              bodyController.addError(err, stackTrace);
+              bodyController.close();
+            }
+            subscription?.cancel();
+            client.close(force: true);
+          },
+          onDone: () {
+            if (isClosed) return;
+            doClose(force: false);
+            if (!bodyController.isClosed) {
+              bodyController.close();
+            }
+          },
+          cancelOnError: true,
+        );
+      };
+
+      bodyController.onPause = () {
+        subscription?.pause();
+      };
+
+      bodyController.onResume = () {
+        subscription?.resume();
+      };
+
+      bodyController.onCancel = () {
+        if (!sizeLimitExceeded) {
+          doClose(force: true);
+        }
+      };
+
+      return SafeStreamResponse(
         statusCode: httpResponse.statusCode,
         reasonPhrase: httpResponse.reasonPhrase,
         headers: httpResponse.headers,
-        bodyBytes: bodyBuilder.takeBytes(),
         finalUri: normalizedUri,
+        body: bodyController.stream,
+        close: () => doClose(force: true),
       );
     }
   }
