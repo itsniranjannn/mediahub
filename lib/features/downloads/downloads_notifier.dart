@@ -168,13 +168,102 @@ final storageInfoProvider = FutureProvider.autoDispose<StorageInfo>((ref) async 
 // Download Queue Coordinator (Max 2 simultaneous downloads)
 class DownloadQueueCoordinatorNotifier extends Notifier<void> {
   final Set<String> _runningTaskIds = {};
+  Timer? _notificationPeriodicTimer;
+  StreamSubscription? _actionEventsSub;
 
   @override
-  void build() {}
+  void build() {
+    final serviceController = ref.watch(downloadServiceControllerProvider);
+    _actionEventsSub = serviceController.actionEvents.listen((event) async {
+      final db = ref.read(appDatabaseProvider);
+      final engine = ref.read(downloadEngineProvider);
+      if (event == 'pauseAll' || event == 'timeout') {
+        final active = await (db.select(db.downloadsTable)
+              ..where((t) =>
+                  t.state.equals(DownloadTaskState.downloading.name) |
+                  t.state.equals(DownloadTaskState.preparing.name) |
+                  t.state.equals(DownloadTaskState.queued.name)))
+            .get();
+        for (final t in active) {
+          await engine.pause(t.id);
+        }
+        await serviceController.stopService();
+      }
+    });
+
+    ref.onDispose(() {
+      _actionEventsSub?.cancel();
+      _notificationPeriodicTimer?.cancel();
+    });
+  }
+
+  void _startNotificationTimer() {
+    if (_notificationPeriodicTimer != null) return;
+    _notificationPeriodicTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _updateAggregateNotification();
+    });
+  }
+
+  void _stopNotificationTimer() {
+    _notificationPeriodicTimer?.cancel();
+    _notificationPeriodicTimer = null;
+  }
+
+  Future<void> _updateAggregateNotification() async {
+    final db = ref.read(appDatabaseProvider);
+    final serviceController = ref.read(downloadServiceControllerProvider);
+
+    final activeTasks = await (db.select(db.downloadsTable)
+          ..where((t) =>
+              t.state.equals(DownloadTaskState.downloading.name) |
+              t.state.equals(DownloadTaskState.preparing.name) |
+              t.state.equals(DownloadTaskState.finalizing.name)))
+        .get();
+
+    if (activeTasks.isEmpty) {
+      final queued = await (db.select(db.downloadsTable)
+            ..where((t) => t.state.equals(DownloadTaskState.queued.name)))
+          .get();
+      if (queued.isEmpty) {
+        _stopNotificationTimer();
+        await serviceController.stopService();
+        return;
+      }
+      serviceController.updateProgress(count: queued.length, percent: -1);
+      return;
+    }
+
+    int totalReceived = 0;
+    int totalExpected = 0;
+    bool anyUnknownSize = false;
+
+    for (final t in activeTasks) {
+      totalReceived += t.receivedBytes;
+      if (t.totalBytes != null && t.totalBytes! > 0) {
+        totalExpected += t.totalBytes!;
+      } else {
+        anyUnknownSize = true;
+      }
+    }
+
+    int aggregatePercent = -1;
+    if (!anyUnknownSize && totalExpected > 0) {
+      aggregatePercent = ((totalReceived / totalExpected) * 100).clamp(0, 100).toInt();
+    }
+
+    final singleFileName = activeTasks.length == 1 ? activeTasks.first.fileName : null;
+
+    serviceController.updateProgress(
+      count: activeTasks.length,
+      percent: aggregatePercent,
+      fileName: singleFileName,
+    );
+  }
 
   Future<void> trigger() async {
     final db = ref.read(appDatabaseProvider);
     final engine = ref.read(downloadEngineProvider);
+    final serviceController = ref.read(downloadServiceControllerProvider);
     final tasks = await (db.select(db.downloadsTable)
           ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
         .get();
@@ -186,9 +275,24 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
             t.state == DownloadTaskState.finalizing.name)
         .length;
 
+    final queuedTasks = tasks.where((t) => t.state == DownloadTaskState.queued.name).toList();
+
+    // Start or stop foreground service & 1s notification timer
+    if (activeDownloadingCount > 0 || queuedTasks.isNotEmpty) {
+      final singleTask = tasks.where((t) => t.state == DownloadTaskState.downloading.name).firstOrNull;
+      await serviceController.startService(
+        count: activeDownloadingCount > 0 ? activeDownloadingCount : queuedTasks.length,
+        fileName: activeDownloadingCount == 1 ? singleTask?.fileName : null,
+      );
+      _startNotificationTimer();
+    } else {
+      _stopNotificationTimer();
+      await serviceController.stopService();
+    }
+
     if (activeDownloadingCount >= 2) return;
 
-    final nextQueued = tasks.where((t) => t.state == DownloadTaskState.queued.name).toList();
+    final nextQueued = queuedTasks;
     int slotsAvailable = 2 - activeDownloadingCount;
 
     for (final task in nextQueued) {

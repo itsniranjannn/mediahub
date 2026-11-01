@@ -2,8 +2,17 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../core/security/safe_http_client.dart';
+import '../../core/services/download_service_controller.dart';
 import '../../data/downloads/download_engine.dart';
 import '../music_player/playback_notifier.dart';
+
+final downloadServiceControllerProvider = Provider<DownloadServiceController>((ref) {
+  final controller = AndroidDownloadServiceController();
+  ref.onDispose(() {
+    controller.dispose();
+  });
+  return controller;
+});
 
 final downloadDirectoryProvider = FutureProvider<Directory>((ref) async {
   final appDir = await getApplicationDocumentsDirectory();
