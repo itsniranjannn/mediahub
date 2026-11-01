@@ -470,10 +470,14 @@ class SafeHttpClient {
       };
 
       bodyController.onPause = () {
+        cancelIdleTimer();
         subscription?.pause();
       };
 
       bodyController.onResume = () {
+        if (!isClosed) {
+          resetIdleTimer();
+        }
         subscription?.resume();
       };
 

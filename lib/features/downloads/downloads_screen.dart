@@ -855,9 +855,13 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   String _formatPlainErrorMessage(String errorCode) {
     switch (errorCode) {
       case 'insufficient_disk_space':
-        return 'Not enough free storage space available.';
+        return 'Not enough free storage space available. Your other files are safe.';
+      case 'write_failed':
+        return 'Could not save file to disk. Your other files are safe.';
+      case 'incomplete_download':
+        return 'Connection ended before download was complete. Your other files are safe.';
       case 'not_media':
-        return 'The downloaded file was not recognized as media. Your files are safe.';
+        return 'The downloaded file was not recognized as media. Your other files are safe.';
       case 'max_size_exceeded':
         return 'Download exceeded the 2GB size limit.';
       case 'content_range_mismatch':
