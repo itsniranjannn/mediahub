@@ -45,6 +45,14 @@ class MediaSniffer {
         u8[5] == 0x74 && // t
         u8[6] == 0x79 && // y
         u8[7] == 0x70) { // p
+      // For ftyp, read major brand at bytes 8-11
+      if (u8.length >= 12) {
+        final brand = String.fromCharCodes(u8.sublist(8, 12)).trim().toUpperCase();
+        // M4A, M4B, F4A are audio/mp4; everything else is video/mp4
+        if (brand == 'M4A' || brand == 'M4B' || brand == 'F4A' || brand == 'M4P') {
+          return 'audio/mp4';
+        }
+      }
       return 'video/mp4';
     }
 
