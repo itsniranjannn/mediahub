@@ -31,6 +31,9 @@ class DownloadEngine {
   final Map<String, bool> _cancelledTasks = {};
   final Map<String, bool> _pausedTasks = {};
   final Map<String, Completer<void>> _activeTaskCompleters = {};
+  final Map<String, Completer<void>> _activeAttemptCompleters = {};
+  final Map<String, SafeStreamResponse> _activeStreamResponses = {};
+  final Map<String, StreamSubscription<List<int>>> _activeSubscriptions = {};
 
   DownloadEngine({
     required AppDatabase db,
@@ -111,6 +114,17 @@ class DownloadEngine {
   /// Pause an in-flight or queued task
   Future<void> pause(String id) async {
     _pausedTasks[id] = true;
+    _activeSubscriptions[id]?.cancel();
+    _activeSubscriptions.remove(id);
+    _activeStreamResponses[id]?.close();
+    _activeStreamResponses.remove(id);
+    if (_activeAttemptCompleters.containsKey(id)) {
+      if (!_activeAttemptCompleters[id]!.isCompleted) {
+        _activeAttemptCompleters[id]!.complete();
+      }
+      _activeAttemptCompleters.remove(id);
+    }
+
     final row = await (_db.select(_db.downloadsTable)..where((tbl) => tbl.id.equals(id))).getSingleOrNull();
     if (row != null && row.state != DownloadTaskState.paused.name && row.state != DownloadTaskState.completed.name) {
       // If server doesn't support Range, pause behaves as cancel-and-restart
@@ -144,6 +158,17 @@ class DownloadEngine {
   /// Cancel a task and delete .part
   Future<void> cancel(String id) async {
     _cancelledTasks[id] = true;
+    _activeSubscriptions[id]?.cancel();
+    _activeSubscriptions.remove(id);
+    _activeStreamResponses[id]?.close();
+    _activeStreamResponses.remove(id);
+    if (_activeAttemptCompleters.containsKey(id)) {
+      if (!_activeAttemptCompleters[id]!.isCompleted) {
+        _activeAttemptCompleters[id]!.complete();
+      }
+      _activeAttemptCompleters.remove(id);
+    }
+
     final partFile = File(p.join(_downloadDir.path, '$id.part'));
     if (partFile.existsSync()) {
       try {
@@ -228,8 +253,9 @@ class DownloadEngine {
         attempts++;
 
         try {
+          final currentTask = await (_db.select(_db.downloadsTable)..where((tbl) => tbl.id.equals(id))).getSingle();
           await _executeDownloadAttempt(
-            task: task,
+            task: currentTask,
             partFile: partFile,
             startByte: existingBytes,
           );
@@ -301,19 +327,25 @@ class DownloadEngine {
       }
     }
 
-    final response = await _httpClient.request(
+    final response = await _httpClient.openStream(
       uri,
       method: 'GET',
       headers: headers,
     );
+    _activeStreamResponses[task.id] = response;
 
-    if (_isPausedOrCancelled(task.id)) return;
+    if (_isPausedOrCancelled(task.id)) {
+      response.close();
+      return;
+    }
 
     final status = response.statusCode;
     if (status >= 400 && status < 500) {
+      response.close();
       throw SafeHttpClientException('Client error: $status', code: 'http_$status', host: uri.host);
     }
     if (status >= 500) {
+      response.close();
       throw SafeHttpClientException('Server error: $status', code: 'http_$status', host: uri.host);
     }
 
@@ -329,6 +361,7 @@ class DownloadEngine {
       if (status == 206) {
         // Validate Content-Range header matches requested startByte
         if (contentRange == null || !contentRange.toLowerCase().startsWith('bytes $startByte-')) {
+          response.close();
           throw SafeHttpClientException(
             'Content-Range mismatch on 206: expected start byte $startByte, got $contentRange',
             code: 'content_range_mismatch',
@@ -365,6 +398,7 @@ class DownloadEngine {
     }
 
     if (totalBytes != null && totalBytes > maxDownloadSizeBytes) {
+      response.close();
       throw SafeHttpClientException(
         'Size exceeded max allowed limit of 2GB',
         code: 'max_size_exceeded',
@@ -382,87 +416,152 @@ class DownloadEngine {
       ),
     );
 
-    final sink = partFile.openSync(mode: sinkMode);
+    final raf = await partFile.open(mode: sinkMode);
+    int receivedBytes = (sinkMode == FileMode.append) ? startByte : 0;
+    final startTime = DateTime.now();
+    DateTime lastDbSaveTime = startTime;
+    int lastDbSaveBytes = receivedBytes;
+    DateTime lastUiUpdateTime = startTime;
+
+    final completer = Completer<void>();
+    _activeAttemptCompleters[task.id] = completer;
+    StreamSubscription<List<int>>? subscription;
+
     try {
-      int receivedBytes = (sinkMode == FileMode.append) ? startByte : 0;
-      final bytes = response.bodyBytes;
-
-      final startTime = DateTime.now();
-      DateTime lastDbSaveTime = startTime;
-      int lastDbSaveBytes = receivedBytes;
-      DateTime lastUiUpdateTime = startTime;
-
-      // Stream the body bytes in chunks to throttle DB and UI emissions
-      const chunkSize = 64 * 1024;
-      for (int i = 0; i < bytes.length; i += chunkSize) {
-        if (_isPausedOrCancelled(task.id)) {
-          break;
-        }
-
-        final end = (i + chunkSize < bytes.length) ? i + chunkSize : bytes.length;
-        final chunk = bytes.sublist(i, end);
-        sink.writeFromSync(chunk);
-        receivedBytes += chunk.length;
-
-        if (receivedBytes > maxDownloadSizeBytes) {
-          throw SafeHttpClientException(
-            'Size exceeded max allowed limit of 2GB',
-            code: 'max_size_exceeded',
-            host: uri.host,
-          );
-        }
-
-        final now = DateTime.now();
-
-        // 1. Persist to DB at most every 1s or 512 KB
-        if (now.difference(lastDbSaveTime).inMilliseconds >= 1000 ||
-            (receivedBytes - lastDbSaveBytes) >= 512 * 1024) {
-          await (_db.update(_db.downloadsTable)..where((tbl) => tbl.id.equals(task.id))).write(
-            DownloadsTableCompanion(
-              receivedBytes: Value(receivedBytes),
-              updatedAt: Value(now),
-            ),
-          );
-          lastDbSaveTime = now;
-          lastDbSaveBytes = receivedBytes;
-        }
-
-        // 2. UI stream throttled to ~4 updates per second (>= 250ms)
-        if (now.difference(lastUiUpdateTime).inMilliseconds >= 250 || i + chunkSize >= bytes.length) {
-          double? speed;
-          Duration? eta;
-          final elapsedSec = now.difference(startTime).inMilliseconds / 1000.0;
-          if (elapsedSec > 0.5) {
-            speed = (receivedBytes - startByte) / elapsedSec;
-            if (totalBytes != null && speed > 0) {
-              final remaining = totalBytes - receivedBytes;
-              if (remaining > 0) {
-                eta = Duration(seconds: (remaining / speed).ceil());
-              }
-            }
+      subscription = response.body.listen(
+        (chunk) async {
+          if (_isPausedOrCancelled(task.id)) {
+            subscription?.cancel();
+            response.close();
+            if (!completer.isCompleted) completer.complete();
+            return;
           }
 
-          _progressController.add(DownloadProgressUpdate(
-            id: task.id,
-            receivedBytes: receivedBytes,
-            totalBytes: totalBytes,
-            progress: totalBytes != null && totalBytes > 0 ? receivedBytes / totalBytes : null,
-            speedBytesPerSec: speed,
-            eta: eta,
-          ));
-          lastUiUpdateTime = now;
-        }
-      }
+          subscription?.pause();
+          try {
+            await raf.writeFrom(chunk);
+            receivedBytes += chunk.length;
 
-      // Final save of received bytes
+            if (receivedBytes > maxDownloadSizeBytes) {
+              subscription?.cancel();
+              response.close();
+              if (!completer.isCompleted) {
+                completer.completeError(
+                  SafeHttpClientException(
+                    'Size exceeded max allowed limit of 2GB',
+                    code: 'max_size_exceeded',
+                    host: uri.host,
+                  ),
+                );
+              }
+              return;
+            }
+
+            final now = DateTime.now();
+
+            // 1. Persist to DB at most every 1s or 512 KB
+            if (now.difference(lastDbSaveTime).inMilliseconds >= 1000 ||
+                (receivedBytes - lastDbSaveBytes) >= 512 * 1024) {
+              await (_db.update(_db.downloadsTable)..where((tbl) => tbl.id.equals(task.id))).write(
+                DownloadsTableCompanion(
+                  receivedBytes: Value(receivedBytes),
+                  updatedAt: Value(now),
+                ),
+              );
+              lastDbSaveTime = now;
+              lastDbSaveBytes = receivedBytes;
+            }
+
+            // 2. UI stream throttled to ~4 updates per second (>= 250ms)
+            if (now.difference(lastUiUpdateTime).inMilliseconds >= 250) {
+              double? speed;
+              Duration? eta;
+              final elapsedSec = now.difference(startTime).inMilliseconds / 1000.0;
+              if (elapsedSec > 0.5) {
+                speed = (receivedBytes - startByte) / elapsedSec;
+                if (totalBytes != null && speed > 0) {
+                  final remaining = totalBytes - receivedBytes;
+                  if (remaining > 0) {
+                    eta = Duration(seconds: (remaining / speed).ceil());
+                  }
+                }
+              }
+
+              _progressController.add(DownloadProgressUpdate(
+                id: task.id,
+                receivedBytes: receivedBytes,
+                totalBytes: totalBytes,
+                progress: totalBytes != null && totalBytes > 0 ? receivedBytes / totalBytes : null,
+                speedBytesPerSec: speed,
+                eta: eta,
+              ));
+              lastUiUpdateTime = now;
+            }
+          } finally {
+            if (!_isPausedOrCancelled(task.id)) {
+              subscription?.resume();
+            }
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          if (!completer.isCompleted) {
+            completer.completeError(error, stackTrace);
+          }
+        },
+        onDone: () {
+          if (!completer.isCompleted) {
+            completer.complete();
+          }
+        },
+        cancelOnError: true,
+      );
+
+      _activeSubscriptions[task.id] = subscription;
+
+      await completer.future;
+
+      // Final save of received bytes equal to file length
+      final finalLen = partFile.existsSync() ? partFile.lengthSync() : receivedBytes;
       await (_db.update(_db.downloadsTable)..where((tbl) => tbl.id.equals(task.id))).write(
         DownloadsTableCompanion(
-          receivedBytes: Value(receivedBytes),
+          receivedBytes: Value(finalLen),
           updatedAt: Value(DateTime.now()),
         ),
       );
+
+      // Emit final completion progress update
+      _progressController.add(DownloadProgressUpdate(
+        id: task.id,
+        receivedBytes: finalLen,
+        totalBytes: totalBytes,
+        progress: totalBytes != null && totalBytes > 0 ? finalLen / totalBytes : 1.0,
+        speedBytesPerSec: null,
+        eta: Duration.zero,
+      ));
     } finally {
-      sink.closeSync();
+      _activeAttemptCompleters.remove(task.id);
+      _activeSubscriptions.remove(task.id);
+      _activeStreamResponses.remove(task.id);
+      subscription?.cancel();
+      response.close();
+      await raf.close();
+
+      // Ensure receivedBytes in DB matches part file length even on error
+      if (partFile.existsSync()) {
+        final currentLen = partFile.lengthSync();
+        await (_db.update(_db.downloadsTable)..where((tbl) => tbl.id.equals(task.id))).write(
+          DownloadsTableCompanion(
+            receivedBytes: Value(currentLen),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+      }
+
+      if (_cancelledTasks[task.id] == true && partFile.existsSync()) {
+        try {
+          partFile.deleteSync();
+        } catch (_) {}
+      }
     }
   }
 
