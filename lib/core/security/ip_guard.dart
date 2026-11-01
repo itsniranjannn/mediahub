@@ -130,6 +130,23 @@ class IpGuard {
     // 2001:db8::/32 (0x20, 0x01, 0x0D, 0xB8)
     if (bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0D && bytes[3] == 0xB8) return true;
 
+    // Teredo: 2001::/32 (0x20, 0x01, 0x00, 0x00)
+    if (bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x00 && bytes[3] == 0x00) return true;
+
+    // fec0::/10 Site-Local unicast (RFC 3879 deprecated): bytes[0] == 0xFE && (bytes[1] & 0xC0 == 0xC0)
+    if (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0xC0) return true;
+
+    // Local-Use IPv4/IPv6 Translation Prefix: 64:ff9b:1::/48
+    // bytes 0..5: 0x00, 0x64, 0xFF, 0x9B, 0x00, 0x01
+    if (bytes[0] == 0x00 &&
+        bytes[1] == 0x64 &&
+        bytes[2] == 0xFF &&
+        bytes[3] == 0x9B &&
+        bytes[4] == 0x00 &&
+        bytes[5] == 0x01) {
+      return true;
+    }
+
     // IPv4-mapped (::ffff:a.b.c.d) or IPv4-compatible (::a.b.c.d)
     // First 10 bytes must be 0x00
     bool first10Zero = true;
