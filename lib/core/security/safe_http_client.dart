@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../logging/diagnostics_service.dart';
-import 'ip_guard.dart';
+import 'safe_http_client_seam.dart';
 import 'url_policy.dart';
 
 typedef DnsResolver = Future<List<InternetAddress>> Function(String host);
@@ -44,14 +44,22 @@ class SafeHttpClient {
   final Duration readTimeout;
   final int maxRedirects;
   final int maxHeaderSize;
+  final SecurityContext? _customSecurityContext;
+  final SafeHttpClientSeam _seam;
 
   SafeHttpClient({
     DnsResolver? dnsResolver,
     this.connectionTimeout = const Duration(seconds: 10),
     this.readTimeout = const Duration(seconds: 20),
     this.maxRedirects = 5,
-    this.maxHeaderSize = 64 * 1024, // 64 KB
-  }) : _dnsResolver = dnsResolver ?? InternetAddress.lookup;
+    this.maxHeaderSize = 64 * 1024,
+    SecurityContext? customSecurityContext,
+    SafeHttpClientSeam seam = const StrictSafeHttpClientSeam(),
+  })  : _dnsResolver = dnsResolver ?? InternetAddress.lookup,
+        // ignore: prefer_initializing_formals
+        _customSecurityContext = customSecurityContext,
+        // ignore: prefer_initializing_formals
+        _seam = seam;
 
   /// Performs a secure request with DNS pinning, manual redirect handling,
   /// IP verification on each hop, and body size limits.
@@ -70,9 +78,9 @@ class SafeHttpClient {
     Map<String, String> activeHeaders = Map<String, String>.from(headers ?? {});
 
     while (true) {
-      // 1. Validate URL with UrlPolicy
+      // 1. Validate URL with UrlPolicy (or allow non-standard port in seam)
       final policyResult = UrlPolicy.validate(currentUri.toString());
-      if (!policyResult.isValid) {
+      if (!policyResult.isValid && !_seam.shouldAllowNonStandardPort(policyResult.errorCode)) {
         DiagnosticsService.instance.logEvent('safe_http_blocked', {
           'code': policyResult.errorCode?.name ?? 'url_policy_violation',
           'host': currentUri.host,
@@ -83,7 +91,7 @@ class SafeHttpClient {
           host: currentUri.host,
         );
       }
-      final normalizedUri = policyResult.normalizedUri!;
+      final normalizedUri = policyResult.normalizedUri ?? currentUri;
 
       // Remove sensitive headers if redirected to a different host
       if (normalizedUri.host.toLowerCase() != initialHost) {
@@ -122,7 +130,7 @@ class SafeHttpClient {
       }
 
       for (final addr in addresses) {
-        if (IpGuard.isBlocked(addr)) {
+        if (_seam.isIpBlocked(addr)) {
           DiagnosticsService.instance.logEvent('safe_http_blocked', {
             'code': 'blocked_ip',
             'host': normalizedUri.host,
@@ -135,32 +143,61 @@ class SafeHttpClient {
         }
       }
 
-      final targetIp = addresses.first;
-
       // 3. Setup HttpClient with custom connectionFactory pinned to the validated IP
-      final client = HttpClient();
+      final client = HttpClient(context: _customSecurityContext);
+      client.findProxy = (uri) => 'DIRECT'; // Prevent system proxy bypass
       // Ensure badCertificateCallback is NOT set (strict TLS validation)
       client.badCertificateCallback = null;
-      client.connectionTimeout = connectionTimeout;
-      client.autoUncompress = true;
+      client.connectionTimeout = connectionTimeout * addresses.length;
+      client.autoUncompress = false; // autoUncompress is off
 
       client.connectionFactory = (uri, proxyHost, proxyPort) {
         final completer = Completer<Socket>();
-        Socket.connect(targetIp, uri.port, timeout: connectionTimeout).then((rawSocket) {
-          SecureSocket.secure(
-            rawSocket,
-            host: uri.host, // SNI and certificate hostname matching with the original host
-            context: SecurityContext.defaultContext,
-            onBadCertificate: null, // strict certificate validation
-          ).then((secureSocket) {
-            completer.complete(secureSocket);
-          }).catchError((err, st) {
-            rawSocket.destroy();
-            completer.completeError(err, st);
-          });
-        }).catchError((err, st) {
-          completer.completeError(err, st);
-        });
+
+        // Try validated addresses in order; on failure try the next validated address
+        Future<void> tryConnect(int index) async {
+          if (index >= addresses.length) {
+            if (!completer.isCompleted) {
+              completer.completeError(
+                SocketException('Failed to connect to any resolved address for ${uri.host}'),
+              );
+            }
+            return;
+          }
+
+          final targetAddr = addresses[index];
+          try {
+            final rawSocket = await Socket.connect(targetAddr, uri.port, timeout: connectionTimeout);
+            try {
+              final secureSocket = await SecureSocket.secure(
+                rawSocket,
+                host: uri.host, // SNI and certificate hostname matching with original host
+                context: _customSecurityContext ?? SecurityContext.defaultContext,
+                onBadCertificate: null, // strict certificate validation
+              );
+              if (!completer.isCompleted) {
+                completer.complete(secureSocket);
+              } else {
+                secureSocket.destroy();
+              }
+            } catch (err, st) {
+              rawSocket.destroy();
+              if (index + 1 < addresses.length) {
+                await tryConnect(index + 1);
+              } else if (!completer.isCompleted) {
+                completer.completeError(err, st);
+              }
+            }
+          } catch (err, st) {
+            if (index + 1 < addresses.length) {
+              await tryConnect(index + 1);
+            } else if (!completer.isCompleted) {
+              completer.completeError(err, st);
+            }
+          }
+        }
+
+        tryConnect(0);
 
         return Future.value(ConnectionTask.fromSocket<Socket>(
           completer.future,
@@ -175,7 +212,8 @@ class SafeHttpClient {
       HttpClientRequest httpRequest;
       HttpClientResponse httpResponse;
       try {
-        httpRequest = await client.openUrl(method, normalizedUri).timeout(connectionTimeout);
+        final totalConnectTimeout = connectionTimeout * addresses.length;
+        httpRequest = await client.openUrl(method, normalizedUri).timeout(totalConnectTimeout);
         httpRequest.followRedirects = false; // Manual redirect handling
 
         // Apply headers
@@ -255,6 +293,19 @@ class SafeHttpClient {
 
         currentUri = nextUri;
         continue;
+      }
+
+      // Check range fallback: if request requested range (bytes=0-0) and server replied 200 with full body, abort after headers
+      final requestedRange = activeHeaders[HttpHeaders.rangeHeader];
+      if (requestedRange != null && requestedRange.trim() == 'bytes=0-0' && status == 200) {
+        client.close(force: true);
+        return SafeHttpResponse(
+          statusCode: 200,
+          reasonPhrase: httpResponse.reasonPhrase,
+          headers: httpResponse.headers,
+          bodyBytes: const [],
+          finalUri: normalizedUri,
+        );
       }
 
       // Read response body with size limit

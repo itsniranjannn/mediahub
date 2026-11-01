@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -31,6 +32,15 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
   }
 
   void _openPlayer(BuildContext context, MediaItem item) {
+    if (item.source == 'download' || item.availability == MediaAvailability.missing) {
+      final file = File(item.uri);
+      if (!file.existsSync()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File is missing or unavailable on storage')),
+        );
+        return;
+      }
+    }
     context.push('/video_player', extra: item);
   }
 
@@ -167,9 +177,13 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
       );
     }
 
-    if (state.status == LibraryStatus.loading) {
+    if (state.status == LibraryStatus.loading || state.status == LibraryStatus.initial) {
       return const Center(
-        child: CircularProgressIndicator(color: AppColors.accent),
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+        ),
       );
     }
 

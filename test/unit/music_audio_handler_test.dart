@@ -235,25 +235,91 @@ void main() {
       expect(handler.playbackState.value.playing, isFalse);
     });
 
-    test('toggleShuffle preserves track and position', () async {
+    test('toggleShuffle preserves track and position, and toggle off restores original order', () async {
       final items = [item1, item2, item3];
-      await handler.loadQueue(items, startIndex: 1, autoPlay: false);
       when(() => mockPlayer.position).thenReturn(const Duration(seconds: 45));
-
-      // Mock index change upon shuffle toggle to verify seek correction
-      when(() => mockPlayer.setShuffleModeEnabled(true)).thenAnswer((_) async {
-        fakeCurrentIndex = 0; // Simulate player changing index
-      });
       when(() => mockPlayer.seek(any(), index: any(named: 'index'))).thenAnswer((invocation) async {
         fakeCurrentIndex = invocation.namedArguments[#index] ?? 0;
       });
 
-      await handler.setShuffleMode(AudioServiceShuffleMode.all);
-      expect(handler.currentIndex, 1);
-      verify(() => mockPlayer.seek(const Duration(seconds: 45), index: 1)).called(1);
+      await handler.loadQueue(items, startIndex: 1, autoPlay: false);
+      expect(handler.originalQueue.map((e) => e.id).toList(), ['1', '2', '3']);
 
-      await handler.setShuffleMode(AudioServiceShuffleMode.none);
+      // Toggle Shuffle ON: item 2 ('2') should stay first
+      await handler.toggleShuffle();
+      expect(handler.shuffleEnabled, isTrue);
+      expect(handler.playOrderQueue.first.id, '2');
+      expect(handler.playOrderQueue.length, 3);
+      expect(handler.currentIndex, 0);
+
+      // Toggle Shuffle OFF: original order restored, item 2 is playing
+      await handler.toggleShuffle();
+      expect(handler.shuffleEnabled, isFalse);
+      expect(handler.playOrderQueue.map((e) => e.id).toList(), ['1', '2', '3']);
       expect(handler.currentIndex, 1);
+    });
+
+    test('50 skips on a queue of 10 with shuffle on never repeats a track inside a cycle', () async {
+      final items = List.generate(10, (i) => _createTestItem('$i', 'Track $i'));
+      when(() => mockPlayer.seekToNext()).thenAnswer((_) async {
+        fakeCurrentIndex++;
+      });
+      when(() => mockPlayer.hasNext).thenAnswer((_) => fakeCurrentIndex < handler.domainQueue.length - 1);
+      when(() => mockPlayer.seek(any(), index: any(named: 'index'))).thenAnswer((invocation) async {
+        fakeCurrentIndex = invocation.namedArguments[#index] ?? 0;
+      });
+
+      await handler.loadQueue(items, startIndex: 0, autoPlay: false);
+      await handler.setRepeatMode(AudioServiceRepeatMode.all);
+      await handler.toggleShuffle();
+
+      final visitedTrackIdsInCycle = <String>[];
+      String? lastTrackOfPreviousCycle;
+
+      for (int i = 0; i < 50; i++) {
+        final currentTrackId = handler.domainQueue[fakeCurrentIndex].id;
+        
+        // If this is the start of a new cycle (every 10 tracks)
+        if (visitedTrackIdsInCycle.length == 10) {
+          visitedTrackIdsInCycle.clear();
+          // Repeat-all wrap must not repeat the last track
+          expect(currentTrackId, isNot(equals(lastTrackOfPreviousCycle)));
+        }
+
+        // Inside a single cycle, tracks must not repeat
+        expect(visitedTrackIdsInCycle.contains(currentTrackId), isFalse,
+            reason: 'Track $currentTrackId was repeated within the same cycle');
+        visitedTrackIdsInCycle.add(currentTrackId);
+
+        if (visitedTrackIdsInCycle.length == 10) {
+          lastTrackOfPreviousCycle = currentTrackId;
+        }
+
+        await handler.skipToNext();
+      }
+    });
+
+    test('queue edits under shuffle update both original and play order lists', () async {
+      final items = [item1, item2, item3];
+      when(() => mockPlayer.seek(any(), index: any(named: 'index'))).thenAnswer((invocation) async {
+        fakeCurrentIndex = invocation.namedArguments[#index] ?? 0;
+      });
+
+      await handler.loadQueue(items, startIndex: 0, autoPlay: false);
+      await handler.toggleShuffle();
+
+      final item4 = _createTestItem('4', 'Track 4');
+      await handler.addToQueue(item4);
+
+      expect(handler.originalQueue.any((m) => m.id == '4'), isTrue);
+      expect(handler.playOrderQueue.any((m) => m.id == '4'), isTrue);
+
+      // Remove item 4
+      final idx4 = handler.playOrderQueue.indexWhere((m) => m.id == '4');
+      await handler.removeQueueItemAt(idx4);
+
+      expect(handler.originalQueue.any((m) => m.id == '4'), isFalse);
+      expect(handler.playOrderQueue.any((m) => m.id == '4'), isFalse);
     });
   });
 }

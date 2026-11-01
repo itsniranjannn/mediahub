@@ -11,6 +11,7 @@ enum PlaybackRepeatMode {
 class PlaybackState {
   final String? currentItemId;
   final List<MediaItem> queue;
+  final List<MediaItem> originalQueue;
   final int queueIndex;
   final Duration position;
   final Duration duration;
@@ -23,6 +24,7 @@ class PlaybackState {
   const PlaybackState({
     this.currentItemId,
     this.queue = const [],
+    this.originalQueue = const [],
     this.queueIndex = -1,
     this.position = Duration.zero,
     this.duration = Duration.zero,
@@ -44,6 +46,7 @@ class PlaybackState {
     String? currentItemId,
     bool clearCurrentItemId = false,
     List<MediaItem>? queue,
+    List<MediaItem>? originalQueue,
     int? queueIndex,
     Duration? position,
     Duration? duration,
@@ -56,6 +59,7 @@ class PlaybackState {
     return PlaybackState(
       currentItemId: clearCurrentItemId ? null : (currentItemId ?? this.currentItemId),
       queue: queue ?? this.queue,
+      originalQueue: originalQueue ?? this.originalQueue,
       queueIndex: queueIndex ?? this.queueIndex,
       position: position ?? this.position,
       duration: duration ?? this.duration,
@@ -74,6 +78,7 @@ class PlaybackState {
           runtimeType == other.runtimeType &&
           currentItemId == other.currentItemId &&
           listEquals(queue, other.queue) &&
+          listEquals(originalQueue, other.originalQueue) &&
           queueIndex == other.queueIndex &&
           position == other.position &&
           duration == other.duration &&
@@ -86,6 +91,7 @@ class PlaybackState {
   int get hashCode => Object.hash(
         currentItemId,
         Object.hashAll(queue),
+        Object.hashAll(originalQueue),
         queueIndex,
         position,
         duration,

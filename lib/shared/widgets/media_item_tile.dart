@@ -39,7 +39,9 @@ class MediaItemTile extends StatelessWidget {
     return Semantics(
       label: '$displayTitle, ${item.artist ?? 'Unknown artist'}',
       button: true,
-      child: ListTile(
+      child: Material(
+        color: Colors.transparent,
+        child: ListTile(
         contentPadding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.lg16,
           vertical: AppSpacing.xs4,
@@ -69,11 +71,36 @@ class MediaItemTile extends StatelessWidget {
               ),
           ],
         ),
-        title: Text(
-          displayTitle,
-          style: AppTypography.body,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        title: Row(
+          children: [
+            if (item.source == 'download') ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withAlpha(40),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: AppColors.primary.withAlpha(100), width: 0.8),
+                ),
+                child: const Text(
+                  'Downloaded',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+            Expanded(
+              child: Text(
+                displayTitle,
+                style: AppTypography.body,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
         ),
         subtitle: Text(
           isVideo
@@ -123,6 +150,7 @@ class MediaItemTile extends StatelessWidget {
             ],
           ],
         ),
+      ),
       ),
     );
   }

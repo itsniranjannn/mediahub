@@ -20,24 +20,39 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
 
     // Resolve queue from media ids or fallback to json if older format
     List<MediaItem> queueItems = [];
+    List<MediaItem> originalQueueItems = [];
     try {
       final decoded = jsonDecode(entry.queueJson);
-      if (decoded is List) {
+      List<String> ids = [];
+      List<String>? origIds;
+
+      if (decoded is Map) {
+        ids = (decoded['queue'] as List?)?.cast<String>() ?? [];
+        origIds = (decoded['original'] as List?)?.cast<String>();
+      } else if (decoded is List) {
         if (decoded.isNotEmpty && decoded.first is String) {
-          // List of IDs
-          final ids = decoded.cast<String>();
-          final rows = await (db.select(db.mediaItemsTable)..where((tbl) => tbl.id.isIn(ids))).get();
-          final map = {for (var r in rows) r.id: r.toDomain()};
-          for (final id in ids) {
-            if (map.containsKey(id)) {
-              queueItems.add(map[id]!);
-            }
-          }
+          ids = decoded.cast<String>();
         } else {
-          // Legacy full JSON map
           queueItems = decoded
               .map((item) => MediaItem.fromJsonMap(Map<String, dynamic>.from(item as Map)))
               .toList();
+          originalQueueItems = List.from(queueItems);
+        }
+      }
+
+      if (ids.isNotEmpty) {
+        final allNeededIds = Set<String>.from(ids)..addAll(origIds ?? []);
+        final rows = await (db.select(db.mediaItemsTable)..where((tbl) => tbl.id.isIn(allNeededIds))).get();
+        final map = {for (var r in rows) r.id: r.toDomain()};
+        for (final id in ids) {
+          if (map.containsKey(id)) {
+            queueItems.add(map[id]!);
+          }
+        }
+        for (final id in (origIds ?? ids)) {
+          if (map.containsKey(id)) {
+            originalQueueItems.add(map[id]!);
+          }
         }
       }
     } catch (_) {}
@@ -45,6 +60,7 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
     return PlaybackState(
       currentItemId: entry.currentItemId,
       queue: queueItems,
+      originalQueue: originalQueueItems.isNotEmpty ? originalQueueItems : queueItems,
       queueIndex: entry.queueIndex,
       position: Duration(milliseconds: entry.positionMs),
       duration: Duration(milliseconds: entry.durationMs),
@@ -60,9 +76,13 @@ class PlaybackRepositoryImpl implements PlaybackRepository {
 
   @override
   Future<void> savePlaybackState(PlaybackState state) async {
-    // Persist queue as media ids to save memory and avoid redundant json overhead
+    // Persist queue and original order as media ids
     final idList = state.queue.map((m) => m.id).toList();
-    final jsonString = jsonEncode(idList);
+    final origIdList = state.originalQueue.map((m) => m.id).toList();
+    final jsonString = jsonEncode({
+      'queue': idList,
+      'original': origIdList,
+    });
 
     await db.into(db.playbackStatesTable).insertOnConflictUpdate(
           PlaybackStatesTableCompanion(

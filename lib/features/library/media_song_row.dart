@@ -5,8 +5,8 @@ import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
-import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
+import '../../shared/widgets/favorite_feedback_button.dart';
 import '../library/media_context_menu.dart';
 import '../music_player/playback_notifier.dart';
 
@@ -64,18 +64,43 @@ class MediaSongRow extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      item.title,
-                      style: AppTypography.body.copyWith(
-                        color: isMissing
-                            ? AppColors.textMuted
-                            : isSelected
-                                ? AppColors.primary
-                                : AppColors.textPrimary,
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        if (item.source == 'download') ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                            margin: const EdgeInsets.only(right: 6),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withAlpha(40),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: AppColors.primary.withAlpha(100), width: 0.8),
+                            ),
+                            child: Text(
+                              'Downloaded',
+                              style: TextStyle(
+                                color: AppColors.primary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                        Expanded(
+                          child: Text(
+                            item.title,
+                            style: AppTypography.body.copyWith(
+                              color: isMissing
+                                  ? AppColors.textMuted
+                                  : isSelected
+                                      ? AppColors.primary
+                                      : AppColors.textPrimary,
+                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -89,17 +114,11 @@ class MediaSongRow extends ConsumerWidget {
                   ],
                 ),
               ),
-              IconButton(
-                icon: Icon(
-                  item.isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                  color: item.isFavorite ? AppColors.error : AppColors.textMuted,
-                  size: 20,
-                ),
-                tooltip: item.isFavorite ? 'Remove Favorite' : 'Add Favorite',
+              FavoriteFeedbackButton(
+                itemId: item.id,
+                isFavorite: item.isFavorite,
+                size: 20,
                 constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-                onPressed: () {
-                  ref.read(libraryRepositoryProvider).toggleFavorite(item.id);
-                },
               ),
               trailing ??
                   IconButton(

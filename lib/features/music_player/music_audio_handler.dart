@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
@@ -14,8 +15,16 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   late final PlayCountTracker _playCountTracker;
   // ignore: deprecated_member_use
   ConcatenatingAudioSource? _playlistSource;
-  List<domain.MediaItem> _domainQueue = [];
+  List<domain.MediaItem> _originalQueue = [];
+  List<domain.MediaItem> _playOrderQueue = [];
+  bool _shuffleEnabled = false;
   domain.PlaybackRepeatMode _repeatMode = domain.PlaybackRepeatMode.off;
+
+  List<domain.MediaItem> get originalQueue => List.unmodifiable(_originalQueue);
+  List<domain.MediaItem> get playOrderQueue => List.unmodifiable(_playOrderQueue);
+  bool get shuffleEnabled => _shuffleEnabled;
+
+  List<domain.MediaItem> get _domainQueue => _playOrderQueue;
 
   // Custom notification actions
   static const String actionToggleShuffle = 'action_toggle_shuffle';
@@ -48,8 +57,11 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     });
   }
 
-  // Serialized queue for actions (skipToNext, skipToPrevious, queue mutations)
+  // Serialized queue for actions with pending skip counter debouncing
   Future<void> _actionChain = Future.value();
+  int _pendingSkips = 0;
+  Timer? _debounceSkipPlayTimer;
+
   Future<T> _synchronized<T>(Future<T> Function() action, [String actionName = 'action']) {
     final completer = Completer<T>();
     _actionChain = _actionChain.then((_) async {
@@ -97,7 +109,6 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   List<domain.MediaItem> get domainQueue => List.unmodifiable(_domainQueue);
   int get currentIndex => _player.currentIndex ?? -1;
   domain.PlaybackRepeatMode get repeatMode => _repeatMode;
-  bool get shuffleEnabled => _player.shuffleModeEnabled;
 
   Future<void> _init() async {
     // 1. Configure audio_session
@@ -258,7 +269,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     }[_player.processingState] ?? AudioProcessingState.idle;
 
     // Custom shuffle action icon / label
-    final isShuffled = _player.shuffleModeEnabled;
+    final isShuffled = _shuffleEnabled;
     final shuffleAction = MediaControl.custom(
       androidIcon: isShuffled
           ? 'drawable/ic_action_shuffle_on'
@@ -334,12 +345,13 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       domain.PlaybackState(
         currentItemId: currentItem?.id,
         queue: _domainQueue,
+        originalQueue: _originalQueue,
         queueIndex: currIdx,
         position: _player.position,
         duration: _player.duration ?? Duration.zero,
         isPlaying: _player.playing,
         repeatMode: _repeatMode,
-        shuffle: _player.shuffleModeEnabled,
+        shuffle: _shuffleEnabled,
         speed: _player.speed,
         updatedAt: DateTime.now(),
       ),
@@ -355,12 +367,13 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return domain.PlaybackState(
       currentItemId: currentItem?.id,
       queue: _domainQueue,
+      originalQueue: _originalQueue,
       queueIndex: currIdx,
       position: _player.position,
       duration: _player.duration ?? Duration.zero,
       isPlaying: _player.playing,
       repeatMode: _repeatMode,
-      shuffle: _player.shuffleModeEnabled,
+      shuffle: _shuffleEnabled,
       speed: _player.speed,
       updatedAt: DateTime.now(),
     );
@@ -368,7 +381,9 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   // Restore session
   Future<void> restoreSession(domain.PlaybackState restored) async {
-    _domainQueue = List.from(restored.queue);
+    _originalQueue = List.from(restored.originalQueue.isNotEmpty ? restored.originalQueue : restored.queue);
+    _playOrderQueue = List.from(restored.queue);
+    _shuffleEnabled = restored.shuffle;
     _repeatMode = restored.repeatMode;
     await _player.setSpeed(restored.speed);
 
@@ -391,7 +406,6 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
           initialIndex: initialIdx,
           initialPosition: restored.position,
         );
-        await _player.setShuffleModeEnabled(restored.shuffle);
         _applyLoopMode();
       } catch (e) {
         DiagnosticsService.instance.logEvent('player_error', {'source': 'restore_session'});
@@ -436,11 +450,18 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     }
   }
 
-  Future<void> loadQueue(List<domain.MediaItem> items, {int startIndex = 0, bool autoPlay = true}) async {
+  Future<void> loadQueue(
+    List<domain.MediaItem> items, {
+    int startIndex = 0,
+    bool autoPlay = true,
+    bool shuffle = false,
+  }) async {
     _userInteractedSinceNoisy = true;
     if (items.isEmpty) {
       await stop(reason: 'empty_queue_load');
-      _domainQueue = [];
+      _originalQueue = [];
+      _playOrderQueue = [];
+      _shuffleEnabled = false;
       _syncAudioServiceQueue();
       mediaItem.add(null);
       _broadcastAudioServiceState();
@@ -448,7 +469,20 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       return;
     }
 
-    _domainQueue = List.from(items);
+    _originalQueue = List.from(items);
+    _shuffleEnabled = shuffle;
+
+    if (shuffle) {
+      // Start at startIndex as first item, shuffle the rest
+      final safeStart = (startIndex >= 0 && startIndex < items.length) ? startIndex : 0;
+      final startItem = items[safeStart];
+      final remaining = items.where((item) => item.id != startItem.id).toList();
+      _fisherYatesShuffle(remaining);
+      _playOrderQueue = [startItem, ...remaining];
+    } else {
+      _playOrderQueue = List.from(items);
+    }
+
     _syncAudioServiceQueue();
 
     final audioSources = _domainQueue.map((item) {
@@ -460,7 +494,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       _playlistSource = ConcatenatingAudioSource(children: audioSources);
       await _player.setAudioSource(
         _playlistSource!,
-        initialIndex: startIndex,
+        initialIndex: shuffle ? 0 : startIndex,
         initialPosition: Duration.zero,
       );
       _applyLoopMode();
@@ -592,30 +626,78 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   @override
   Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) async {
-    final enabled = shuffleMode == AudioServiceShuffleMode.all || shuffleMode == AudioServiceShuffleMode.group;
-    final currentPos = _player.position;
-    final currIdx = _player.currentIndex;
-    await _player.setShuffleModeEnabled(enabled);
-    if (currIdx != null && _player.currentIndex != currIdx) {
-      await _player.seek(currentPos, index: currIdx);
+    final enable = (shuffleMode == AudioServiceShuffleMode.all || shuffleMode == AudioServiceShuffleMode.group);
+    if (enable != _shuffleEnabled) {
+      await toggleShuffle();
     }
-    _broadcastAudioServiceState();
-    _notifyDomainState();
   }
 
-  void toggleShuffle() async {
-    _userInteractedSinceNoisy = true;
-    final nextVal = !_player.shuffleModeEnabled;
-    final currentPos = _player.position;
-    final currIdx = _player.currentIndex;
-    await _player.setShuffleModeEnabled(nextVal);
-    // Ensure position and current track are kept
-    if (currIdx != null && _player.currentIndex != currIdx) {
-      await _player.seek(currentPos, index: currIdx);
+  void _fisherYatesShuffle<T>(List<T> list, [int startIndex = 0]) {
+    final random = math.Random();
+    for (int i = list.length - 1; i > startIndex; i--) {
+      final j = startIndex + random.nextInt(i - startIndex + 1);
+      final temp = list[i];
+      list[i] = list[j];
+      list[j] = temp;
     }
-    DiagnosticsService.instance.logEvent('shuffle_mode_changed', {'enabled': nextVal});
-    _broadcastAudioServiceState();
-    _notifyDomainState();
+  }
+
+  Future<void> toggleShuffle() async {
+    _userInteractedSinceNoisy = true;
+    return _synchronized(() async {
+      final nextVal = !_shuffleEnabled;
+      _shuffleEnabled = nextVal;
+      final currentPos = _player.position;
+      final currIdx = _player.currentIndex ?? 0;
+      domain.MediaItem? currentItem;
+      if (currIdx >= 0 && currIdx < _playOrderQueue.length) {
+        currentItem = _playOrderQueue[currIdx];
+      }
+
+      if (_shuffleEnabled) {
+        // Shuffle ON: current track stays first, the rest is Fisher-Yates shuffled
+        if (currentItem != null) {
+          final remaining = _originalQueue.where((item) => item.id != currentItem!.id).toList();
+          _fisherYatesShuffle(remaining);
+          _playOrderQueue = [currentItem, ...remaining];
+        } else {
+          _playOrderQueue = List.from(_originalQueue);
+          _fisherYatesShuffle(_playOrderQueue);
+        }
+      } else {
+        // Shuffle OFF: restore original order, keep current track playing
+        _playOrderQueue = List.from(_originalQueue);
+      }
+
+      int newIndex = 0;
+      if (currentItem != null) {
+        newIndex = _playOrderQueue.indexWhere((item) => item.id == currentItem!.id);
+        if (newIndex == -1) newIndex = 0;
+      }
+
+      final audioSources = _playOrderQueue.map((item) {
+        return AudioSource.uri(Uri.parse(item.uri), tag: item.id);
+      }).toList();
+
+      // ignore: deprecated_member_use
+      _playlistSource = ConcatenatingAudioSource(children: audioSources);
+      await _player.setAudioSource(
+        _playlistSource!,
+        initialIndex: newIndex,
+        initialPosition: currentPos,
+      );
+
+      DiagnosticsService.instance.logEvent('shuffle_mode_changed', {
+        'enabled': _shuffleEnabled,
+        'trackId': currentItem?.id,
+        'queuePosition': newIndex,
+      });
+
+      _syncAudioServiceQueue();
+      _syncCurrentAudioServiceMediaItem();
+      _broadcastAudioServiceState();
+      _notifyDomainState();
+    }, 'toggleShuffle');
   }
 
   @override
@@ -645,35 +727,75 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _notifyDomainState();
   }
 
+  void _schedulePlayAfterSkips(String caller) {
+    _debounceSkipPlayTimer?.cancel();
+    if (_pendingSkips <= 0) {
+      if (_wantPlaying) {
+        _safeStartPlayerPlay(caller);
+      }
+    } else {
+      _debounceSkipPlayTimer = Timer(const Duration(milliseconds: 150), () {
+        if (_pendingSkips <= 0 && _wantPlaying) {
+          _safeStartPlayerPlay(caller);
+        }
+      });
+    }
+  }
+
   @override
   Future<void> skipToNext() {
     _userInteractedSinceNoisy = true;
     _wantPlaying = true; // Match Spotify: skipping starts playing
+    _pendingSkips++;
     final caller = _formatCaller();
-    DiagnosticsService.instance.logEvent('skipToNext', {'caller': caller});
 
     return _synchronized(() async {
       try {
         if (_domainQueue.isEmpty) return;
 
+        final beforeIdx = _player.currentIndex ?? -1;
+        final beforeId = (beforeIdx >= 0 && beforeIdx < _domainQueue.length) ? _domainQueue[beforeIdx].id : null;
+        DiagnosticsService.instance.logEvent('skip_start', {
+          'action': 'skipToNext',
+          'caller': caller,
+          'beforeTrackId': beforeId,
+          'beforeQueuePosition': beforeIdx,
+        });
+
         if (_player.hasNext) {
           await _player.seekToNext();
-          _syncCurrentAudioServiceMediaItem();
-          _broadcastAudioServiceState();
-          _notifyDomainState();
-          if (_wantPlaying) {
-            _safeStartPlayerPlay('skip_to_next');
-          }
         } else {
           // At the end of queue
           if (_repeatMode == domain.PlaybackRepeatMode.all) {
-            // Wrap around to start of queue
-            await _player.seek(Duration.zero, index: 0);
-            _syncCurrentAudioServiceMediaItem();
-            _broadcastAudioServiceState();
-            _notifyDomainState();
-            if (_wantPlaying) {
-              _safeStartPlayerPlay('skip_to_next_wrap_all');
+            if (_shuffleEnabled && _domainQueue.length > 1) {
+              // Reshuffle at wrap: ensure the new cycle does not start with the track that just played
+              final lastPlayedItem = (beforeIdx >= 0 && beforeIdx < _domainQueue.length)
+                  ? _domainQueue[beforeIdx]
+                  : null;
+              final reshuffled = List<domain.MediaItem>.from(_originalQueue);
+              _fisherYatesShuffle(reshuffled);
+
+              // If the first item matches the last played item, swap with another item
+              if (lastPlayedItem != null && reshuffled.first.id == lastPlayedItem.id && reshuffled.length > 1) {
+                final temp = reshuffled[0];
+                reshuffled[0] = reshuffled[1];
+                reshuffled[1] = temp;
+              }
+
+              _playOrderQueue = reshuffled;
+              final audioSources = _playOrderQueue.map((item) {
+                return AudioSource.uri(Uri.parse(item.uri), tag: item.id);
+              }).toList();
+              // ignore: deprecated_member_use
+              _playlistSource = ConcatenatingAudioSource(children: audioSources);
+              await _player.setAudioSource(
+                _playlistSource!,
+                initialIndex: 0,
+                initialPosition: Duration.zero,
+              );
+            } else {
+              // Wrap around to start of queue
+              await _player.seek(Duration.zero, index: 0);
             }
           } else {
             // Repeat off -> stop at last track and show paused state at start of queue
@@ -681,14 +803,26 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
             DiagnosticsService.instance.logEvent('queue_ended', {'action': 'paused_at_start'});
             await _player.pause();
             await _player.seek(Duration.zero, index: 0);
-            _syncCurrentAudioServiceMediaItem();
-            _broadcastAudioServiceState();
-            _notifyDomainState();
           }
         }
+
+        final afterIdx = _player.currentIndex ?? -1;
+        final afterId = (afterIdx >= 0 && afterIdx < _domainQueue.length) ? _domainQueue[afterIdx].id : null;
+        DiagnosticsService.instance.logEvent('skip_complete', {
+          'action': 'skipToNext',
+          'afterTrackId': afterId,
+          'afterQueuePosition': afterIdx,
+        });
+
+        _syncCurrentAudioServiceMediaItem();
+        _broadcastAudioServiceState();
+        _notifyDomainState();
       } catch (e) {
         DiagnosticsService.instance.logEvent('player_error', {'source': 'skipToNext'});
         debugPrint('Error in skipToNext: $e');
+      } finally {
+        _pendingSkips = (_pendingSkips - 1).clamp(0, 9999);
+        _schedulePlayAfterSkips('skip_to_next');
       }
     }, 'skipToNext');
   }
@@ -697,50 +831,56 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   Future<void> skipToPrevious() {
     _userInteractedSinceNoisy = true;
     _wantPlaying = true; // Match Spotify: skipping starts playing
+    _pendingSkips++;
     final caller = _formatCaller();
-    DiagnosticsService.instance.logEvent('skipToPrevious', {'caller': caller});
 
     return _synchronized(() async {
       try {
         if (_domainQueue.isEmpty) return;
 
+        final beforeIdx = _player.currentIndex ?? -1;
+        final beforeId = (beforeIdx >= 0 && beforeIdx < _domainQueue.length) ? _domainQueue[beforeIdx].id : null;
+        DiagnosticsService.instance.logEvent('skip_start', {
+          'action': 'skipToPrevious',
+          'caller': caller,
+          'beforeTrackId': beforeId,
+          'beforeQueuePosition': beforeIdx,
+        });
+
         if (_player.position > const Duration(seconds: 3)) {
           await seek(Duration.zero);
-          if (_wantPlaying) {
-            _safeStartPlayerPlay('skip_to_previous_restart');
-          }
           return;
         }
 
         if (_player.hasPrevious) {
           await _player.seekToPrevious();
-          _syncCurrentAudioServiceMediaItem();
-          _broadcastAudioServiceState();
-          _notifyDomainState();
-          if (_wantPlaying) {
-            _safeStartPlayerPlay('skip_to_previous');
-          }
         } else {
           // At start of queue
           if (_repeatMode == domain.PlaybackRepeatMode.all) {
             final lastIdx = _domainQueue.length - 1;
             await _player.seek(Duration.zero, index: lastIdx);
-            _syncCurrentAudioServiceMediaItem();
-            _broadcastAudioServiceState();
-            _notifyDomainState();
-            if (_wantPlaying) {
-              _safeStartPlayerPlay('skip_to_previous_wrap_all');
-            }
           } else {
             await seek(Duration.zero);
-            if (_wantPlaying) {
-              _safeStartPlayerPlay('skip_to_previous_start');
-            }
           }
         }
+
+        final afterIdx = _player.currentIndex ?? -1;
+        final afterId = (afterIdx >= 0 && afterIdx < _domainQueue.length) ? _domainQueue[afterIdx].id : null;
+        DiagnosticsService.instance.logEvent('skip_complete', {
+          'action': 'skipToPrevious',
+          'afterTrackId': afterId,
+          'afterQueuePosition': afterIdx,
+        });
+
+        _syncCurrentAudioServiceMediaItem();
+        _broadcastAudioServiceState();
+        _notifyDomainState();
       } catch (e) {
         DiagnosticsService.instance.logEvent('player_error', {'source': 'skipToPrevious'});
         debugPrint('Error in skipToPrevious: $e');
+      } finally {
+        _pendingSkips = (_pendingSkips - 1).clamp(0, 9999);
+        _schedulePlayAfterSkips('skip_to_previous');
       }
     }, 'skipToPrevious');
   }
@@ -768,55 +908,59 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   }
 
   // Queue mutations
-  void playNext(domain.MediaItem item) {
+  Future<void> playNext(domain.MediaItem item) {
     _userInteractedSinceNoisy = true;
     if (_domainQueue.isEmpty) {
-      loadQueue([item]);
-      return;
+      return loadQueue([item]);
     }
-    _synchronized(() async {
+    return _synchronized(() async {
       final currIdx = _player.currentIndex ?? 0;
       int insertIndex = currIdx + 1;
-      _domainQueue.insert(insertIndex, item);
+      _playOrderQueue.insert(insertIndex, item);
+      if (!_originalQueue.any((m) => m.id == item.id)) {
+        _originalQueue.add(item);
+      }
       final source = AudioSource.uri(Uri.parse(item.uri), tag: item.id);
       if (_playlistSource != null) {
         await _playlistSource!.insert(insertIndex, source);
       } else {
         final audioSources = _domainQueue.map((m) => AudioSource.uri(Uri.parse(m.uri), tag: m.id)).toList();
         // ignore: deprecated_member_use
-      _playlistSource = ConcatenatingAudioSource(children: audioSources);
+        _playlistSource = ConcatenatingAudioSource(children: audioSources);
         await _player.setAudioSource(_playlistSource!, initialIndex: currIdx, initialPosition: _player.position);
       }
 
       _syncAudioServiceQueue();
       _broadcastAudioServiceState();
       _notifyDomainState();
-    });
+    }, 'playNext');
   }
 
-  void addToQueue(domain.MediaItem item) {
+  Future<void> addToQueue(domain.MediaItem item) {
     _userInteractedSinceNoisy = true;
     if (_domainQueue.isEmpty) {
-      loadQueue([item]);
-      return;
+      return loadQueue([item]);
     }
-    _synchronized(() async {
+    return _synchronized(() async {
       final currIdx = _player.currentIndex ?? 0;
-      _domainQueue.add(item);
+      _playOrderQueue.add(item);
+      if (!_originalQueue.any((m) => m.id == item.id)) {
+        _originalQueue.add(item);
+      }
       final source = AudioSource.uri(Uri.parse(item.uri), tag: item.id);
       if (_playlistSource != null) {
         await _playlistSource!.add(source);
       } else {
         final audioSources = _domainQueue.map((m) => AudioSource.uri(Uri.parse(m.uri), tag: m.id)).toList();
         // ignore: deprecated_member_use
-      _playlistSource = ConcatenatingAudioSource(children: audioSources);
+        _playlistSource = ConcatenatingAudioSource(children: audioSources);
         await _player.setAudioSource(_playlistSource!, initialIndex: currIdx, initialPosition: _player.position);
       }
 
       _syncAudioServiceQueue();
       _broadcastAudioServiceState();
       _notifyDomainState();
-    });
+    }, 'addToQueue');
   }
 
   @override
@@ -827,7 +971,8 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return _synchronized(() async {
       final currIdx = _player.currentIndex ?? 0;
       final isRemovingCurrent = (index == currIdx);
-      _domainQueue.removeAt(index);
+      final removedItem = _playOrderQueue.removeAt(index);
+      _originalQueue.removeWhere((item) => item.id == removedItem.id);
 
       if (_domainQueue.isEmpty) {
         await _player.stop();
@@ -849,7 +994,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
           }
           final audioSources = _domainQueue.map((m) => AudioSource.uri(Uri.parse(m.uri), tag: m.id)).toList();
           // ignore: deprecated_member_use
-      _playlistSource = ConcatenatingAudioSource(children: audioSources);
+          _playlistSource = ConcatenatingAudioSource(children: audioSources);
           await _player.setAudioSource(
             _playlistSource!,
             initialIndex: newIdx,
@@ -861,18 +1006,23 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       _syncAudioServiceQueue();
       _broadcastAudioServiceState();
       _notifyDomainState();
-    });
+    }, 'removeQueueItemAt');
   }
 
-  void reorderQueue(int oldIndex, int newIndex) {
+  Future<void> reorderQueue(int oldIndex, int newIndex) {
     _userInteractedSinceNoisy = true;
     if (oldIndex < 0 || oldIndex >= _domainQueue.length || newIndex < 0 || newIndex >= _domainQueue.length) {
-      return;
+      return Future.value();
     }
 
-    _synchronized(() async {
-      final item = _domainQueue.removeAt(oldIndex);
-      _domainQueue.insert(newIndex, item);
+    return _synchronized(() async {
+      final item = _playOrderQueue.removeAt(oldIndex);
+      _playOrderQueue.insert(newIndex, item);
+
+      if (!_shuffleEnabled) {
+        final origItem = _originalQueue.removeAt(oldIndex);
+        _originalQueue.insert(newIndex, origItem);
+      }
 
       if (_playlistSource != null && _playlistSource!.length > oldIndex) {
         await _playlistSource!.move(oldIndex, newIndex);
@@ -889,14 +1039,14 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
         final audioSources = _domainQueue.map((m) => AudioSource.uri(Uri.parse(m.uri), tag: m.id)).toList();
         // ignore: deprecated_member_use
-      _playlistSource = ConcatenatingAudioSource(children: audioSources);
+        _playlistSource = ConcatenatingAudioSource(children: audioSources);
         await _player.setAudioSource(_playlistSource!, initialIndex: updatedIdx, initialPosition: _player.position);
       }
 
       _syncAudioServiceQueue();
       _broadcastAudioServiceState();
       _notifyDomainState();
-    });
+    }, 'reorderQueue');
   }
 
   Future<void> dispose() async {

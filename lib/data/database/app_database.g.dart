@@ -175,6 +175,16 @@ class $MediaItemsTableTable extends MediaItemsTable
     requiredDuringInsert: false,
     defaultValue: const Constant('available'),
   );
+  static const VerificationMeta _sourceMeta = const VerificationMeta('source');
+  @override
+  late final GeneratedColumn<String> source = GeneratedColumn<String>(
+    'source',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('device'),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -193,6 +203,7 @@ class $MediaItemsTableTable extends MediaItemsTable
     playCount,
     isFavorite,
     availability,
+    source,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -316,6 +327,12 @@ class $MediaItemsTableTable extends MediaItemsTable
         ),
       );
     }
+    if (data.containsKey('source')) {
+      context.handle(
+        _sourceMeta,
+        source.isAcceptableOrUnknown(data['source']!, _sourceMeta),
+      );
+    }
     return context;
   }
 
@@ -389,6 +406,10 @@ class $MediaItemsTableTable extends MediaItemsTable
         DriftSqlType.string,
         data['${effectivePrefix}availability'],
       )!,
+      source: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source'],
+      ),
     );
   }
 
@@ -415,6 +436,7 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
   final int playCount;
   final bool isFavorite;
   final String availability;
+  final String? source;
   const MediaItemEntry({
     required this.id,
     required this.uri,
@@ -432,6 +454,7 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     required this.playCount,
     required this.isFavorite,
     required this.availability,
+    this.source,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -464,6 +487,9 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     map['play_count'] = Variable<int>(playCount);
     map['is_favorite'] = Variable<bool>(isFavorite);
     map['availability'] = Variable<String>(availability);
+    if (!nullToAbsent || source != null) {
+      map['source'] = Variable<String>(source);
+    }
     return map;
   }
 
@@ -497,6 +523,9 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       playCount: Value(playCount),
       isFavorite: Value(isFavorite),
       availability: Value(availability),
+      source: source == null && nullToAbsent
+          ? const Value.absent()
+          : Value(source),
     );
   }
 
@@ -522,6 +551,7 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       playCount: serializer.fromJson<int>(json['playCount']),
       isFavorite: serializer.fromJson<bool>(json['isFavorite']),
       availability: serializer.fromJson<String>(json['availability']),
+      source: serializer.fromJson<String?>(json['source']),
     );
   }
   @override
@@ -544,6 +574,7 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       'playCount': serializer.toJson<int>(playCount),
       'isFavorite': serializer.toJson<bool>(isFavorite),
       'availability': serializer.toJson<String>(availability),
+      'source': serializer.toJson<String?>(source),
     };
   }
 
@@ -564,6 +595,7 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     int? playCount,
     bool? isFavorite,
     String? availability,
+    Value<String?> source = const Value.absent(),
   }) => MediaItemEntry(
     id: id ?? this.id,
     uri: uri ?? this.uri,
@@ -581,6 +613,7 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     playCount: playCount ?? this.playCount,
     isFavorite: isFavorite ?? this.isFavorite,
     availability: availability ?? this.availability,
+    source: source.present ? source.value : this.source,
   );
   MediaItemEntry copyWithCompanion(MediaItemsTableCompanion data) {
     return MediaItemEntry(
@@ -608,6 +641,7 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       availability: data.availability.present
           ? data.availability.value
           : this.availability,
+      source: data.source.present ? data.source.value : this.source,
     );
   }
 
@@ -629,7 +663,8 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
           ..write('lastPlayed: $lastPlayed, ')
           ..write('playCount: $playCount, ')
           ..write('isFavorite: $isFavorite, ')
-          ..write('availability: $availability')
+          ..write('availability: $availability, ')
+          ..write('source: $source')
           ..write(')'))
         .toString();
   }
@@ -652,6 +687,7 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     playCount,
     isFavorite,
     availability,
+    source,
   );
   @override
   bool operator ==(Object other) =>
@@ -672,7 +708,8 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
           other.lastPlayed == this.lastPlayed &&
           other.playCount == this.playCount &&
           other.isFavorite == this.isFavorite &&
-          other.availability == this.availability);
+          other.availability == this.availability &&
+          other.source == this.source);
 }
 
 class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
@@ -692,6 +729,7 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
   final Value<int> playCount;
   final Value<bool> isFavorite;
   final Value<String> availability;
+  final Value<String?> source;
   final Value<int> rowid;
   const MediaItemsTableCompanion({
     this.id = const Value.absent(),
@@ -710,6 +748,7 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     this.playCount = const Value.absent(),
     this.isFavorite = const Value.absent(),
     this.availability = const Value.absent(),
+    this.source = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MediaItemsTableCompanion.insert({
@@ -729,6 +768,7 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     this.playCount = const Value.absent(),
     this.isFavorite = const Value.absent(),
     this.availability = const Value.absent(),
+    this.source = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        uri = Value(uri),
@@ -754,6 +794,7 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     Expression<int>? playCount,
     Expression<bool>? isFavorite,
     Expression<String>? availability,
+    Expression<String>? source,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -773,6 +814,7 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
       if (playCount != null) 'play_count': playCount,
       if (isFavorite != null) 'is_favorite': isFavorite,
       if (availability != null) 'availability': availability,
+      if (source != null) 'source': source,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -794,6 +836,7 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     Value<int>? playCount,
     Value<bool>? isFavorite,
     Value<String>? availability,
+    Value<String?>? source,
     Value<int>? rowid,
   }) {
     return MediaItemsTableCompanion(
@@ -813,6 +856,7 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
       playCount: playCount ?? this.playCount,
       isFavorite: isFavorite ?? this.isFavorite,
       availability: availability ?? this.availability,
+      source: source ?? this.source,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -868,6 +912,9 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     if (availability.present) {
       map['availability'] = Variable<String>(availability.value);
     }
+    if (source.present) {
+      map['source'] = Variable<String>(source.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -893,6 +940,7 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
           ..write('playCount: $playCount, ')
           ..write('isFavorite: $isFavorite, ')
           ..write('availability: $availability, ')
+          ..write('source: $source, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -2463,6 +2511,968 @@ class PlaylistItemsTableCompanion extends UpdateCompanion<PlaylistItemEntry> {
   }
 }
 
+class $DownloadsTableTable extends DownloadsTable
+    with TableInfo<$DownloadsTableTable, DownloadEntry> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DownloadsTableTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _urlMeta = const VerificationMeta('url');
+  @override
+  late final GeneratedColumn<String> url = GeneratedColumn<String>(
+    'url',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _hostMeta = const VerificationMeta('host');
+  @override
+  late final GeneratedColumn<String> host = GeneratedColumn<String>(
+    'host',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _displayNameMeta = const VerificationMeta(
+    'displayName',
+  );
+  @override
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _fileNameMeta = const VerificationMeta(
+    'fileName',
+  );
+  @override
+  late final GeneratedColumn<String> fileName = GeneratedColumn<String>(
+    'file_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+    'state',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _receivedBytesMeta = const VerificationMeta(
+    'receivedBytes',
+  );
+  @override
+  late final GeneratedColumn<int> receivedBytes = GeneratedColumn<int>(
+    'received_bytes',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _totalBytesMeta = const VerificationMeta(
+    'totalBytes',
+  );
+  @override
+  late final GeneratedColumn<int> totalBytes = GeneratedColumn<int>(
+    'total_bytes',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _etagMeta = const VerificationMeta('etag');
+  @override
+  late final GeneratedColumn<String> etag = GeneratedColumn<String>(
+    'etag',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastModifiedMeta = const VerificationMeta(
+    'lastModified',
+  );
+  @override
+  late final GeneratedColumn<String> lastModified = GeneratedColumn<String>(
+    'last_modified',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _supportsRangeMeta = const VerificationMeta(
+    'supportsRange',
+  );
+  @override
+  late final GeneratedColumn<bool> supportsRange = GeneratedColumn<bool>(
+    'supports_range',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("supports_range" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _mimeTypeMeta = const VerificationMeta(
+    'mimeType',
+  );
+  @override
+  late final GeneratedColumn<String> mimeType = GeneratedColumn<String>(
+    'mime_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _errorCodeMeta = const VerificationMeta(
+    'errorCode',
+  );
+  @override
+  late final GeneratedColumn<String> errorCode = GeneratedColumn<String>(
+    'error_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _finalPathMeta = const VerificationMeta(
+    'finalPath',
+  );
+  @override
+  late final GeneratedColumn<String> finalPath = GeneratedColumn<String>(
+    'final_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _mediaIdMeta = const VerificationMeta(
+    'mediaId',
+  );
+  @override
+  late final GeneratedColumn<String> mediaId = GeneratedColumn<String>(
+    'media_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    url,
+    host,
+    displayName,
+    fileName,
+    state,
+    receivedBytes,
+    totalBytes,
+    etag,
+    lastModified,
+    supportsRange,
+    mimeType,
+    errorCode,
+    createdAt,
+    updatedAt,
+    finalPath,
+    mediaId,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'downloads_table';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DownloadEntry> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('url')) {
+      context.handle(
+        _urlMeta,
+        url.isAcceptableOrUnknown(data['url']!, _urlMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_urlMeta);
+    }
+    if (data.containsKey('host')) {
+      context.handle(
+        _hostMeta,
+        host.isAcceptableOrUnknown(data['host']!, _hostMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_hostMeta);
+    }
+    if (data.containsKey('display_name')) {
+      context.handle(
+        _displayNameMeta,
+        displayName.isAcceptableOrUnknown(
+          data['display_name']!,
+          _displayNameMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_displayNameMeta);
+    }
+    if (data.containsKey('file_name')) {
+      context.handle(
+        _fileNameMeta,
+        fileName.isAcceptableOrUnknown(data['file_name']!, _fileNameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_fileNameMeta);
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+        _stateMeta,
+        state.isAcceptableOrUnknown(data['state']!, _stateMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_stateMeta);
+    }
+    if (data.containsKey('received_bytes')) {
+      context.handle(
+        _receivedBytesMeta,
+        receivedBytes.isAcceptableOrUnknown(
+          data['received_bytes']!,
+          _receivedBytesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('total_bytes')) {
+      context.handle(
+        _totalBytesMeta,
+        totalBytes.isAcceptableOrUnknown(data['total_bytes']!, _totalBytesMeta),
+      );
+    }
+    if (data.containsKey('etag')) {
+      context.handle(
+        _etagMeta,
+        etag.isAcceptableOrUnknown(data['etag']!, _etagMeta),
+      );
+    }
+    if (data.containsKey('last_modified')) {
+      context.handle(
+        _lastModifiedMeta,
+        lastModified.isAcceptableOrUnknown(
+          data['last_modified']!,
+          _lastModifiedMeta,
+        ),
+      );
+    }
+    if (data.containsKey('supports_range')) {
+      context.handle(
+        _supportsRangeMeta,
+        supportsRange.isAcceptableOrUnknown(
+          data['supports_range']!,
+          _supportsRangeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('mime_type')) {
+      context.handle(
+        _mimeTypeMeta,
+        mimeType.isAcceptableOrUnknown(data['mime_type']!, _mimeTypeMeta),
+      );
+    }
+    if (data.containsKey('error_code')) {
+      context.handle(
+        _errorCodeMeta,
+        errorCode.isAcceptableOrUnknown(data['error_code']!, _errorCodeMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    if (data.containsKey('final_path')) {
+      context.handle(
+        _finalPathMeta,
+        finalPath.isAcceptableOrUnknown(data['final_path']!, _finalPathMeta),
+      );
+    }
+    if (data.containsKey('media_id')) {
+      context.handle(
+        _mediaIdMeta,
+        mediaId.isAcceptableOrUnknown(data['media_id']!, _mediaIdMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  DownloadEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DownloadEntry(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      url: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}url'],
+      )!,
+      host: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}host'],
+      )!,
+      displayName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}display_name'],
+      )!,
+      fileName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}file_name'],
+      )!,
+      state: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state'],
+      )!,
+      receivedBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}received_bytes'],
+      )!,
+      totalBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}total_bytes'],
+      ),
+      etag: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}etag'],
+      ),
+      lastModified: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_modified'],
+      ),
+      supportsRange: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}supports_range'],
+      )!,
+      mimeType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}mime_type'],
+      ),
+      errorCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}error_code'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+      finalPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}final_path'],
+      ),
+      mediaId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}media_id'],
+      ),
+    );
+  }
+
+  @override
+  $DownloadsTableTable createAlias(String alias) {
+    return $DownloadsTableTable(attachedDatabase, alias);
+  }
+}
+
+class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
+  final String id;
+  final String url;
+  final String host;
+  final String displayName;
+  final String fileName;
+  final String state;
+  final int receivedBytes;
+  final int? totalBytes;
+  final String? etag;
+  final String? lastModified;
+  final bool supportsRange;
+  final String? mimeType;
+  final String? errorCode;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final String? finalPath;
+  final String? mediaId;
+  const DownloadEntry({
+    required this.id,
+    required this.url,
+    required this.host,
+    required this.displayName,
+    required this.fileName,
+    required this.state,
+    required this.receivedBytes,
+    this.totalBytes,
+    this.etag,
+    this.lastModified,
+    required this.supportsRange,
+    this.mimeType,
+    this.errorCode,
+    required this.createdAt,
+    required this.updatedAt,
+    this.finalPath,
+    this.mediaId,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['url'] = Variable<String>(url);
+    map['host'] = Variable<String>(host);
+    map['display_name'] = Variable<String>(displayName);
+    map['file_name'] = Variable<String>(fileName);
+    map['state'] = Variable<String>(state);
+    map['received_bytes'] = Variable<int>(receivedBytes);
+    if (!nullToAbsent || totalBytes != null) {
+      map['total_bytes'] = Variable<int>(totalBytes);
+    }
+    if (!nullToAbsent || etag != null) {
+      map['etag'] = Variable<String>(etag);
+    }
+    if (!nullToAbsent || lastModified != null) {
+      map['last_modified'] = Variable<String>(lastModified);
+    }
+    map['supports_range'] = Variable<bool>(supportsRange);
+    if (!nullToAbsent || mimeType != null) {
+      map['mime_type'] = Variable<String>(mimeType);
+    }
+    if (!nullToAbsent || errorCode != null) {
+      map['error_code'] = Variable<String>(errorCode);
+    }
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    if (!nullToAbsent || finalPath != null) {
+      map['final_path'] = Variable<String>(finalPath);
+    }
+    if (!nullToAbsent || mediaId != null) {
+      map['media_id'] = Variable<String>(mediaId);
+    }
+    return map;
+  }
+
+  DownloadsTableCompanion toCompanion(bool nullToAbsent) {
+    return DownloadsTableCompanion(
+      id: Value(id),
+      url: Value(url),
+      host: Value(host),
+      displayName: Value(displayName),
+      fileName: Value(fileName),
+      state: Value(state),
+      receivedBytes: Value(receivedBytes),
+      totalBytes: totalBytes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(totalBytes),
+      etag: etag == null && nullToAbsent ? const Value.absent() : Value(etag),
+      lastModified: lastModified == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastModified),
+      supportsRange: Value(supportsRange),
+      mimeType: mimeType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mimeType),
+      errorCode: errorCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(errorCode),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+      finalPath: finalPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(finalPath),
+      mediaId: mediaId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mediaId),
+    );
+  }
+
+  factory DownloadEntry.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DownloadEntry(
+      id: serializer.fromJson<String>(json['id']),
+      url: serializer.fromJson<String>(json['url']),
+      host: serializer.fromJson<String>(json['host']),
+      displayName: serializer.fromJson<String>(json['displayName']),
+      fileName: serializer.fromJson<String>(json['fileName']),
+      state: serializer.fromJson<String>(json['state']),
+      receivedBytes: serializer.fromJson<int>(json['receivedBytes']),
+      totalBytes: serializer.fromJson<int?>(json['totalBytes']),
+      etag: serializer.fromJson<String?>(json['etag']),
+      lastModified: serializer.fromJson<String?>(json['lastModified']),
+      supportsRange: serializer.fromJson<bool>(json['supportsRange']),
+      mimeType: serializer.fromJson<String?>(json['mimeType']),
+      errorCode: serializer.fromJson<String?>(json['errorCode']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+      finalPath: serializer.fromJson<String?>(json['finalPath']),
+      mediaId: serializer.fromJson<String?>(json['mediaId']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'url': serializer.toJson<String>(url),
+      'host': serializer.toJson<String>(host),
+      'displayName': serializer.toJson<String>(displayName),
+      'fileName': serializer.toJson<String>(fileName),
+      'state': serializer.toJson<String>(state),
+      'receivedBytes': serializer.toJson<int>(receivedBytes),
+      'totalBytes': serializer.toJson<int?>(totalBytes),
+      'etag': serializer.toJson<String?>(etag),
+      'lastModified': serializer.toJson<String?>(lastModified),
+      'supportsRange': serializer.toJson<bool>(supportsRange),
+      'mimeType': serializer.toJson<String?>(mimeType),
+      'errorCode': serializer.toJson<String?>(errorCode),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+      'finalPath': serializer.toJson<String?>(finalPath),
+      'mediaId': serializer.toJson<String?>(mediaId),
+    };
+  }
+
+  DownloadEntry copyWith({
+    String? id,
+    String? url,
+    String? host,
+    String? displayName,
+    String? fileName,
+    String? state,
+    int? receivedBytes,
+    Value<int?> totalBytes = const Value.absent(),
+    Value<String?> etag = const Value.absent(),
+    Value<String?> lastModified = const Value.absent(),
+    bool? supportsRange,
+    Value<String?> mimeType = const Value.absent(),
+    Value<String?> errorCode = const Value.absent(),
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    Value<String?> finalPath = const Value.absent(),
+    Value<String?> mediaId = const Value.absent(),
+  }) => DownloadEntry(
+    id: id ?? this.id,
+    url: url ?? this.url,
+    host: host ?? this.host,
+    displayName: displayName ?? this.displayName,
+    fileName: fileName ?? this.fileName,
+    state: state ?? this.state,
+    receivedBytes: receivedBytes ?? this.receivedBytes,
+    totalBytes: totalBytes.present ? totalBytes.value : this.totalBytes,
+    etag: etag.present ? etag.value : this.etag,
+    lastModified: lastModified.present ? lastModified.value : this.lastModified,
+    supportsRange: supportsRange ?? this.supportsRange,
+    mimeType: mimeType.present ? mimeType.value : this.mimeType,
+    errorCode: errorCode.present ? errorCode.value : this.errorCode,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    finalPath: finalPath.present ? finalPath.value : this.finalPath,
+    mediaId: mediaId.present ? mediaId.value : this.mediaId,
+  );
+  DownloadEntry copyWithCompanion(DownloadsTableCompanion data) {
+    return DownloadEntry(
+      id: data.id.present ? data.id.value : this.id,
+      url: data.url.present ? data.url.value : this.url,
+      host: data.host.present ? data.host.value : this.host,
+      displayName: data.displayName.present
+          ? data.displayName.value
+          : this.displayName,
+      fileName: data.fileName.present ? data.fileName.value : this.fileName,
+      state: data.state.present ? data.state.value : this.state,
+      receivedBytes: data.receivedBytes.present
+          ? data.receivedBytes.value
+          : this.receivedBytes,
+      totalBytes: data.totalBytes.present
+          ? data.totalBytes.value
+          : this.totalBytes,
+      etag: data.etag.present ? data.etag.value : this.etag,
+      lastModified: data.lastModified.present
+          ? data.lastModified.value
+          : this.lastModified,
+      supportsRange: data.supportsRange.present
+          ? data.supportsRange.value
+          : this.supportsRange,
+      mimeType: data.mimeType.present ? data.mimeType.value : this.mimeType,
+      errorCode: data.errorCode.present ? data.errorCode.value : this.errorCode,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      finalPath: data.finalPath.present ? data.finalPath.value : this.finalPath,
+      mediaId: data.mediaId.present ? data.mediaId.value : this.mediaId,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DownloadEntry(')
+          ..write('id: $id, ')
+          ..write('url: $url, ')
+          ..write('host: $host, ')
+          ..write('displayName: $displayName, ')
+          ..write('fileName: $fileName, ')
+          ..write('state: $state, ')
+          ..write('receivedBytes: $receivedBytes, ')
+          ..write('totalBytes: $totalBytes, ')
+          ..write('etag: $etag, ')
+          ..write('lastModified: $lastModified, ')
+          ..write('supportsRange: $supportsRange, ')
+          ..write('mimeType: $mimeType, ')
+          ..write('errorCode: $errorCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('finalPath: $finalPath, ')
+          ..write('mediaId: $mediaId')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    url,
+    host,
+    displayName,
+    fileName,
+    state,
+    receivedBytes,
+    totalBytes,
+    etag,
+    lastModified,
+    supportsRange,
+    mimeType,
+    errorCode,
+    createdAt,
+    updatedAt,
+    finalPath,
+    mediaId,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DownloadEntry &&
+          other.id == this.id &&
+          other.url == this.url &&
+          other.host == this.host &&
+          other.displayName == this.displayName &&
+          other.fileName == this.fileName &&
+          other.state == this.state &&
+          other.receivedBytes == this.receivedBytes &&
+          other.totalBytes == this.totalBytes &&
+          other.etag == this.etag &&
+          other.lastModified == this.lastModified &&
+          other.supportsRange == this.supportsRange &&
+          other.mimeType == this.mimeType &&
+          other.errorCode == this.errorCode &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt &&
+          other.finalPath == this.finalPath &&
+          other.mediaId == this.mediaId);
+}
+
+class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
+  final Value<String> id;
+  final Value<String> url;
+  final Value<String> host;
+  final Value<String> displayName;
+  final Value<String> fileName;
+  final Value<String> state;
+  final Value<int> receivedBytes;
+  final Value<int?> totalBytes;
+  final Value<String?> etag;
+  final Value<String?> lastModified;
+  final Value<bool> supportsRange;
+  final Value<String?> mimeType;
+  final Value<String?> errorCode;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<String?> finalPath;
+  final Value<String?> mediaId;
+  final Value<int> rowid;
+  const DownloadsTableCompanion({
+    this.id = const Value.absent(),
+    this.url = const Value.absent(),
+    this.host = const Value.absent(),
+    this.displayName = const Value.absent(),
+    this.fileName = const Value.absent(),
+    this.state = const Value.absent(),
+    this.receivedBytes = const Value.absent(),
+    this.totalBytes = const Value.absent(),
+    this.etag = const Value.absent(),
+    this.lastModified = const Value.absent(),
+    this.supportsRange = const Value.absent(),
+    this.mimeType = const Value.absent(),
+    this.errorCode = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.finalPath = const Value.absent(),
+    this.mediaId = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DownloadsTableCompanion.insert({
+    required String id,
+    required String url,
+    required String host,
+    required String displayName,
+    required String fileName,
+    required String state,
+    this.receivedBytes = const Value.absent(),
+    this.totalBytes = const Value.absent(),
+    this.etag = const Value.absent(),
+    this.lastModified = const Value.absent(),
+    this.supportsRange = const Value.absent(),
+    this.mimeType = const Value.absent(),
+    this.errorCode = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    this.finalPath = const Value.absent(),
+    this.mediaId = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       url = Value(url),
+       host = Value(host),
+       displayName = Value(displayName),
+       fileName = Value(fileName),
+       state = Value(state),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<DownloadEntry> custom({
+    Expression<String>? id,
+    Expression<String>? url,
+    Expression<String>? host,
+    Expression<String>? displayName,
+    Expression<String>? fileName,
+    Expression<String>? state,
+    Expression<int>? receivedBytes,
+    Expression<int>? totalBytes,
+    Expression<String>? etag,
+    Expression<String>? lastModified,
+    Expression<bool>? supportsRange,
+    Expression<String>? mimeType,
+    Expression<String>? errorCode,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+    Expression<String>? finalPath,
+    Expression<String>? mediaId,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (url != null) 'url': url,
+      if (host != null) 'host': host,
+      if (displayName != null) 'display_name': displayName,
+      if (fileName != null) 'file_name': fileName,
+      if (state != null) 'state': state,
+      if (receivedBytes != null) 'received_bytes': receivedBytes,
+      if (totalBytes != null) 'total_bytes': totalBytes,
+      if (etag != null) 'etag': etag,
+      if (lastModified != null) 'last_modified': lastModified,
+      if (supportsRange != null) 'supports_range': supportsRange,
+      if (mimeType != null) 'mime_type': mimeType,
+      if (errorCode != null) 'error_code': errorCode,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (finalPath != null) 'final_path': finalPath,
+      if (mediaId != null) 'media_id': mediaId,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DownloadsTableCompanion copyWith({
+    Value<String>? id,
+    Value<String>? url,
+    Value<String>? host,
+    Value<String>? displayName,
+    Value<String>? fileName,
+    Value<String>? state,
+    Value<int>? receivedBytes,
+    Value<int?>? totalBytes,
+    Value<String?>? etag,
+    Value<String?>? lastModified,
+    Value<bool>? supportsRange,
+    Value<String?>? mimeType,
+    Value<String?>? errorCode,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<String?>? finalPath,
+    Value<String?>? mediaId,
+    Value<int>? rowid,
+  }) {
+    return DownloadsTableCompanion(
+      id: id ?? this.id,
+      url: url ?? this.url,
+      host: host ?? this.host,
+      displayName: displayName ?? this.displayName,
+      fileName: fileName ?? this.fileName,
+      state: state ?? this.state,
+      receivedBytes: receivedBytes ?? this.receivedBytes,
+      totalBytes: totalBytes ?? this.totalBytes,
+      etag: etag ?? this.etag,
+      lastModified: lastModified ?? this.lastModified,
+      supportsRange: supportsRange ?? this.supportsRange,
+      mimeType: mimeType ?? this.mimeType,
+      errorCode: errorCode ?? this.errorCode,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      finalPath: finalPath ?? this.finalPath,
+      mediaId: mediaId ?? this.mediaId,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (url.present) {
+      map['url'] = Variable<String>(url.value);
+    }
+    if (host.present) {
+      map['host'] = Variable<String>(host.value);
+    }
+    if (displayName.present) {
+      map['display_name'] = Variable<String>(displayName.value);
+    }
+    if (fileName.present) {
+      map['file_name'] = Variable<String>(fileName.value);
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (receivedBytes.present) {
+      map['received_bytes'] = Variable<int>(receivedBytes.value);
+    }
+    if (totalBytes.present) {
+      map['total_bytes'] = Variable<int>(totalBytes.value);
+    }
+    if (etag.present) {
+      map['etag'] = Variable<String>(etag.value);
+    }
+    if (lastModified.present) {
+      map['last_modified'] = Variable<String>(lastModified.value);
+    }
+    if (supportsRange.present) {
+      map['supports_range'] = Variable<bool>(supportsRange.value);
+    }
+    if (mimeType.present) {
+      map['mime_type'] = Variable<String>(mimeType.value);
+    }
+    if (errorCode.present) {
+      map['error_code'] = Variable<String>(errorCode.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (finalPath.present) {
+      map['final_path'] = Variable<String>(finalPath.value);
+    }
+    if (mediaId.present) {
+      map['media_id'] = Variable<String>(mediaId.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DownloadsTableCompanion(')
+          ..write('id: $id, ')
+          ..write('url: $url, ')
+          ..write('host: $host, ')
+          ..write('displayName: $displayName, ')
+          ..write('fileName: $fileName, ')
+          ..write('state: $state, ')
+          ..write('receivedBytes: $receivedBytes, ')
+          ..write('totalBytes: $totalBytes, ')
+          ..write('etag: $etag, ')
+          ..write('lastModified: $lastModified, ')
+          ..write('supportsRange: $supportsRange, ')
+          ..write('mimeType: $mimeType, ')
+          ..write('errorCode: $errorCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('finalPath: $finalPath, ')
+          ..write('mediaId: $mediaId, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -2476,6 +3486,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $PlaylistsTableTable playlistsTable = $PlaylistsTableTable(this);
   late final $PlaylistItemsTableTable playlistItemsTable =
       $PlaylistItemsTableTable(this);
+  late final $DownloadsTableTable downloadsTable = $DownloadsTableTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -2486,6 +3497,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     videoProgressTable,
     playlistsTable,
     playlistItemsTable,
+    downloadsTable,
   ];
 }
 
@@ -2507,6 +3519,7 @@ typedef $$MediaItemsTableTableCreateCompanionBuilder =
       Value<int> playCount,
       Value<bool> isFavorite,
       Value<String> availability,
+      Value<String?> source,
       Value<int> rowid,
     });
 typedef $$MediaItemsTableTableUpdateCompanionBuilder =
@@ -2527,6 +3540,7 @@ typedef $$MediaItemsTableTableUpdateCompanionBuilder =
       Value<int> playCount,
       Value<bool> isFavorite,
       Value<String> availability,
+      Value<String?> source,
       Value<int> rowid,
     });
 
@@ -2616,6 +3630,11 @@ class $$MediaItemsTableTableFilterComposer
 
   ColumnFilters<String> get availability => $composableBuilder(
     column: $table.availability,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get source => $composableBuilder(
+    column: $table.source,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -2708,6 +3727,11 @@ class $$MediaItemsTableTableOrderingComposer
     column: $table.availability,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get source => $composableBuilder(
+    column: $table.source,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MediaItemsTableTableAnnotationComposer
@@ -2774,6 +3798,9 @@ class $$MediaItemsTableTableAnnotationComposer
     column: $table.availability,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get source =>
+      $composableBuilder(column: $table.source, builder: (column) => column);
 }
 
 class $$MediaItemsTableTableTableManager
@@ -2829,6 +3856,7 @@ class $$MediaItemsTableTableTableManager
                 Value<int> playCount = const Value.absent(),
                 Value<bool> isFavorite = const Value.absent(),
                 Value<String> availability = const Value.absent(),
+                Value<String?> source = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MediaItemsTableCompanion(
                 id: id,
@@ -2847,6 +3875,7 @@ class $$MediaItemsTableTableTableManager
                 playCount: playCount,
                 isFavorite: isFavorite,
                 availability: availability,
+                source: source,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -2867,6 +3896,7 @@ class $$MediaItemsTableTableTableManager
                 Value<int> playCount = const Value.absent(),
                 Value<bool> isFavorite = const Value.absent(),
                 Value<String> availability = const Value.absent(),
+                Value<String?> source = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MediaItemsTableCompanion.insert(
                 id: id,
@@ -2885,6 +3915,7 @@ class $$MediaItemsTableTableTableManager
                 playCount: playCount,
                 isFavorite: isFavorite,
                 availability: availability,
+                source: source,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -3855,6 +4886,455 @@ typedef $$PlaylistItemsTableTableProcessedTableManager =
       PlaylistItemEntry,
       PrefetchHooks Function()
     >;
+typedef $$DownloadsTableTableCreateCompanionBuilder =
+    DownloadsTableCompanion Function({
+      required String id,
+      required String url,
+      required String host,
+      required String displayName,
+      required String fileName,
+      required String state,
+      Value<int> receivedBytes,
+      Value<int?> totalBytes,
+      Value<String?> etag,
+      Value<String?> lastModified,
+      Value<bool> supportsRange,
+      Value<String?> mimeType,
+      Value<String?> errorCode,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+      Value<String?> finalPath,
+      Value<String?> mediaId,
+      Value<int> rowid,
+    });
+typedef $$DownloadsTableTableUpdateCompanionBuilder =
+    DownloadsTableCompanion Function({
+      Value<String> id,
+      Value<String> url,
+      Value<String> host,
+      Value<String> displayName,
+      Value<String> fileName,
+      Value<String> state,
+      Value<int> receivedBytes,
+      Value<int?> totalBytes,
+      Value<String?> etag,
+      Value<String?> lastModified,
+      Value<bool> supportsRange,
+      Value<String?> mimeType,
+      Value<String?> errorCode,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<String?> finalPath,
+      Value<String?> mediaId,
+      Value<int> rowid,
+    });
+
+class $$DownloadsTableTableFilterComposer
+    extends Composer<_$AppDatabase, $DownloadsTableTable> {
+  $$DownloadsTableTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get url => $composableBuilder(
+    column: $table.url,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get host => $composableBuilder(
+    column: $table.host,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get fileName => $composableBuilder(
+    column: $table.fileName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get receivedBytes => $composableBuilder(
+    column: $table.receivedBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get totalBytes => $composableBuilder(
+    column: $table.totalBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get etag => $composableBuilder(
+    column: $table.etag,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lastModified => $composableBuilder(
+    column: $table.lastModified,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get supportsRange => $composableBuilder(
+    column: $table.supportsRange,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get mimeType => $composableBuilder(
+    column: $table.mimeType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get finalPath => $composableBuilder(
+    column: $table.finalPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get mediaId => $composableBuilder(
+    column: $table.mediaId,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DownloadsTableTableOrderingComposer
+    extends Composer<_$AppDatabase, $DownloadsTableTable> {
+  $$DownloadsTableTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get url => $composableBuilder(
+    column: $table.url,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get host => $composableBuilder(
+    column: $table.host,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get fileName => $composableBuilder(
+    column: $table.fileName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get receivedBytes => $composableBuilder(
+    column: $table.receivedBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get totalBytes => $composableBuilder(
+    column: $table.totalBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get etag => $composableBuilder(
+    column: $table.etag,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastModified => $composableBuilder(
+    column: $table.lastModified,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get supportsRange => $composableBuilder(
+    column: $table.supportsRange,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get mimeType => $composableBuilder(
+    column: $table.mimeType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get finalPath => $composableBuilder(
+    column: $table.finalPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get mediaId => $composableBuilder(
+    column: $table.mediaId,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DownloadsTableTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DownloadsTableTable> {
+  $$DownloadsTableTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get url =>
+      $composableBuilder(column: $table.url, builder: (column) => column);
+
+  GeneratedColumn<String> get host =>
+      $composableBuilder(column: $table.host, builder: (column) => column);
+
+  GeneratedColumn<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get fileName =>
+      $composableBuilder(column: $table.fileName, builder: (column) => column);
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<int> get receivedBytes => $composableBuilder(
+    column: $table.receivedBytes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get totalBytes => $composableBuilder(
+    column: $table.totalBytes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get etag =>
+      $composableBuilder(column: $table.etag, builder: (column) => column);
+
+  GeneratedColumn<String> get lastModified => $composableBuilder(
+    column: $table.lastModified,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get supportsRange => $composableBuilder(
+    column: $table.supportsRange,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get mimeType =>
+      $composableBuilder(column: $table.mimeType, builder: (column) => column);
+
+  GeneratedColumn<String> get errorCode =>
+      $composableBuilder(column: $table.errorCode, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get finalPath =>
+      $composableBuilder(column: $table.finalPath, builder: (column) => column);
+
+  GeneratedColumn<String> get mediaId =>
+      $composableBuilder(column: $table.mediaId, builder: (column) => column);
+}
+
+class $$DownloadsTableTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DownloadsTableTable,
+          DownloadEntry,
+          $$DownloadsTableTableFilterComposer,
+          $$DownloadsTableTableOrderingComposer,
+          $$DownloadsTableTableAnnotationComposer,
+          $$DownloadsTableTableCreateCompanionBuilder,
+          $$DownloadsTableTableUpdateCompanionBuilder,
+          (
+            DownloadEntry,
+            BaseReferences<_$AppDatabase, $DownloadsTableTable, DownloadEntry>,
+          ),
+          DownloadEntry,
+          PrefetchHooks Function()
+        > {
+  $$DownloadsTableTableTableManager(
+    _$AppDatabase db,
+    $DownloadsTableTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DownloadsTableTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DownloadsTableTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DownloadsTableTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> url = const Value.absent(),
+                Value<String> host = const Value.absent(),
+                Value<String> displayName = const Value.absent(),
+                Value<String> fileName = const Value.absent(),
+                Value<String> state = const Value.absent(),
+                Value<int> receivedBytes = const Value.absent(),
+                Value<int?> totalBytes = const Value.absent(),
+                Value<String?> etag = const Value.absent(),
+                Value<String?> lastModified = const Value.absent(),
+                Value<bool> supportsRange = const Value.absent(),
+                Value<String?> mimeType = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<String?> finalPath = const Value.absent(),
+                Value<String?> mediaId = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DownloadsTableCompanion(
+                id: id,
+                url: url,
+                host: host,
+                displayName: displayName,
+                fileName: fileName,
+                state: state,
+                receivedBytes: receivedBytes,
+                totalBytes: totalBytes,
+                etag: etag,
+                lastModified: lastModified,
+                supportsRange: supportsRange,
+                mimeType: mimeType,
+                errorCode: errorCode,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                finalPath: finalPath,
+                mediaId: mediaId,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String url,
+                required String host,
+                required String displayName,
+                required String fileName,
+                required String state,
+                Value<int> receivedBytes = const Value.absent(),
+                Value<int?> totalBytes = const Value.absent(),
+                Value<String?> etag = const Value.absent(),
+                Value<String?> lastModified = const Value.absent(),
+                Value<bool> supportsRange = const Value.absent(),
+                Value<String?> mimeType = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime updatedAt,
+                Value<String?> finalPath = const Value.absent(),
+                Value<String?> mediaId = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DownloadsTableCompanion.insert(
+                id: id,
+                url: url,
+                host: host,
+                displayName: displayName,
+                fileName: fileName,
+                state: state,
+                receivedBytes: receivedBytes,
+                totalBytes: totalBytes,
+                etag: etag,
+                lastModified: lastModified,
+                supportsRange: supportsRange,
+                mimeType: mimeType,
+                errorCode: errorCode,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                finalPath: finalPath,
+                mediaId: mediaId,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$DownloadsTableTable, DownloadEntry>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $DownloadsTableTable,
+                    DownloadEntry
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DownloadsTableTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DownloadsTableTable,
+      DownloadEntry,
+      $$DownloadsTableTableFilterComposer,
+      $$DownloadsTableTableOrderingComposer,
+      $$DownloadsTableTableAnnotationComposer,
+      $$DownloadsTableTableCreateCompanionBuilder,
+      $$DownloadsTableTableUpdateCompanionBuilder,
+      (
+        DownloadEntry,
+        BaseReferences<_$AppDatabase, $DownloadsTableTable, DownloadEntry>,
+      ),
+      DownloadEntry,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -3869,4 +5349,6 @@ class $AppDatabaseManager {
       $$PlaylistsTableTableTableManager(_db, _db.playlistsTable);
   $$PlaylistItemsTableTableTableManager get playlistItemsTable =>
       $$PlaylistItemsTableTableTableManager(_db, _db.playlistItemsTable);
+  $$DownloadsTableTableTableManager get downloadsTable =>
+      $$DownloadsTableTableTableManager(_db, _db.downloadsTable);
 }

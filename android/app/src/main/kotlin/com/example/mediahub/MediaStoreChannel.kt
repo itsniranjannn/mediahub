@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.StatFs
 import android.provider.MediaStore
 import android.util.Size
 import io.flutter.plugin.common.BinaryMessenger
@@ -85,6 +86,18 @@ class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger
                         safeResult.success(bytes)
                     } catch (e: Exception) {
                         safeResult.success(null)
+                    }
+                }
+            }
+            "freeSpaceBytes" -> {
+                scanExecutor.execute {
+                    try {
+                        val filesDir = context.filesDir
+                        val stat = StatFs(filesDir.path)
+                        val availableBytes = stat.availableBytes
+                        safeResult.success(availableBytes)
+                    } catch (e: Exception) {
+                        safeResult.error("STATFS_FAILED", e.localizedMessage ?: "Failed to get free space", null)
                     }
                 }
             }

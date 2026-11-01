@@ -5,8 +5,8 @@ import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
-import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/playback_state.dart' as domain;
+import '../../shared/widgets/favorite_feedback_button.dart';
 import '../library/media_context_menu.dart';
 import 'playback_notifier.dart';
 import 'queue_sheet.dart';
@@ -154,33 +154,16 @@ class _NowPlayingSheetState extends ConsumerState<NowPlayingSheet> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Semantics(
-                      label: currentItem?.isFavorite ?? false
-                          ? 'Remove from favorites'
-                          : 'Add to favorites',
-                      button: true,
-                      child: IconButton(
+                    if (currentItem != null)
+                      FavoriteFeedbackButton(
+                        key: ValueKey('fav_${currentItem.id}'),
+                        itemId: currentItem.id,
+                        isFavorite: currentItem.isFavorite,
+                        size: 26,
                         constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                        icon: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 160),
-                          transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
-                          child: Icon(
-                            currentItem?.isFavorite ?? false
-                                ? Icons.favorite_rounded
-                                : Icons.favorite_border_rounded,
-                            key: ValueKey<bool>(currentItem?.isFavorite ?? false),
-                            color: currentItem?.isFavorite ?? false
-                                ? AppColors.error
-                                : AppColors.textSecondary,
-                          ),
-                        ),
-                        onPressed: currentItem != null
-                            ? () {
-                                ref.read(libraryRepositoryProvider).toggleFavorite(currentItem.id);
-                              }
-                            : null,
-                      ),
-                    ),
+                      )
+                    else
+                      const SizedBox(width: 48, height: 48),
                     Expanded(
                       child: Column(
                         children: [

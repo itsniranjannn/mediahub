@@ -254,6 +254,16 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
   }
 
   Widget _buildSongsTab(LibraryState state) {
+    if (state.status == LibraryStatus.loading || state.status == LibraryStatus.initial) {
+      return const Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+        ),
+      );
+    }
+
     if (state.items.isEmpty) {
       return EmptyStateWidget(
         icon: Icons.music_off_outlined,
@@ -281,14 +291,14 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                     return;
                   }
                   _lastShuffleAllTap = now;
-                  final shuffled = List<MediaItem>.from(state.items)..shuffle();
-                  final randomStart = (shuffled.isNotEmpty)
-                      ? DateTime.now().microsecond % shuffled.length
+                  final randomStart = (state.items.isNotEmpty)
+                      ? DateTime.now().microsecond % state.items.length
                       : 0;
                   ref.read(playbackNotifierProvider.notifier).loadQueue(
-                    shuffled,
+                    state.items,
                     startIndex: randomStart,
                     autoPlay: true,
+                    shuffle: true,
                   );
                 },
               ),
@@ -386,20 +396,23 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           itemCount: artists.length,
           itemBuilder: (context, index) {
             final artist = artists[index];
-            return ListTile(
-              leading: CircleAvatar(
-                backgroundColor: AppColors.surfaceElevated,
-                child: const Icon(Icons.person_rounded, color: AppColors.primary),
+            return Material(
+              color: Colors.transparent,
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: AppColors.surfaceElevated,
+                  child: const Icon(Icons.person_rounded, color: AppColors.primary),
+                ),
+                title: Text(artist.artist, style: AppTypography.body),
+                subtitle: Text('${artist.songCount} songs', style: AppTypography.metadata),
+                trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => ArtistDetailScreen(artist: artist)),
+                  );
+                },
               ),
-              title: Text(artist.artist, style: AppTypography.body),
-              subtitle: Text('${artist.songCount} songs', style: AppTypography.metadata),
-              trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => ArtistDetailScreen(artist: artist)),
-                );
-              },
             );
           },
         );
@@ -440,8 +453,10 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                   itemCount: playlists.length,
                   itemBuilder: (context, index) {
                     final pl = playlists[index];
-                    return ListTile(
-                      leading: Container(
+                    return Material(
+                      color: Colors.transparent,
+                      child: ListTile(
+                        leading: Container(
                         width: 48,
                         height: 48,
                         decoration: BoxDecoration(
@@ -459,7 +474,8 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                           MaterialPageRoute(builder: (_) => PlaylistDetailScreen(playlist: pl)),
                         );
                       },
-                    );
+                    ),
+                  );
                   },
                 ),
               ),

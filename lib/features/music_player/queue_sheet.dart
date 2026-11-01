@@ -85,7 +85,7 @@ class QueueSheet extends ConsumerWidget {
                         onDismissed: (_) {
                           notifier.removeQueueItemAt(index);
                         },
-                        child: Container(
+                        child: Material(
                           color: isCurrent
                               ? AppColors.primary.withValues(alpha: 0.15)
                               : Colors.transparent,
