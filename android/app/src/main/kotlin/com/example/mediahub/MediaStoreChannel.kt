@@ -2,19 +2,24 @@ package com.example.mediahub
 
 import android.content.ContentUris
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.util.Size
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger) : MethodChannel.MethodCallHandler {
     private val channel = MethodChannel(messenger, "mediahub/media_store")
-    private val executor = Executors.newSingleThreadExecutor()
+    private val scanExecutor = Executors.newSingleThreadExecutor()
+    private val artworkExecutor = Executors.newFixedThreadPool(2)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     init {
@@ -45,7 +50,7 @@ class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger
 
         when (call.method) {
             "queryAudio" -> {
-                executor.execute {
+                scanExecutor.execute {
                     try {
                         val audioList = fetchAudio()
                         safeResult.success(audioList)
@@ -55,12 +60,31 @@ class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger
                 }
             }
             "queryVideo" -> {
-                executor.execute {
+                scanExecutor.execute {
                     try {
                         val videoList = fetchVideo()
                         safeResult.success(videoList)
                     } catch (e: Exception) {
                         safeResult.error("VIDEO_QUERY_FAILED", e.localizedMessage ?: "Unknown error querying video", null)
+                    }
+                }
+            }
+            "getArtwork" -> {
+                val uriString = call.argument<String>("uri")
+                val width = call.argument<Int>("width") ?: 256
+                val height = call.argument<Int>("height") ?: 256
+
+                if (uriString == null) {
+                    safeResult.success(null)
+                    return
+                }
+
+                artworkExecutor.execute {
+                    try {
+                        val bytes = loadArtworkBytes(Uri.parse(uriString), width, height)
+                        safeResult.success(bytes)
+                    } catch (e: Exception) {
+                        safeResult.success(null)
                     }
                 }
             }
@@ -154,7 +178,7 @@ class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger
                 val contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id).toString()
                 val displayName = if (displayNameCol != -1) cursor.getString(displayNameCol) else null
                 val titleName = if (titleCol != -1) cursor.getString(titleCol) else null
-                val title = displayName?.takeIf { it.isNotBlank() } ?: titleName?.takeIf { it.isNotBlank() } ?: "Unknown Video"
+                val title = titleName?.takeIf { it.isNotBlank() } ?: displayName?.takeIf { it.isNotBlank() } ?: "Unknown Video"
 
                 val duration = cursor.getLong(durationCol)
                 val size = cursor.getLong(sizeCol)
@@ -178,6 +202,27 @@ class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger
             }
         }
         return videoList
+    }
+
+    private fun loadArtworkBytes(uri: Uri, width: Int, height: Int): ByteArray? {
+        return try {
+            val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                context.contentResolver.loadThumbnail(uri, Size(width, height), null)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+            }
+
+            if (bitmap != null) {
+                val stream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+                stream.toByteArray()
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 }
 

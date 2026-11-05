@@ -37,6 +37,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    try {
+      ref.read(videoPlayerControllerProvider(widget.item).notifier).onAppBackgrounded();
+    } catch (_) {}
     super.dispose();
   }
 

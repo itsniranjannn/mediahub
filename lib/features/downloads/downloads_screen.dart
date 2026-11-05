@@ -13,7 +13,7 @@ class DownloadsScreen extends StatelessWidget {
       ),
       body: const EmptyStateWidget(
         icon: Icons.file_download_outlined,
-        title: 'Downloads',
+        title: 'Nothing downloaded yet',
         message: 'Active and completed downloads in ${AppConfig.appName} will appear here.',
       ),
     );

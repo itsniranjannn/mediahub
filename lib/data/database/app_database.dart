@@ -57,12 +57,42 @@ class VideoProgressTable extends Table {
   Set<Column> get primaryKey => {mediaId};
 }
 
-@DriftDatabase(tables: [MediaItemsTable, PlaybackStatesTable, VideoProgressTable])
+@DataClassName('PlaylistEntry')
+class PlaylistsTable extends Table {
+  TextColumn get id => text()();
+  TextColumn get name => text()();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+@DataClassName('PlaylistItemEntry')
+class PlaylistItemsTable extends Table {
+  TextColumn get playlistId => text()();
+  TextColumn get mediaId => text()();
+  IntColumn get position => integer()();
+  DateTimeColumn get addedAt => dateTime()();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {playlistId, mediaId, position},
+      ];
+}
+
+@DriftDatabase(tables: [
+  MediaItemsTable,
+  PlaybackStatesTable,
+  VideoProgressTable,
+  PlaylistsTable,
+  PlaylistItemsTable,
+])
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? e]) : super(e ?? _openConnection());
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration {
@@ -76,6 +106,10 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 3) {
           await m.createTable(videoProgressTable);
+        }
+        if (from < 4) {
+          await m.createTable(playlistsTable);
+          await m.createTable(playlistItemsTable);
         }
       },
     );

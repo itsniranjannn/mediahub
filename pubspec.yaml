@@ -34,7 +34,6 @@ dependencies:
   cupertino_icons: ^1.0.8
   go_router: ^18.1.1
   flutter_riverpod: ^3.4.3
-  google_fonts: ^9.0.0
   drift: ^2.35.3
   drift_flutter: ^0.3.1
   sqlite3_flutter_libs: ^0.6.0+eol
@@ -52,6 +51,8 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   drift_dev: ^2.35.2
   build_runner: ^2.17.1
+  mocktail: ^1.0.5
+  flutter_launcher_icons: ^0.14.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -63,6 +64,17 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.otf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.otf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.otf
+          weight: 600
+
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -94,3 +106,11 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#0B0D12"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+

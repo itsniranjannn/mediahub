@@ -101,6 +101,9 @@ class FakeLibraryRepository implements LibraryRepository {
   final List<String> unavailableMarked = [];
 
   @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
+  @override
   Future<void> updateAvailability(String id, MediaAvailability availability) async {
     if (availability == MediaAvailability.missing) {
       unavailableMarked.add(id);
