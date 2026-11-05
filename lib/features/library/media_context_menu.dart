@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
@@ -22,10 +23,12 @@ class MediaContextMenu {
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppSpacing.cardRadius)),
       ),
       builder: (bottomSheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+        return Material(
+          color: AppColors.surfaceElevated,
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               Padding(
                 padding: const EdgeInsets.all(AppSpacing.lg16),
                 child: Row(
@@ -113,21 +116,33 @@ class MediaContextMenu {
                 ),
                 onTap: () {
                   Navigator.pop(bottomSheetContext);
+                  final nextFav = !item.isFavorite;
+                  HapticFeedback.lightImpact();
                   ref.read(libraryRepositoryProvider).toggleFavorite(item.id);
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(
-                        item.isFavorite
-                            ? 'Removed from Favorites'
-                            : 'Added to Favorites',
+                        nextFav
+                            ? 'Added to Favorites'
+                            : 'Removed from Favorites',
                       ),
-                      duration: const Duration(seconds: 2),
+                      behavior: SnackBarBehavior.floating,
+                      margin: const EdgeInsets.only(left: 16, right: 16, bottom: 76),
+                      duration: const Duration(seconds: 3),
+                      action: SnackBarAction(
+                        label: 'Undo',
+                        onPressed: () {
+                          ref.read(libraryRepositoryProvider).toggleFavorite(item.id);
+                        },
+                      ),
                     ),
                   );
                 },
               ),
             ],
           ),
+        ),
         );
       },
     );
@@ -141,7 +156,9 @@ class MediaContextMenu {
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppSpacing.cardRadius)),
       ),
       builder: (ctx) {
-        return StreamBuilder<List<Playlist>>(
+        return Material(
+          color: AppColors.surfaceElevated,
+          child: StreamBuilder<List<Playlist>>(
           stream: ref.watch(libraryRepositoryProvider).watchPlaylists(),
           builder: (context, snapshot) {
             final playlists = snapshot.data ?? [];
@@ -202,6 +219,7 @@ class MediaContextMenu {
               ),
             );
           },
+        ),
         );
       },
     );

@@ -102,8 +102,18 @@ class PlaybackNotifier extends Notifier<domain.PlaybackState> {
   }
 
   // Playback actions
-  Future<void> loadQueue(List<domain_models.MediaItem> items, {int startIndex = 0, bool autoPlay = true}) =>
-      _handler.loadQueue(items, startIndex: startIndex, autoPlay: autoPlay);
+  Future<void> loadQueue(
+    List<domain_models.MediaItem> items, {
+    int startIndex = 0,
+    bool autoPlay = true,
+    bool shuffle = false,
+  }) =>
+      _handler.loadQueue(
+        items,
+        startIndex: startIndex,
+        autoPlay: autoPlay,
+        shuffle: shuffle,
+      );
 
   Future<void> playTrack(domain_models.MediaItem item, List<domain_models.MediaItem> allItems) async {
     int index = allItems.indexWhere((m) => m.id == item.id);

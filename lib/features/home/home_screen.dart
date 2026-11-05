@@ -38,7 +38,7 @@ class HomeScreen extends ConsumerWidget {
                   Text('Dashboard', style: AppTypography.screenTitle),
                   const Spacer(),
                   StreamBuilder<List<MediaItem>>(
-                    stream: repo.watchRecentlyAdded(limit: 50, mediaType: MediaType.audio),
+                    stream: repo.watchMediaItems(mediaType: MediaType.audio),
                     builder: (context, snapshot) {
                       final items = snapshot.data ?? [];
                       if (items.isEmpty) return const SizedBox.shrink();
@@ -55,14 +55,14 @@ class HomeScreen extends ConsumerWidget {
                               return;
                             }
                             lastShuffleTap = now;
-                            final shuffled = List<MediaItem>.from(items)..shuffle();
-                            final randomStart = (shuffled.isNotEmpty)
-                                ? DateTime.now().microsecond % shuffled.length
+                            final randomStart = (items.isNotEmpty)
+                                ? DateTime.now().microsecond % items.length
                                 : 0;
                             await ref.read(playbackNotifierProvider.notifier).loadQueue(
-                              shuffled,
+                              items,
                               startIndex: randomStart,
                               autoPlay: true,
+                              shuffle: true,
                             );
                           },
                         ),

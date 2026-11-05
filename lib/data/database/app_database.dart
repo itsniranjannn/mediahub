@@ -26,6 +26,32 @@ class MediaItemsTable extends Table {
   BoolColumn get isFavorite => boolean().withDefault(const Constant(false))();
   TextColumn get availability =>
       text().withDefault(const Constant('available'))(); // 'available' or 'missing'
+  TextColumn get source =>
+      text().nullable().withDefault(const Constant('device'))(); // 'device' or 'download'
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+@DataClassName('DownloadEntry')
+class DownloadsTable extends Table {
+  TextColumn get id => text()();
+  TextColumn get url => text()();
+  TextColumn get host => text()();
+  TextColumn get displayName => text()();
+  TextColumn get fileName => text()();
+  TextColumn get state => text()();
+  IntColumn get receivedBytes => integer().withDefault(const Constant(0))();
+  IntColumn get totalBytes => integer().nullable()();
+  TextColumn get etag => text().nullable()();
+  TextColumn get lastModified => text().nullable()();
+  BoolColumn get supportsRange => boolean().withDefault(const Constant(false))();
+  TextColumn get mimeType => text().nullable()();
+  TextColumn get errorCode => text().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+  TextColumn get finalPath => text().nullable()();
+  TextColumn get mediaId => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -87,12 +113,13 @@ class PlaylistItemsTable extends Table {
   VideoProgressTable,
   PlaylistsTable,
   PlaylistItemsTable,
+  DownloadsTable,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? e]) : super(e ?? _openConnection());
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration {
@@ -110,6 +137,10 @@ class AppDatabase extends _$AppDatabase {
         if (from < 4) {
           await m.createTable(playlistsTable);
           await m.createTable(playlistItemsTable);
+        }
+        if (from < 5) {
+          await m.createTable(downloadsTable);
+          await m.addColumn(mediaItemsTable, mediaItemsTable.source);
         }
       },
     );
@@ -141,6 +172,7 @@ extension MediaItemEntryMapper on MediaItemEntry {
       availability: availability == 'missing'
           ? MediaAvailability.missing
           : MediaAvailability.available,
+      source: source ?? 'device',
     );
   }
 }
@@ -164,6 +196,7 @@ extension MediaItemMapper on MediaItem {
       playCount: Value(playCount),
       isFavorite: Value(isFavorite),
       availability: Value(availability.name),
+      source: Value(source),
     );
   }
 

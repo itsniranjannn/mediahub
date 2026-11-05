@@ -29,6 +29,7 @@ class MediaItem {
   final int playCount;
   final bool isFavorite;
   final MediaAvailability availability;
+  final String source; // 'device' or 'download'
 
   const MediaItem({
     required this.id,
@@ -47,6 +48,7 @@ class MediaItem {
     this.playCount = 0,
     this.isFavorite = false,
     this.availability = MediaAvailability.available,
+    this.source = 'device',
   });
 
   MediaItem copyWith({
@@ -66,6 +68,7 @@ class MediaItem {
     int? playCount,
     bool? isFavorite,
     MediaAvailability? availability,
+    String? source,
   }) {
     return MediaItem(
       id: id ?? this.id,
@@ -84,6 +87,7 @@ class MediaItem {
       playCount: playCount ?? this.playCount,
       isFavorite: isFavorite ?? this.isFavorite,
       availability: availability ?? this.availability,
+      source: source ?? this.source,
     );
   }
 
@@ -107,7 +111,8 @@ class MediaItem {
           lastPlayed == other.lastPlayed &&
           playCount == other.playCount &&
           isFavorite == other.isFavorite &&
-          availability == other.availability;
+          availability == other.availability &&
+          source == other.source;
 
   @override
   int get hashCode => Object.hashAll([
@@ -127,6 +132,7 @@ class MediaItem {
         playCount,
         isFavorite,
         availability,
+        source,
       ]);
 
   Map<String, dynamic> toJsonMap() {
@@ -147,6 +153,7 @@ class MediaItem {
       'playCount': playCount,
       'isFavorite': isFavorite,
       'availability': availability.name,
+      'source': source,
     };
   }
 
@@ -168,6 +175,7 @@ class MediaItem {
       playCount: map['playCount'] as int? ?? 0,
       isFavorite: map['isFavorite'] as bool? ?? false,
       availability: MediaAvailability.values.firstWhere((e) => e.name == map['availability'], orElse: () => MediaAvailability.available),
+      source: map['source'] as String? ?? 'device',
     );
   }
 }

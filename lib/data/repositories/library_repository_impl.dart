@@ -164,6 +164,9 @@ class LibraryRepositoryImpl implements LibraryRepository {
           if (shouldRunAudioMissingPass) {
             final scannedAudioIds = audioToInsert.map((e) => e.id.value).toSet();
             for (final row in existingAudio) {
+              // Download items must never be marked missing by a device MediaStore scan
+              if (row.source == 'download') continue;
+
               if (!scannedAudioIds.contains(row.id)) {
                 if (row.availability != 'missing') {
                   await (_db.update(_db.mediaItemsTable)..where((tbl) => tbl.id.equals(row.id))).write(
@@ -191,6 +194,9 @@ class LibraryRepositoryImpl implements LibraryRepository {
           if (shouldRunVideoMissingPass) {
             final scannedVideoIds = videoToInsert.map((e) => e.id.value).toSet();
             for (final row in existingVideo) {
+              // Download items must never be marked missing by a device MediaStore scan
+              if (row.source == 'download') continue;
+
               if (!scannedVideoIds.contains(row.id)) {
                 if (row.availability != 'missing') {
                   await (_db.update(_db.mediaItemsTable)..where((tbl) => tbl.id.equals(row.id))).write(
