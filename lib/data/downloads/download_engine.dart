@@ -272,7 +272,11 @@ class DownloadEngine {
               existingBytes = partFile.lengthSync();
             }
           } else {
-            final errorCode = (e is SafeHttpClientException) ? (e.code ?? 'download_error') : 'download_error';
+            final errorCode = (e is SafeHttpClientException)
+                ? (e.code ?? 'download_error')
+                : (e is FileSystemException && e.osError?.errorCode == 28
+                    ? 'insufficient_disk_space'
+                    : (e is FileSystemException ? 'write_failed' : 'download_error'));
             await _failTask(id, errorCode, task.host);
             return;
           }
@@ -298,16 +302,36 @@ class DownloadEngine {
     if (e is SocketException || e is TimeoutException) return true;
     if (e is SafeHttpClientException) {
       if (e.code == 'connection_error') return true;
+      if (e.code == 'incomplete_download') return true;
       if (e.code != null && e.code!.startsWith('http_5')) return true; // 5xx server errors are transient
       // Cert errors or policy blocks are NOT transient
       if (e.code == 'blocked_private_ip' ||
           e.code == 'blocked_domain' ||
           e.code == 'too_many_redirects' ||
-          e.code == 'max_body_size_exceeded') {
+          e.code == 'max_body_size_exceeded' ||
+          e.code == 'write_failed' ||
+          e.code == 'insufficient_disk_space') {
         return false;
       }
     }
     return false;
+  }
+
+  SafeHttpClientException _classifyWriteError(dynamic err, String host) {
+    if (err is FileSystemException) {
+      if (err.osError?.errorCode == 28) {
+        return SafeHttpClientException(
+          'Disk full: insufficient disk space to write download chunk (OS error 28 ENOSPC)',
+          code: 'insufficient_disk_space',
+          host: host,
+        );
+      }
+    }
+    return SafeHttpClientException(
+      'Write failed while writing download chunk: $err',
+      code: 'write_failed',
+      host: host,
+    );
   }
 
   Future<void> _executeDownloadAttempt({
@@ -327,10 +351,12 @@ class DownloadEngine {
       }
     }
 
+    final remainingLimit = max(0, maxDownloadSizeBytes - startByte);
     final response = await _httpClient.openStream(
       uri,
       method: 'GET',
       headers: headers,
+      maxBodySize: remainingLimit,
     );
     _activeStreamResponses[task.id] = response;
 
@@ -430,76 +456,86 @@ class DownloadEngine {
     try {
       subscription = response.body.listen(
         (chunk) async {
-          if (_isPausedOrCancelled(task.id)) {
-            subscription?.cancel();
-            response.close();
-            if (!completer.isCompleted) completer.complete();
-            return;
-          }
-
-          subscription?.pause();
           try {
-            await raf.writeFrom(chunk);
-            receivedBytes += chunk.length;
-
-            if (receivedBytes > maxDownloadSizeBytes) {
+            if (_isPausedOrCancelled(task.id)) {
               subscription?.cancel();
               response.close();
-              if (!completer.isCompleted) {
-                completer.completeError(
-                  SafeHttpClientException(
-                    'Size exceeded max allowed limit of 2GB',
-                    code: 'max_size_exceeded',
-                    host: uri.host,
-                  ),
-                );
-              }
+              if (!completer.isCompleted) completer.complete();
               return;
             }
 
-            final now = DateTime.now();
+            subscription?.pause();
+            try {
+              await raf.writeFrom(chunk);
+              receivedBytes += chunk.length;
 
-            // 1. Persist to DB at most every 1s or 512 KB
-            if (now.difference(lastDbSaveTime).inMilliseconds >= 1000 ||
-                (receivedBytes - lastDbSaveBytes) >= 512 * 1024) {
-              await (_db.update(_db.downloadsTable)..where((tbl) => tbl.id.equals(task.id))).write(
-                DownloadsTableCompanion(
-                  receivedBytes: Value(receivedBytes),
-                  updatedAt: Value(now),
-                ),
-              );
-              lastDbSaveTime = now;
-              lastDbSaveBytes = receivedBytes;
-            }
-
-            // 2. UI stream throttled to ~4 updates per second (>= 250ms)
-            if (now.difference(lastUiUpdateTime).inMilliseconds >= 250) {
-              double? speed;
-              Duration? eta;
-              final elapsedSec = now.difference(startTime).inMilliseconds / 1000.0;
-              if (elapsedSec > 0.5) {
-                speed = (receivedBytes - startByte) / elapsedSec;
-                if (totalBytes != null && speed > 0) {
-                  final remaining = totalBytes - receivedBytes;
-                  if (remaining > 0) {
-                    eta = Duration(seconds: (remaining / speed).ceil());
-                  }
+              if (receivedBytes > maxDownloadSizeBytes) {
+                subscription?.cancel();
+                response.close();
+                if (!completer.isCompleted) {
+                  completer.completeError(
+                    SafeHttpClientException(
+                      'Size exceeded max allowed limit of 2GB',
+                      code: 'max_size_exceeded',
+                      host: uri.host,
+                    ),
+                  );
                 }
+                return;
               }
 
-              _progressController.add(DownloadProgressUpdate(
-                id: task.id,
-                receivedBytes: receivedBytes,
-                totalBytes: totalBytes,
-                progress: totalBytes != null && totalBytes > 0 ? receivedBytes / totalBytes : null,
-                speedBytesPerSec: speed,
-                eta: eta,
-              ));
-              lastUiUpdateTime = now;
+              final now = DateTime.now();
+
+              // 1. Persist to DB at most every 1s or 512 KB
+              if (now.difference(lastDbSaveTime).inMilliseconds >= 1000 ||
+                  (receivedBytes - lastDbSaveBytes) >= 512 * 1024) {
+                await (_db.update(_db.downloadsTable)..where((tbl) => tbl.id.equals(task.id))).write(
+                  DownloadsTableCompanion(
+                    receivedBytes: Value(receivedBytes),
+                    updatedAt: Value(now),
+                  ),
+                );
+                lastDbSaveTime = now;
+                lastDbSaveBytes = receivedBytes;
+              }
+
+              // 2. UI stream throttled to ~4 updates per second (>= 250ms)
+              if (now.difference(lastUiUpdateTime).inMilliseconds >= 250) {
+                double? speed;
+                Duration? eta;
+                final elapsedSec = now.difference(startTime).inMilliseconds / 1000.0;
+                if (elapsedSec > 0.5) {
+                  speed = (receivedBytes - startByte) / elapsedSec;
+                  if (totalBytes != null && speed > 0) {
+                    final remaining = totalBytes - receivedBytes;
+                    if (remaining > 0) {
+                      eta = Duration(seconds: (remaining / speed).ceil());
+                    }
+                  }
+                }
+
+                _progressController.add(DownloadProgressUpdate(
+                  id: task.id,
+                  receivedBytes: receivedBytes,
+                  totalBytes: totalBytes,
+                  progress: totalBytes != null && totalBytes > 0 ? receivedBytes / totalBytes : null,
+                  speedBytesPerSec: speed,
+                  eta: eta,
+                ));
+                lastUiUpdateTime = now;
+              }
+            } finally {
+              if (!_isPausedOrCancelled(task.id)) {
+                subscription?.resume();
+              }
             }
-          } finally {
-            if (!_isPausedOrCancelled(task.id)) {
-              subscription?.resume();
+          } catch (writeErr, writeStack) {
+            subscription?.cancel();
+            response.close();
+
+            final typedErr = _classifyWriteError(writeErr, uri.host);
+            if (!completer.isCompleted) {
+              completer.completeError(typedErr, writeStack);
             }
           }
         },
@@ -510,6 +546,17 @@ class DownloadEngine {
         },
         onDone: () {
           if (!completer.isCompleted) {
+            // Check if stream closed early before expected total bytes arrived
+            if (totalBytes != null && totalBytes > 0 && receivedBytes < totalBytes) {
+              completer.completeError(
+                SafeHttpClientException(
+                  'Stream closed early: received $receivedBytes bytes of expected $totalBytes',
+                  code: 'incomplete_download',
+                  host: uri.host,
+                ),
+              );
+              return;
+            }
             completer.complete();
           }
         },

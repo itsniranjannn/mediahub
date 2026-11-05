@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../features/music_player/mini_player.dart';
@@ -65,33 +66,36 @@ class _NavItemData {
   });
 }
 
-const _navItems = [
-  _NavItemData(
-    label: 'Home',
-    activeIcon: Icons.home_rounded,
-    inactiveIcon: Icons.home_outlined,
-  ),
-  _NavItemData(
-    label: 'Music',
-    activeIcon: Icons.music_note_rounded,
-    inactiveIcon: Icons.music_note_outlined,
-  ),
-  _NavItemData(
-    label: 'Videos',
-    activeIcon: Icons.video_library_rounded,
-    inactiveIcon: Icons.video_library_outlined,
-  ),
-  _NavItemData(
-    label: 'Downloads',
-    activeIcon: Icons.file_download_rounded,
-    inactiveIcon: Icons.file_download_outlined,
-  ),
-  _NavItemData(
-    label: 'Settings',
-    activeIcon: Icons.settings_rounded,
-    inactiveIcon: Icons.settings_outlined,
-  ),
-];
+List<_NavItemData> get _navItems {
+  return [
+    const _NavItemData(
+      label: 'Home',
+      activeIcon: Icons.home_rounded,
+      inactiveIcon: Icons.home_outlined,
+    ),
+    const _NavItemData(
+      label: 'Music',
+      activeIcon: Icons.music_note_rounded,
+      inactiveIcon: Icons.music_note_outlined,
+    ),
+    const _NavItemData(
+      label: 'Videos',
+      activeIcon: Icons.video_library_rounded,
+      inactiveIcon: Icons.video_library_outlined,
+    ),
+    if (Platform.isAndroid)
+      const _NavItemData(
+        label: 'Downloads',
+        activeIcon: Icons.file_download_rounded,
+        inactiveIcon: Icons.file_download_outlined,
+      ),
+    const _NavItemData(
+      label: 'Settings',
+      activeIcon: Icons.settings_rounded,
+      inactiveIcon: Icons.settings_outlined,
+    ),
+  ];
+}
 
 class _CustomBottomNavBar extends StatelessWidget {
   final int currentIndex;

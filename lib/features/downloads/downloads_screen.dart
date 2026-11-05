@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/security/safe_filename.dart';
 import '../../core/security/url_policy.dart';
@@ -13,6 +14,9 @@ import '../../domain/models/download_state.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/repositories/platform_resolver.dart';
 import '../music_player/playback_notifier.dart';
+import '../../personal/extractor_backend.dart';
+import '../../personal/personal_tools_notifier.dart';
+import '../../personal/format_selection_sheet.dart';
 import 'download_providers.dart';
 import 'downloads_notifier.dart';
 
@@ -27,6 +31,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   final TextEditingController _urlController = TextEditingController();
   final TextEditingController _filenameController = TextEditingController();
   String? _inlineUrlError;
+  bool _notificationPermissionDenied = false;
 
   @override
   void initState() {
@@ -138,6 +143,21 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   }
 
   Future<void> _startDownload(SourceInfo info) async {
+    // Request notification permission on first download on Android 13+
+    if (Platform.isAndroid) {
+      try {
+        final status = await Permission.notification.status;
+        if (!status.isGranted) {
+          final req = await Permission.notification.request();
+          if (!req.isGranted && mounted) {
+            setState(() {
+              _notificationPermissionDenied = true;
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
     await _checkFirstUseAgreement(() async {
       final engine = ref.read(downloadEngineProvider);
       final id = DateTime.now().millisecondsSinceEpoch.toString();
@@ -197,7 +217,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Keep MediaHub open while downloading. Downloads pause if the app is closed.',
+                    'Downloads continue in the background. If you swipe MediaHub away from recent apps, they pause and resume when you reopen it.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -214,13 +234,39 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               return Text(
                 'Space used by downloads: $usedMb MB • Free space: $freeGb GB',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.outline,
+                      color: const Color(0xFFA7B0C0), // AppColors.textSecondary
                     ),
               );
             },
             loading: () => const SizedBox.shrink(),
             error: (_, _) => const SizedBox.shrink(),
           ),
+          if (_notificationPermissionDenied) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.notifications_off_outlined,
+                      size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Notifications are disabled. Downloads still run in the background, but progress will not show in the status bar.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
 
           // URL Input Field with Paste & Inspect
@@ -350,27 +396,97 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.errorContainer,
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFF4B860), width: 1), // 1 dp warning border
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '$knownPlatform pages are not direct media files. MediaHub cannot download from this service. Open it in the $knownPlatform app or use its own offline feature.',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onErrorContainer,
-                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: Color(0xFFF4B860), size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '$knownPlatform pages are not direct media files. MediaHub cannot download from this service. Open it in the $knownPlatform app or use its own offline feature.',
+                            style: const TextStyle(
+                              color: Color(0xFFF4F6FB), // textPrimary
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.open_in_browser),
-                      label: const Text('Open link'),
-                      onPressed: () async {
-                        try {
-                          await launchUrl(info.uri, mode: LaunchMode.externalApplication);
-                        } catch (_) {}
-                      },
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Theme.of(context).colorScheme.primary,
+                            side: BorderSide(color: Theme.of(context).colorScheme.primary),
+                          ),
+                          icon: const Icon(Icons.open_in_browser),
+                          label: const Text('Open link'),
+                          onPressed: () async {
+                            try {
+                              await launchUrl(info.uri, mode: LaunchMode.externalApplication);
+                            } catch (_) {}
+                          },
+                        ),
+                        if (Platform.isAndroid &&
+                            kPersonalToolsEnabled &&
+                            ref.watch(personalToolsProvider).isEnabled) ...[
+                          const SizedBox(width: 8),
+                          FilledButton.icon(
+                            icon: const Icon(Icons.video_library),
+                            label: const Text('Fetch formats'),
+                            onPressed: () async {
+                              final backend = ref.read(extractorBackendProvider);
+                              showDialog(
+                                context: context,
+                                barrierDismissible: false,
+                                builder: (_) => const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              );
+                              try {
+                                final meta = await backend.getInfo(info.uri.toString());
+                                if (context.mounted) {
+                                  Navigator.of(context).pop(); // dismiss loading
+                                  showModalBottomSheet(
+                                    context: context,
+                                    isScrollControlled: true,
+                                    backgroundColor: Colors.transparent,
+                                    builder: (ctx) => FormatSelectionSheet(
+                                      metadata: meta,
+                                      onSelect: (preset) async {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Queued: ${meta.title} (${preset.label})',
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  Navigator.of(context).pop(); // dismiss loading
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Failed: ${e.toString()}'),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),
@@ -427,27 +543,97 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.errorContainer,
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFF4B860), width: 1), // 1 dp warning border
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'This is a web page, not a media file. MediaHub can only download direct media files that you have the right to save.',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onErrorContainer,
-                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: Color(0xFFF4B860), size: 20),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'This is a web page, not a media file. MediaHub can only download direct media files that you have the right to save.',
+                            style: TextStyle(
+                              color: Color(0xFFF4F6FB), // textPrimary
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.open_in_browser),
-                      label: const Text('Open link'),
-                      onPressed: () async {
-                        try {
-                          await launchUrl(info.uri, mode: LaunchMode.externalApplication);
-                        } catch (_) {}
-                      },
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Theme.of(context).colorScheme.primary,
+                            side: BorderSide(color: Theme.of(context).colorScheme.primary),
+                          ),
+                          icon: const Icon(Icons.open_in_browser),
+                          label: const Text('Open link'),
+                          onPressed: () async {
+                            try {
+                              await launchUrl(info.uri, mode: LaunchMode.externalApplication);
+                            } catch (_) {}
+                          },
+                        ),
+                        if (Platform.isAndroid &&
+                            kPersonalToolsEnabled &&
+                            ref.watch(personalToolsProvider).isEnabled) ...[
+                          const SizedBox(width: 8),
+                          FilledButton.icon(
+                            icon: const Icon(Icons.video_library),
+                            label: const Text('Fetch formats'),
+                            onPressed: () async {
+                              final backend = ref.read(extractorBackendProvider);
+                              showDialog(
+                                context: context,
+                                barrierDismissible: false,
+                                builder: (_) => const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              );
+                              try {
+                                final meta = await backend.getInfo(info.uri.toString());
+                                if (context.mounted) {
+                                  Navigator.of(context).pop(); // dismiss loading
+                                  showModalBottomSheet(
+                                    context: context,
+                                    isScrollControlled: true,
+                                    backgroundColor: Colors.transparent,
+                                    builder: (ctx) => FormatSelectionSheet(
+                                      metadata: meta,
+                                      onSelect: (preset) async {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Queued: ${meta.title} (${preset.label})',
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  Navigator.of(context).pop(); // dismiss loading
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Failed: ${e.toString()}'),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),
@@ -609,7 +795,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                         Text(
                           task.host,
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(context).colorScheme.outline,
+                                color: const Color(0xFFA7B0C0), // AppColors.textSecondary
                               ),
                         ),
                       ],
@@ -659,7 +845,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                 Text(
                   _formatStateText(task.state),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.outline,
+                        color: const Color(0xFFA7B0C0), // AppColors.textSecondary
                       ),
                 ),
             ],
@@ -855,9 +1041,13 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   String _formatPlainErrorMessage(String errorCode) {
     switch (errorCode) {
       case 'insufficient_disk_space':
-        return 'Not enough free storage space available.';
+        return 'Not enough free storage space available. Your other files are safe.';
+      case 'write_failed':
+        return 'Could not save file to disk. Your other files are safe.';
+      case 'incomplete_download':
+        return 'Connection ended before download was complete. Your other files are safe.';
       case 'not_media':
-        return 'The downloaded file was not recognized as media. Your files are safe.';
+        return 'The downloaded file was not recognized as media. Your other files are safe.';
       case 'max_size_exceeded':
         return 'Download exceeded the 2GB size limit.';
       case 'content_range_mismatch':

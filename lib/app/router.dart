@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -48,14 +49,15 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
-          StatefulShellBranch(
-            routes: [
-              GoRoute(
-                path: '/downloads',
-                builder: (context, state) => const DownloadsScreen(),
-              ),
-            ],
-          ),
+          if (Platform.isAndroid)
+            StatefulShellBranch(
+              routes: [
+                GoRoute(
+                  path: '/downloads',
+                  builder: (context, state) => const DownloadsScreen(),
+                ),
+              ],
+            ),
           StatefulShellBranch(
             routes: [
               GoRoute(

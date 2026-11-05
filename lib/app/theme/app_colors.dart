@@ -6,7 +6,8 @@ abstract class AppColors {
   static const Color surfaceElevated = Color(0xFF1A2230);
   static const Color surfacePressed = Color(0xFF232D3D);
 
-  static const Color primary = Color(0xFF7C5CFF);
+  static const Color primary = Color(0xFF8E72FF); // Meets >= 4.5:1 contrast against surfaceElevated (4.6:1)
+  static const Color primaryBase = Color(0xFF7C5CFF);
   static const Color primaryPressed = Color(0xFF6846EB);
   static const Color accent = Color(0xFF36D6C3);
 

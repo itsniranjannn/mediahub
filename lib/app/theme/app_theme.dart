@@ -20,6 +20,8 @@ abstract class AppTheme {
         onSecondary: AppColors.background,
         error: AppColors.error,
         onError: AppColors.textPrimary,
+        errorContainer: Color(0xFF2C151B),
+        onErrorContainer: AppColors.textPrimary,
         outline: AppColors.divider,
       ),
       dividerTheme: const DividerThemeData(
