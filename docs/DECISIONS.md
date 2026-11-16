@@ -1,10 +1,10 @@
 # Architecture & Product Decisions
 
 1. **Target Platforms:** Android & iOS supported.
-2. **Theming:** Dark theme only at launch (`#0B0D12` dark background palette).
+2. **Theming:** Dark theme only (originally `#0B0D12`; now the "Midnight Violet" palette with canvas `#07090F`, see 15).
 3. **Playback Architecture:** Local player first, followed by direct-URL downloads.
 4. **Trimming:** Duration trim only (no video frame cropping).
-5. **Downloading Scope:** Direct URL downloads only (no YouTube or third-party provider extraction).
+5. **Downloading Scope:** Direct URL downloads only at first (superseded by 10, 11 and 15).
 6. **Android Minimum SDK:** Set to `minSdk = 26` (Android 8.0+).
 7. **HTTP Response Header Size Limit in Dart:** `dart:io` `HttpClient` does not expose a configuration limit for incoming HTTP response headers. Header parsing occurs in native C++ runtime buffers within the Dart VM before any userland Dart code executes; checking header sizes post-parsing does not prevent memory allocation. The accepted risk is bounded by strict connection and read timeouts (`connectionTimeout = 10s`, `readTimeout = 20s`), which abort slow or abusive header streams.
 8. **INTERNET Permission:** Added `android.permission.INTERNET` to the main AndroidManifest.xml solely for user-initiated direct media downloads via `DownloadEngine`. Cleartext traffic remains strictly blocked via `network_security_config.xml` (`cleartextTrafficPermitted="false"`).
@@ -14,12 +14,20 @@
     - **Architecture & Isolation:** All extractor code lives isolated in `lib/personal/` (Dart) and `android/app/src/main/kotlin/com/example/mediahub/personal/` (Kotlin). Gated by a single toggle `PERSONAL_TOOLS = true` at compile time and disabled by default at runtime under `Settings > Personal tools > "Enable web link downloader"` with legal responsibility notice.
     - **Platform Gate:** Android only. On iOS, the Downloads tab is hidden (`Platform.isAndroid` gate) and all extractor backend operations throw or safely no-op, maintaining clean compilation on iOS.
     - **Spike Findings (youtubedl-android 0.18.1):**
-      - Dependency: `io.github.junkfood02.youtubedl-android:library:0.18.1` and `:ffmpeg:0.18.1` from JitPack repository.
+      - Dependency: `io.github.junkfood02.youtubedl-android:library:0.18.1` and `:ffmpeg:0.18.1` from Maven Central (JitPack is no longer used).
       - Licenses: `youtubedl-android` (GPL-3.0), bundled `yt-dlp` (Unlicense), bundled `ffmpeg` (LGPL-2.1 / GPL-3.0).
       - Toolchain compatibility: Fully compatible with AGP 9.1.0, compileSdk 37, minSdk 26 (app requirement, library requires minSdk 24).
       - Packaging requirement: `packaging.jniLibs.useLegacyPackaging = true` and `android:extractNativeLibs="true"` in `AndroidManifest.xml` to correctly extract python/ffmpeg binaries without compression.
       - Binary footprint: ~35–45 MB total APK for `arm64-v8a` containing Python stdlib and FFmpeg binary.
       - First-run extraction: 3–8s initialization off the main thread; subsequent calls take milliseconds.
       - Fixed safety options: `--no-playlist`, `--ignore-config`, no cookies, output template `"<taskId>.%(ext)s"`, `--max-filesize 2G`. Host allowlist and UrlPolicy enforced before invocation.
+11. **Web link downloads are wired end to end (post 6.1):** `ExtractorDownloadRunner` (`lib/data/downloads/`) turns a chosen quality into a normal row in the `downloads` table (`engine = 'extractor'`), so yt-dlp and direct-link downloads share one list, one queue (max 2 parallel), pause/resume/cancel/retry and the same progress stream. The quality sheet is built from the formats yt-dlp actually reported (`FormatOptions`), never from a fixed preset list. For YouTube the native side probes extra player clients when the default client only exposes low resolutions and the winning `--extractor-args` value travels with the task.
+12. **Schema v6:** `downloads` gained `kind`, `engine`, thumbnail/quality/format fields and `stream_sizes`; `media_items` gained `artwork_path`. Downloaded files keep a cover image next to them (`<id>.thumb`); `ArtworkThumbnail` prefers that file, and the native artwork channel can also read embedded covers / video frames from plain file paths.
+13. **Downloads tab on iOS:** direct-link downloads are pure Dart and are enabled on iOS (`PlatformInfo.supportsDownloads`); the yt-dlp downloader stays Android only. The local library on iOS is still empty (no MediaStore equivalent yet).
+14. **Startup recovery:** `downloadStartupProvider` repairs interrupted downloads and resumes queued ones when the app starts (it was documented in decision 9 but never invoked). Settings (`web link downloader`, `resume on headphones reconnect`) are persisted in `settings.json` via `SettingsStore`.
 
-
+15. **Design system "Midnight Violet" and Explore (redesign round):** one dark palette (`AppColors`), Inter with a fixed type scale (`AppTypography`), global component theming and shared widgets (`ui_kit.dart`). Navigation is Home, Music, Videos, Explore, Downloads; Settings opens from the gear on Home. Explore searches YouTube with the pure-Dart `youtube_explode_dart`, so search, play and ready-made-stream downloads work the same on Android and iOS; Android additionally downloads every quality through yt-dlp.
+16. **Platform channels belong to the Flutter engine, not the Activity:** audio_service caches one engine for the whole process. `MainActivity.EngineChannels` creates the channels once per engine and never tears them down in `onDestroy`, so yt-dlp downloads and the download notification keep working after the Activity closes (Back on Android 8-12). Only `DeviceControlsChannel` (brightness, picture-in-picture) is re-attached to the current Activity.
+17. **Backup policy:** nothing goes to Google cloud backup; a phone-to-phone transfer started by the user carries `app_flutter/` (library database, settings, downloads). `hasFragileUserData` offers "keep app data" on uninstall. When a library file comes back with a new MediaStore id (re-added file, new phone), the rescan carries favourites, play counts, playlist entries and video progress over to the new row when the match is unambiguous (type, title, size, duration within 2 s).
+18. **yt-dlp guardrails:** one item per link (`--playlist-items 1`), YouTube playlist/channel links refused up front, live and upcoming streams refused, link lookups cancellable and killed after 85 s, output folder must be inside the app's private data, `Reset to built-in yt-dlp` undoes a self-update. Accepted risks: yt-dlp's generic extractor may follow redirects from allow-listed hosts (only for links the user starts); the self-update is not signature-checked (user-initiated only, with the reset as the way back).
+19. **Release signing is mandatory:** release builds refuse to build without `android/key.properties` (family key, see ROADMAP "Family signing key"), because a debug-signed release could not update installed phones without an uninstall that deletes downloads. `res/raw/keep.xml` keeps the notification icons that Dart looks up by name when resources are shrunk.
