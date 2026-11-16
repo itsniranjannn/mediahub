@@ -1,7 +1,9 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import '../core/platform_info.dart';
 import '../features/music_player/mini_player.dart';
+import '../shared/widgets/ui_kit.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_spacing.dart';
 import 'theme/app_typography.dart';
@@ -16,6 +18,7 @@ class AppShell extends StatelessWidget {
   });
 
   void _onTap(int index) {
+    if (index != navigationShell.currentIndex) HapticFeedback.selectionClick();
     navigationShell.goBranch(
       index,
       initialLocation: index == navigationShell.currentIndex,
@@ -83,17 +86,17 @@ List<_NavItemData> get _navItems {
       activeIcon: Icons.video_library_rounded,
       inactiveIcon: Icons.video_library_outlined,
     ),
-    if (Platform.isAndroid)
+    const _NavItemData(
+      label: 'Explore',
+      activeIcon: Icons.travel_explore_rounded,
+      inactiveIcon: Icons.travel_explore_outlined,
+    ),
+    if (PlatformInfo.supportsDownloads)
       const _NavItemData(
         label: 'Downloads',
         activeIcon: Icons.file_download_rounded,
         inactiveIcon: Icons.file_download_outlined,
       ),
-    const _NavItemData(
-      label: 'Settings',
-      activeIcon: Icons.settings_rounded,
-      inactiveIcon: Icons.settings_outlined,
-    ),
   ];
 }
 
@@ -108,75 +111,59 @@ class _CustomBottomNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        border: Border(
-          top: BorderSide(
-            color: AppColors.divider,
-            width: 1,
-          ),
-        ),
-      ),
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.paddingOf(context).bottom,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: List.generate(_navItems.length, (index) {
-          final isSelected = index == currentIndex;
-          final item = _navItems[index];
-          final feedbackDuration =
-              MotionTokens.duration(context, MotionTokens.feedback);
+    final items = _navItems;
+    final feedbackDuration = MotionTokens.duration(context, MotionTokens.feedback);
 
-          return Expanded(
-            child: Semantics(
-              label: '${item.label} Tab',
-              selected: isSelected,
-              button: true,
-              child: InkWell(
-                onTap: () => onTap(index),
-                borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: AppSpacing.sm8,
-                  ),
+    return GlassContainer(
+      border: const Border(top: BorderSide(color: AppColors.divider)),
+      child: Padding(
+        padding: EdgeInsets.only(
+          top: AppSpacing.sm8,
+          bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xs4,
+        ),
+        child: Row(
+          children: List.generate(items.length, (index) {
+            final isSelected = index == currentIndex;
+            final item = items[index];
+
+            return Expanded(
+              child: Semantics(
+                label: '${item.label} Tab',
+                selected: isSelected,
+                button: true,
+                child: InkResponse(
+                  onTap: () => onTap(index),
+                  radius: 36,
+                  highlightShape: BoxShape.circle,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      AnimatedScale(
-                        scale: isSelected ? 1.1 : 1.0,
+                      // Pill indicator behind the icon, like Material 3 navigation.
+                      AnimatedContainer(
                         duration: feedbackDuration,
                         curve: MotionTokens.easeOut,
-                        child: AnimatedContainer(
-                          duration: feedbackDuration,
-                          curve: MotionTokens.easeOut,
-                          padding: const EdgeInsets.all(AppSpacing.xs4),
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? AppColors.primary.withValues(alpha: 0.15)
-                                : Colors.transparent,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            isSelected ? item.activeIcon : item.inactiveIcon,
-                            color: isSelected
-                                ? AppColors.primary
-                                : AppColors.textMuted,
-                            size: 24,
-                          ),
+                        width: isSelected ? 56 : 40,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? AppColors.primary.withValues(alpha: 0.18)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        child: Icon(
+                          isSelected ? item.activeIcon : item.inactiveIcon,
+                          color: isSelected ? AppColors.primary : AppColors.textMuted,
+                          size: 24,
                         ),
                       ),
-                      const SizedBox(height: AppSpacing.xs4),
+                      const SizedBox(height: 3),
                       AnimatedDefaultTextStyle(
                         duration: feedbackDuration,
                         curve: MotionTokens.easeOut,
                         style: AppTypography.label.copyWith(
-                          color: isSelected
-                                ? AppColors.primary
-                                : AppColors.textMuted,
-                          fontWeight:
-                              isSelected ? FontWeight.w600 : FontWeight.w500,
+                          fontSize: 11,
+                          color: isSelected ? AppColors.textPrimary : AppColors.textMuted,
+                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                         ),
                         child: Text(item.label),
                       ),
@@ -184,9 +171,9 @@ class _CustomBottomNavBar extends StatelessWidget {
                   ),
                 ),
               ),
-            ),
-          );
-        }),
+            );
+          }),
+        ),
       ),
     );
   }

@@ -23,13 +23,31 @@ abstract class MediaPermissionService {
 class MediaPermissionServiceImpl implements MediaPermissionService {
   final DeviceInfoPlugin _deviceInfo;
 
-  MediaPermissionServiceImpl({DeviceInfoPlugin? deviceInfo})
-      : _deviceInfo = deviceInfo ?? DeviceInfoPlugin();
+  /// Test seams: pretend to be Android at a given SDK level without a device.
+  /// Production code passes neither and the real platform is used.
+  final bool? _isAndroidOverride;
+  final int? _androidSdkOverride;
+
+  MediaPermissionServiceImpl({
+    DeviceInfoPlugin? deviceInfo,
+    @visibleForTesting bool? isAndroid,
+    @visibleForTesting int? androidSdk,
+  })  : _deviceInfo = deviceInfo ?? DeviceInfoPlugin(),
+        _isAndroidOverride = isAndroid,
+        _androidSdkOverride = androidSdk;
+
+  bool get _isAndroid => _isAndroidOverride ?? Platform.isAndroid;
+
+  /// In automated widget tests platform channels do not respond unless mocked.
+  /// A test that sets [_androidSdkOverride] mocks them itself.
+  bool get _inUnmockedTest =>
+      _androidSdkOverride == null && Platform.environment.containsKey('FLUTTER_TEST');
 
   Future<int> _getAndroidSdk() async {
-    if (!Platform.isAndroid) return 0;
-    // In automated widget tests, platform channels do not respond unless mocked
-    if (Platform.environment.containsKey('FLUTTER_TEST')) return 33;
+    if (!_isAndroid) return 0;
+    final sdkOverride = _androidSdkOverride;
+    if (sdkOverride != null) return sdkOverride;
+    if (_inUnmockedTest) return 33;
     try {
       final info = await _deviceInfo.androidInfo;
       return info.version.sdkInt;
@@ -41,21 +59,23 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
 
   @override
   Future<bool> isVisualUserSelected() async {
-    if (!Platform.isAndroid || Platform.environment.containsKey('FLUTTER_TEST')) {
+    if (!_isAndroid || _inUnmockedTest) {
       return false;
     }
     final sdk = await _getAndroidSdk();
     if (sdk >= 34) {
-      final status = await Permission.photos.status;
+      // Android 14+ "Select photos and videos": only video access matters here.
+      // (Permission.photos / READ_MEDIA_IMAGES is not declared by the app, so
+      // it is never checked.)
       final videoStatus = await Permission.videos.status;
-      return status.isLimited || videoStatus.isLimited;
+      return videoStatus.isLimited;
     }
     return false;
   }
 
   @override
   Future<MediaPermissionState> checkAudioPermission() async {
-    if (!Platform.isAndroid) {
+    if (!_isAndroid) {
       return MediaPermissionState.granted;
     }
 
@@ -79,7 +99,7 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
 
   @override
   Future<MediaPermissionState> checkVideoPermission() async {
-    if (!Platform.isAndroid) {
+    if (!_isAndroid) {
       return MediaPermissionState.granted;
     }
 
@@ -103,7 +123,7 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
 
   @override
   Future<MediaPermissionState> requestAudioPermission() async {
-    if (!Platform.isAndroid) {
+    if (!_isAndroid) {
       return MediaPermissionState.granted;
     }
 
@@ -129,7 +149,7 @@ class MediaPermissionServiceImpl implements MediaPermissionService {
 
   @override
   Future<MediaPermissionState> requestVideoPermission() async {
-    if (!Platform.isAndroid) {
+    if (!_isAndroid) {
       return MediaPermissionState.granted;
     }
 
