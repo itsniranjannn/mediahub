@@ -1,5 +1,5 @@
-import 'dart:io';
 import 'package:flutter/services.dart';
+import '../core/platform_info.dart';
 
 /// Configuration flag for personal tools.
 /// Set to false to completely compile-out or disable personal tools.
@@ -15,6 +15,11 @@ class ExtractorFormat {
   final int height;
   final int width;
   final int filesize;
+  final double tbr;
+  final double abr;
+  final double fps;
+  final String vcodec;
+  final String acodec;
 
   const ExtractorFormat({
     required this.formatId,
@@ -25,6 +30,11 @@ class ExtractorFormat {
     required this.height,
     required this.width,
     required this.filesize,
+    this.tbr = 0,
+    this.abr = 0,
+    this.fps = 0,
+    this.vcodec = '',
+    this.acodec = '',
   });
 
   factory ExtractorFormat.fromMap(Map<dynamic, dynamic> map) {
@@ -37,6 +47,11 @@ class ExtractorFormat {
       height: (map['height'] as num?)?.toInt() ?? 0,
       width: (map['width'] as num?)?.toInt() ?? 0,
       filesize: (map['filesize'] as num?)?.toInt() ?? 0,
+      tbr: (map['tbr'] as num?)?.toDouble() ?? 0,
+      abr: (map['abr'] as num?)?.toDouble() ?? 0,
+      fps: (map['fps'] as num?)?.toDouble() ?? 0,
+      vcodec: map['vcodec']?.toString() ?? '',
+      acodec: map['acodec']?.toString() ?? '',
     );
   }
 
@@ -53,6 +68,10 @@ class ExtractorMetadata {
   final String thumbnailUrl;
   final List<ExtractorFormat> formats;
 
+  /// yt-dlp `--extractor-args` value that produced [formats] (e.g. a YouTube
+  /// player client override). Must be passed back unchanged when downloading.
+  final String? extractorArgs;
+
   const ExtractorMetadata({
     required this.id,
     required this.title,
@@ -60,6 +79,7 @@ class ExtractorMetadata {
     required this.durationSec,
     required this.thumbnailUrl,
     required this.formats,
+    this.extractorArgs,
   });
 
   factory ExtractorMetadata.fromMap(Map<dynamic, dynamic> map) {
@@ -73,6 +93,7 @@ class ExtractorMetadata {
       formats: rawFormats
           .map((f) => ExtractorFormat.fromMap(f as Map<dynamic, dynamic>))
           .toList(),
+      extractorArgs: map['extractorArgs']?.toString(),
     );
   }
 }
@@ -82,13 +103,25 @@ abstract class ExtractorBackend {
   Future<bool> init();
   Future<String> getVersion();
   Future<String> update();
-  Future<ExtractorMetadata> getInfo(String url);
+
+  /// Goes back to the yt-dlp copy shipped inside the app (undoes [update]).
+  Future<void> resetToBundled();
+
+  /// Reads the qualities of [url]. Pass a [requestId] (letters, digits, `_`, `-`)
+  /// to be able to stop the lookup with [cancelInfo].
+  Future<ExtractorMetadata> getInfo(String url, {String? requestId});
+
+  /// Stops a running [getInfo] started with the same [requestId]. Best effort.
+  Future<void> cancelInfo(String requestId);
   Future<String> download({
     required String taskId,
     required String url,
     required String outDir,
     String? formatSelector,
+    String? extractorArgs,
+    String? audioFormat,
     void Function(double progress, int eta)? onProgress,
+    void Function(String line)? onLine,
   });
   Future<bool> cancel(String taskId);
 }
@@ -96,9 +129,14 @@ abstract class ExtractorBackend {
 /// Android native implementation using the `mediahub/extractor` MethodChannel.
 class AndroidExtractorBackend implements ExtractorBackend {
   static const MethodChannel _channel = MethodChannel('mediahub/extractor');
-  final Map<String, void Function(double progress, int eta)> _progressListeners = {};
+  final Map<String, void Function(double progress, int eta, String line)> _progressListeners = {};
+  bool _handlerRegistered = false;
 
-  AndroidExtractorBackend() {
+  // The channel handler is registered lazily (not in the constructor) so the
+  // backend can be created before the Flutter binding exists, e.g. in unit tests.
+  void _ensureHandler() {
+    if (_handlerRegistered) return;
+    _handlerRegistered = true;
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onProgress') {
         final args = call.arguments as Map<dynamic, dynamic>?;
@@ -106,8 +144,9 @@ class AndroidExtractorBackend implements ExtractorBackend {
           final taskId = args['taskId']?.toString();
           final progress = (args['progress'] as num?)?.toDouble() ?? 0.0;
           final eta = (args['eta'] as num?)?.toInt() ?? 0;
+          final line = args['line']?.toString() ?? '';
           if (taskId != null && _progressListeners.containsKey(taskId)) {
-            _progressListeners[taskId]!(progress, eta);
+            _progressListeners[taskId]!(progress, eta, line);
           }
         }
       }
@@ -116,9 +155,10 @@ class AndroidExtractorBackend implements ExtractorBackend {
 
   @override
   Future<bool> init() async {
-    if (!Platform.isAndroid || !kPersonalToolsEnabled) {
+    if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) {
       throw UnsupportedError('Extractor backend is only supported on Android with personal tools enabled');
     }
+    _ensureHandler();
     try {
       final res = await _channel.invokeMethod<bool>('init');
       return res ?? false;
@@ -129,7 +169,7 @@ class AndroidExtractorBackend implements ExtractorBackend {
 
   @override
   Future<String> getVersion() async {
-    if (!Platform.isAndroid || !kPersonalToolsEnabled) return 'N/A';
+    if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) return 'N/A';
     try {
       final res = await _channel.invokeMethod<String>('version');
       return res ?? 'Unknown';
@@ -140,7 +180,7 @@ class AndroidExtractorBackend implements ExtractorBackend {
 
   @override
   Future<String> update() async {
-    if (!Platform.isAndroid || !kPersonalToolsEnabled) {
+    if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) {
       throw UnsupportedError('Update only supported on Android');
     }
     try {
@@ -152,16 +192,41 @@ class AndroidExtractorBackend implements ExtractorBackend {
   }
 
   @override
-  Future<ExtractorMetadata> getInfo(String url) async {
-    if (!Platform.isAndroid || !kPersonalToolsEnabled) {
+  Future<void> resetToBundled() async {
+    if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) {
+      throw UnsupportedError('Reset only supported on Android');
+    }
+    try {
+      await _channel.invokeMethod<bool>('resetToBundled');
+    } on PlatformException catch (e) {
+      throw ExtractorException(e.code, e.message ?? 'Reset failed');
+    }
+  }
+
+  @override
+  Future<void> cancelInfo(String requestId) async {
+    if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) return;
+    try {
+      await _channel.invokeMethod<bool>('cancelInfo', {'requestId': requestId});
+    } catch (_) {
+      // Best effort: the native watchdog still ends the lookup after 85 s.
+    }
+  }
+
+  @override
+  Future<ExtractorMetadata> getInfo(String url, {String? requestId}) async {
+    if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) {
       throw UnsupportedError('Extractor is only supported on Android');
     }
     try {
-      final res = await _channel.invokeMapMethod<dynamic, dynamic>('getInfo', {'url': url});
+      final res = await _channel.invokeMapMethod<dynamic, dynamic>('getInfo', {
+        'url': url,
+        'requestId': ?requestId,
+      });
       if (res == null) throw ExtractorException('EMPTY_METADATA', 'No info returned');
       return ExtractorMetadata.fromMap(res);
     } on PlatformException catch (e) {
-      throw ExtractorException(e.code, e.message ?? 'Failed to inspect link');
+      throw ExtractorException(e.code, e.message ?? 'Failed to inspect link', details: e.details?.toString());
     }
   }
 
@@ -171,13 +236,20 @@ class AndroidExtractorBackend implements ExtractorBackend {
     required String url,
     required String outDir,
     String? formatSelector,
+    String? extractorArgs,
+    String? audioFormat,
     void Function(double progress, int eta)? onProgress,
+    void Function(String line)? onLine,
   }) async {
-    if (!Platform.isAndroid || !kPersonalToolsEnabled) {
+    if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) {
       throw UnsupportedError('Extractor is only supported on Android');
     }
-    if (onProgress != null) {
-      _progressListeners[taskId] = onProgress;
+    _ensureHandler();
+    if (onProgress != null || onLine != null) {
+      _progressListeners[taskId] = (progress, eta, line) {
+        onProgress?.call(progress, eta);
+        if (line.isNotEmpty) onLine?.call(line);
+      };
     }
     try {
       final res = await _channel.invokeMapMethod<dynamic, dynamic>('download', {
@@ -185,11 +257,13 @@ class AndroidExtractorBackend implements ExtractorBackend {
         'url': url,
         'formatSelector': formatSelector,
         'outDir': outDir,
+        'extractorArgs': extractorArgs,
+        'audioFormat': audioFormat,
       });
       final filePath = res?['filePath']?.toString() ?? '';
       return filePath;
     } on PlatformException catch (e) {
-      throw ExtractorException(e.code, e.message ?? 'Download failed');
+      throw ExtractorException(e.code, e.message ?? 'Download failed', details: e.details?.toString());
     } finally {
       _progressListeners.remove(taskId);
     }
@@ -198,7 +272,7 @@ class AndroidExtractorBackend implements ExtractorBackend {
   @override
   Future<bool> cancel(String taskId) async {
     _progressListeners.remove(taskId);
-    if (!Platform.isAndroid || !kPersonalToolsEnabled) return false;
+    if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) return false;
     try {
       final res = await _channel.invokeMethod<bool>('cancel', {'taskId': taskId});
       return res ?? false;
@@ -210,12 +284,20 @@ class AndroidExtractorBackend implements ExtractorBackend {
 
 /// Typed exception for extractor errors.
 class ExtractorException implements Exception {
+  /// Machine-readable reason from the native side, e.g. `HOST_NOT_ALLOWED`,
+  /// `LOGIN_REQUIRED`, `NETWORK_ERROR`, `PLAYLIST_NOT_SUPPORTED` (playlist or
+  /// channel link), `LIVE_NOT_SUPPORTED` (live stream) or `INFO_TIMEOUT` (the
+  /// native watchdog stopped a quality lookup that took too long). The web
+  /// link flow's `friendlyError` turns these into the text shown to the user.
   final String code;
   final String message;
 
-  const ExtractorException(this.code, this.message);
+  /// Short sanitized reason from yt-dlp (no URLs / paths), for display and logs.
+  final String? details;
+
+  const ExtractorException(this.code, this.message, {this.details});
 
   @override
-  String toString() => 'ExtractorException($code): $message';
+  String toString() => 'ExtractorException($code): $message${details == null ? '' : ' [$details]'}';
 }
 

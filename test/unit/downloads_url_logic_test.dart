@@ -154,7 +154,7 @@ void main() {
 
       expect(find.text('Platform Link'), findsOneWidget);
       expect(
-        find.text('YouTube pages are not direct media files. MediaHub cannot download from this service. Open it in the YouTube app or use its own offline feature.'),
+        find.text('YouTube pages are not direct media files. Turn on "Enable web link downloader" in Settings to download public videos, or open the link in the YouTube app.'),
         findsOneWidget,
       );
       expect(find.text('Open link'), findsOneWidget);
@@ -167,7 +167,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.text('Spotify pages are not direct media files. MediaHub cannot download from this service. Open it in the Spotify app or use its own offline feature.'),
+        find.text('Spotify pages are not direct media files. Turn on "Enable web link downloader" in Settings to download public videos, or open the link in the Spotify app.'),
         findsOneWidget,
       );
       expect(find.text('Open link'), findsOneWidget);

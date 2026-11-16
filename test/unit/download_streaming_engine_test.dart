@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,92 +26,108 @@ void main() {
       } catch (_) {}
     });
 
-    test('1. Fake 300 MB stream is consumed with bounded RAM (<= 1MB held in memory) and progress arrives during transfer', () async {
-      // Stream generator that simulates 300 MB total (300 chunks of 1 MB each)
-      const totalChunks = 300;
-      const chunkSize = 1024 * 1024; // 1 MB
-      int inMemoryBufferedBytes = 0;
-      int peakMemoryBytes = 0;
+    test(
+      '1. A large stream is written to disk while it is still downloading (not buffered in RAM) and progress arrives during transfer',
+      timeout: const Timeout(Duration(minutes: 3)),
+      () async {
+        const totalChunks = 100;
+        const chunkSize = 1024 * 1024; // 1 MB
+        const pauseAtChunk = 60;
+        const minBytesOnDiskWhileServerWaits = 40 * 1024 * 1024;
 
-      final certFile = File('test/certs/localhost.crt');
-      final keyFile = File('test/certs/localhost.key');
-      final serverContext = SecurityContext();
-      serverContext.useCertificateChain(certFile.path);
-      serverContext.usePrivateKey(keyFile.path);
+        // The server stops after 60 MB until the test has seen those bytes on disk.
+        final releaseServer = Completer<void>();
 
-      // Start secure local server that produces streaming response
-      final server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, serverContext);
-      server.listen((HttpRequest req) async {
-        req.response.statusCode = 200;
-        req.response.headers.set(HttpHeaders.contentTypeHeader, 'audio/mpeg');
-        req.response.headers.set(HttpHeaders.contentLengthHeader, (totalChunks * chunkSize).toString());
+        final certFile = File('test/certs/localhost.crt');
+        final keyFile = File('test/certs/localhost.key');
+        final serverContext = SecurityContext();
+        serverContext.useCertificateChain(certFile.path);
+        serverContext.usePrivateKey(keyFile.path);
 
-        // First chunk contains ID3 magic header
-        for (int i = 0; i < totalChunks; i++) {
-          final chunk = Uint8List(chunkSize);
-          if (i == 0) {
-            // ID3 header
-            chunk[0] = 0x49; chunk[1] = 0x44; chunk[2] = 0x33;
+        final server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, serverContext);
+        server.listen((HttpRequest req) async {
+          req.response.statusCode = 200;
+          req.response.headers.set(HttpHeaders.contentTypeHeader, 'audio/mpeg');
+          req.response.headers.set(HttpHeaders.contentLengthHeader, (totalChunks * chunkSize).toString());
+
+          for (int i = 0; i < totalChunks; i++) {
+            if (i == pauseAtChunk) {
+              await releaseServer.future.timeout(const Duration(seconds: 90), onTimeout: () {});
+            }
+            final chunk = Uint8List(chunkSize);
+            if (i == 0) {
+              chunk[0] = 0x49; chunk[1] = 0x44; chunk[2] = 0x33; // ID3 header
+            }
+            req.response.add(chunk);
+            await req.response.flush();
           }
-          inMemoryBufferedBytes = chunkSize;
-          if (inMemoryBufferedBytes > peakMemoryBytes) {
-            peakMemoryBytes = inMemoryBufferedBytes;
-          }
-
-          req.response.add(chunk);
-          await req.response.flush();
-          inMemoryBufferedBytes = 0;
-          // Small yield to let receiver stream chunk
-          await Future.delayed(const Duration(milliseconds: 2));
-        }
-        await req.response.close();
-      });
-
-      try {
-        final clientContext = SecurityContext();
-        clientContext.setTrustedCertificates(certFile.path);
-        final httpClient = SafeHttpClient(
-          customSecurityContext: clientContext,
-          seam: const TestSafeHttpClientSeam(),
-          dnsResolver: (host) async => [InternetAddress.loopbackIPv4],
-        );
-
-        final engine = DownloadEngine(
-          db: db,
-          httpClient: httpClient,
-          downloadDir: tempDir,
-        );
-
-        int progressEventCount = 0;
-        final sub = engine.progressStream.listen((update) {
-          progressEventCount++;
+          await req.response.close();
         });
 
-        await engine.enqueueDownload(
-          id: 'large_stream_task',
-          url: Uri.parse('https://localhost:${server.port}/stream.mp3'),
-          displayName: 'Large Stream',
-          suggestedFileName: 'stream.mp3',
-        );
+        try {
+          final clientContext = SecurityContext();
+          clientContext.setTrustedCertificates(certFile.path);
+          final httpClient = SafeHttpClient(
+            customSecurityContext: clientContext,
+            seam: const TestSafeHttpClientSeam(),
+            dnsResolver: (host) async => [InternetAddress.loopbackIPv4],
+          );
 
-        await engine.runTask('large_stream_task');
-        await sub.cancel();
+          final engine = DownloadEngine(
+            db: db,
+            httpClient: httpClient,
+            downloadDir: tempDir,
+          );
 
-        // ignore: avoid_print
-        print('Peak memory buffered in test: ${(peakMemoryBytes / 1024).toStringAsFixed(1)} KB');
-        // RAM peak is <= 1 MB (chunkSize)
-        expect(peakMemoryBytes, lessThanOrEqualTo(1024 * 1024));
-        // More than 5 progress updates arrived during transfer
-        expect(progressEventCount, greaterThan(5));
+          int progressEventCount = 0;
+          final sub = engine.progressStream.listen((update) {
+            progressEventCount++;
+          });
 
-        // Part file was finalized into stream.mp3 with exact size
-        final finalFile = File('${tempDir.path}/stream.mp3');
-        expect(finalFile.existsSync(), isTrue);
-        expect(finalFile.lengthSync(), equals(totalChunks * chunkSize));
-      } finally {
-        await server.close(force: true);
-      }
-    });
+          await engine.enqueueDownload(
+            id: 'large_stream_task',
+            url: Uri.parse('https://localhost:${server.port}/stream.mp3'),
+            displayName: 'Large Stream',
+            suggestedFileName: 'stream.mp3',
+          );
+
+          final run = engine.runTask('large_stream_task');
+
+          // While the server is still holding back the last 40 MB the first 60 MB
+          // must already be on disk: that proves the body is streamed to the file
+          // instead of being collected in memory.
+          final part = File('${tempDir.path}/large_stream_task.part');
+          final deadline = DateTime.now().add(const Duration(seconds: 90));
+          var bytesOnDisk = 0;
+          while (DateTime.now().isBefore(deadline)) {
+            if (part.existsSync()) {
+              bytesOnDisk = part.lengthSync();
+              if (bytesOnDisk >= minBytesOnDiskWhileServerWaits) break;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          }
+          expect(bytesOnDisk, greaterThanOrEqualTo(minBytesOnDiskWhileServerWaits),
+              reason: 'download must reach the disk progressively');
+          expect(bytesOnDisk, lessThan(totalChunks * chunkSize),
+              reason: 'the transfer must still be in progress at this point');
+
+          releaseServer.complete();
+          await run;
+          await sub.cancel();
+
+          // More than 5 progress updates arrived during transfer
+          expect(progressEventCount, greaterThan(5));
+
+          // Part file was finalized into stream.mp3 with exact size
+          final finalFile = File('${tempDir.path}/stream.mp3');
+          expect(finalFile.existsSync(), isTrue);
+          expect(finalFile.lengthSync(), equals(totalChunks * chunkSize));
+        } finally {
+          if (!releaseServer.isCompleted) releaseServer.complete();
+          await server.close(force: true);
+        }
+      },
+    );
 
     test('2. Pause mid-stream leaves .part with bytes written so far; resume continues and completes byte-identical', () async {
       final certFile = File('test/certs/localhost.crt');

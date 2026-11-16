@@ -1,13 +1,70 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:mediahub/core/security/safe_filename.dart';
 import 'package:mediahub/core/security/safe_http_client.dart';
 import 'package:mediahub/data/database/app_database.dart';
 import 'package:mediahub/data/downloads/download_engine.dart';
 import 'package:mediahub/domain/models/download_state.dart';
+import 'package:path/path.dart' as p;
+import 'fake_failing_database.dart';
 import 'test_safe_http_client_seam.dart';
+
+/// A small valid MP3 (ID3 header + payload).
+final List<int> _mp3Bytes = [0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A, ...List.filled(512, 0xAA)];
+
+/// Local HTTPS server that answers every request with [payload].
+Future<HttpServer> _serveBytes(List<int> payload) async {
+  final serverContext = SecurityContext()
+    ..useCertificateChain('test/certs/localhost.crt')
+    ..usePrivateKey('test/certs/localhost.key');
+  final server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, serverContext);
+  server.listen((HttpRequest req) {
+    req.response.statusCode = 200;
+    req.response.headers.set(HttpHeaders.contentLengthHeader, payload.length.toString());
+    req.response.add(payload);
+    req.response.close();
+  });
+  return server;
+}
+
+SafeHttpClient _localClient() {
+  final clientContext = SecurityContext()..setTrustedCertificates('test/certs/localhost.crt');
+  return SafeHttpClient(
+    customSecurityContext: clientContext,
+    seam: const TestSafeHttpClientSeam(),
+    dnsResolver: (host) async => [InternetAddress.loopbackIPv4],
+  );
+}
+
+Future<void> _insertRow(
+  AppDatabase db, {
+  required String id,
+  required DownloadTaskState state,
+  required String fileName,
+  String? finalPath,
+}) {
+  final now = DateTime.now();
+  return db.into(db.downloadsTable).insert(
+        DownloadsTableCompanion.insert(
+          id: id,
+          url: 'https://example.com/$fileName',
+          host: 'example.com',
+          displayName: fileName,
+          fileName: fileName,
+          state: state.name,
+          finalPath: Value(finalPath),
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+}
+
+Future<String> _stateOf(AppDatabase db, String id) async =>
+    (await (db.select(db.downloadsTable)..where((t) => t.id.equals(id))).getSingle()).state;
 
 void main() {
   group('PART 4: DownloadEngine Tests', () {
@@ -505,20 +562,24 @@ void main() {
         downloadDir: tempDir,
       );
 
-      // Create an orphan part file that doesn't exist in DB
-      final orphanPart = File('${tempDir.path}/orphan_123.part');
+      // Create an orphan part file that doesn't exist in DB. It uses the
+      // engine's own partial-file naming (`<numeric task id>.part`): the sweep
+      // only ever considers names of that shape.
+      final orphanPart = File('${tempDir.path}/1700000000123.part');
       await orphanPart.writeAsString('orphan');
 
-      // Create a valid part file with DB row in paused state
-      final validPart = File('${tempDir.path}/valid_456.part');
+      // Create a valid part file with DB row in paused state. Same numeric
+      // shape as the orphan, so it is a sweep candidate and only the paused
+      // row protects it.
+      final validPart = File('${tempDir.path}/1700000000456.part');
       await validPart.writeAsString('valid');
       await engine.enqueueDownload(
-        id: 'valid_456',
+        id: '1700000000456',
         url: Uri.parse('https://example.com/song.mp3'),
         displayName: 'Valid',
         suggestedFileName: 'song.mp3',
       );
-      await engine.pause('valid_456');
+      await engine.pause('1700000000456');
 
       await engine.reconcileOnStartup();
 
@@ -829,6 +890,316 @@ void main() {
       } finally {
         await server.close(force: true);
       }
+    });
+  });
+
+  group('Download integrity', () {
+    late AppDatabase db;
+    late Directory tempDir;
+
+    setUp(() async {
+      db = AppDatabase(NativeDatabase.memory());
+      tempDir = await Directory.systemTemp.createTemp('download_integrity_test_');
+    });
+
+    tearDown(() async {
+      await db.close();
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    });
+
+    File fileIn(String name) => File(p.join(tempDir.path, name));
+
+    test('startup cleanup keeps a completed download named "song.part" and still removes real orphans', () async {
+      final engine = DownloadEngine(
+        db: db,
+        httpClient: SafeHttpClient(seam: const TestSafeHttpClientSeam()),
+        downloadDir: tempDir,
+      );
+
+      // Completed downloads whose finished names end in ".part" (possible
+      // before finished names were kept clear of internal extensions), one of
+      // them even shaped like an engine partial.
+      final songPart = fileIn('song.part')..writeAsStringSync('finished audio');
+      await _insertRow(db,
+          id: '1700000000001', state: DownloadTaskState.completed, fileName: 'song.part', finalPath: songPart.path);
+      final numericFinished = fileIn('1700000000777.part')..writeAsStringSync('finished audio 2');
+      await _insertRow(db,
+          id: '1700000000002',
+          state: DownloadTaskState.completed,
+          fileName: '1700000000777.part',
+          finalPath: numericFinished.path);
+
+      // A paused task's own partial file must stay (it resumes from it).
+      final pausedPart = fileIn('1700000000003.part')..writeAsStringSync('partial');
+      await _insertRow(db, id: '1700000000003', state: DownloadTaskState.paused, fileName: 'paused.mp3');
+
+      // Real orphans: no row at all, and a leftover partial of a completed task.
+      final orphanNoRow = fileIn('1700000000555.part')..writeAsStringSync('orphan');
+      final orphanOfCompleted = fileIn('1700000000001.part')..writeAsStringSync('leftover');
+
+      // Not the engine's naming: never a candidate, whatever its extension.
+      final foreignPart = fileIn('notes.part')..writeAsStringSync('not ours');
+      final media = fileIn('track.mp3')..writeAsStringSync('media');
+
+      await engine.reconcileOnStartup();
+
+      expect(songPart.existsSync(), isTrue, reason: 'a completed download must never be deleted');
+      expect(numericFinished.existsSync(), isTrue, reason: 'finalPath of a row is protected');
+      expect(pausedPart.existsSync(), isTrue);
+      expect(foreignPart.existsSync(), isTrue);
+      expect(media.existsSync(), isTrue);
+      expect(orphanNoRow.existsSync(), isFalse);
+      expect(orphanOfCompleted.existsSync(), isFalse);
+
+      engine.dispose();
+    });
+
+    test('a file name ending in an internal extension is saved with the sniffed media extension', () async {
+      final server = await _serveBytes(_mp3Bytes);
+      try {
+        final engine = DownloadEngine(db: db, httpClient: _localClient(), downloadDir: tempDir);
+        await engine.enqueueDownload(
+          id: '1700000000100',
+          url: Uri.parse('https://localhost:${server.port}/song.part'),
+          displayName: 'Song',
+          suggestedFileName: 'song.part',
+        );
+        await engine.runTask('1700000000100');
+
+        final row = await (db.select(db.downloadsTable)..where((t) => t.id.equals('1700000000100'))).getSingle();
+        expect(row.state, DownloadTaskState.completed.name);
+        expect(p.basename(row.finalPath!), 'song.mp3');
+        expect(row.fileName, 'song.mp3', reason: 'the card shows the real file name');
+        final media = await (db.select(db.mediaItemsTable)..where((t) => t.id.equals(row.mediaId!))).getSingle();
+        expect(media.format, 'mp3');
+
+        // ... and it survives the next startup.
+        await engine.reconcileOnStartup();
+        expect(File(row.finalPath!).existsSync(), isTrue);
+        engine.dispose();
+      } finally {
+        await server.close(force: true);
+      }
+    });
+
+    test('an error while finalizing ends the task failed, not stuck in finalizing', () async {
+      final failingDb = FailingFinalizeDatabase(NativeDatabase.memory())..failMediaInsert = true;
+      final server = await _serveBytes(_mp3Bytes);
+      try {
+        final engine = DownloadEngine(db: failingDb, httpClient: _localClient(), downloadDir: tempDir);
+        await engine.enqueueDownload(
+          id: '1700000000200',
+          url: Uri.parse('https://localhost:${server.port}/song.mp3'),
+          displayName: 'Song',
+          suggestedFileName: 'song.mp3',
+        );
+
+        // Must complete normally: an escaped error would also be unhandled in
+        // the queue coordinator.
+        await engine.runTask('1700000000200');
+
+        final row =
+            await (failingDb.select(failingDb.downloadsTable)..where((t) => t.id.equals('1700000000200'))).getSingle();
+        expect(row.state, DownloadTaskState.failed.name);
+        expect(row.errorCode, 'download_error');
+        expect(row.errorDetail, 'Unexpected error (StateError)');
+        expect(row.errorDetail, isNot(contains('/data/')), reason: 'no raw exception text (paths) in the reason');
+
+        // The renamed file was moved back to the task's partial file: no
+        // media file without a row is left in the downloads folder, and no
+        // library row points at a file that is not there.
+        final names = tempDir.listSync().whereType<File>().map((f) => p.basename(f.path)).toList();
+        expect(names, ['1700000000200.part']);
+        expect(File(p.join(tempDir.path, '1700000000200.part')).lengthSync(), _mp3Bytes.length);
+        expect(await failingDb.select(failingDb.mediaItemsTable).get(), isEmpty);
+
+        // The failed row still owns those bytes: startup keeps them ...
+        await engine.reconcileOnStartup();
+        expect(File(p.join(tempDir.path, '1700000000200.part')).existsSync(), isTrue);
+
+        // ... and a retry saves under the original name, not "song (1).mp3".
+        failingDb.failMediaInsert = false;
+        await engine.runTask('1700000000200');
+        final retried =
+            await (failingDb.select(failingDb.downloadsTable)..where((t) => t.id.equals('1700000000200'))).getSingle();
+        expect(retried.state, DownloadTaskState.completed.name);
+        expect(p.basename(retried.finalPath!), 'song.mp3');
+        expect(tempDir.listSync().whereType<File>().map((f) => p.basename(f.path)).toList(), ['song.mp3']);
+        engine.dispose();
+      } finally {
+        await server.close(force: true);
+        await failingDb.close();
+      }
+    });
+
+    test('a pause while the task waits for the download folder is not overwritten with "downloading"', () async {
+      final folder = Completer<Directory>();
+      final engine = DownloadEngine(
+        db: db,
+        httpClient: SafeHttpClient(seam: const TestSafeHttpClientSeam()),
+        downloadDir: folder.future,
+      );
+      const id = '1700000000500';
+      await engine.enqueueDownload(
+        id: id,
+        url: Uri.parse('https://example.com/song.mp3'),
+        displayName: 'Song',
+        suggestedFileName: 'song.mp3',
+      );
+
+      final running = engine.runTask(id);
+      for (var i = 0; i < 50 && await _stateOf(db, id) != DownloadTaskState.preparing.name; i++) {
+        await pumpEventQueue();
+      }
+      expect(await _stateOf(db, id), DownloadTaskState.preparing.name);
+
+      await engine.pause(id);
+      folder.complete(tempDir);
+      await running;
+
+      // Not left 'downloading' with no worker (a lost slot, a service that
+      // never stops), and nothing was downloaded.
+      expect(await _stateOf(db, id), DownloadTaskState.paused.name);
+      expect(tempDir.listSync(), isEmpty);
+      engine.dispose();
+    });
+
+    test('a cancel while free space is being checked is not overwritten with "downloading"', () async {
+      final space = Completer<int>();
+      var asked = false;
+      final engine = DownloadEngine(
+        db: db,
+        httpClient: SafeHttpClient(seam: const TestSafeHttpClientSeam()),
+        downloadDir: tempDir,
+        freeSpaceProvider: () {
+          asked = true;
+          return space.future;
+        },
+      );
+      const id = '1700000000600';
+      await engine.enqueueDownload(
+        id: id,
+        url: Uri.parse('https://example.com/song.mp3'),
+        displayName: 'Song',
+        suggestedFileName: 'song.mp3',
+      );
+
+      final running = engine.runTask(id);
+      for (var i = 0; i < 50 && !asked; i++) {
+        await pumpEventQueue();
+      }
+      expect(asked, isTrue);
+
+      await engine.cancel(id);
+      space.complete(500 * 1024 * 1024);
+      await running;
+
+      expect(await _stateOf(db, id), DownloadTaskState.cancelled.name);
+      engine.dispose();
+    });
+
+    test('a file-system error is classified and its reason carries no path', () {
+      const err = FileSystemException(
+        "Cannot rename file to 'C:\\Users\\me\\downloads\\song.mp3'",
+        'C:\\Users\\me\\downloads\\1.part',
+        OSError('Access is denied', 5),
+      );
+      expect(DownloadEngine.unexpectedErrorCode(err), 'write_failed');
+      expect(DownloadEngine.sanitizedErrorReason(err), 'File system error: Access is denied');
+      expect(
+        DownloadEngine.unexpectedErrorCode(const FileSystemException('x', null, OSError('No space left', 28))),
+        'insufficient_disk_space',
+      );
+      expect(DownloadEngine.unexpectedErrorCode(StateError('db')), 'download_error');
+    });
+
+    test('while the download folder is still resolving, queueing does not wait and nothing is written elsewhere', () async {
+      final folder = Completer<Directory>();
+      final server = await _serveBytes(_mp3Bytes);
+      final name = 'folder_wait_${DateTime.now().microsecondsSinceEpoch}.mp3';
+      try {
+        final engine = DownloadEngine(db: db, httpClient: _localClient(), downloadDir: folder.future);
+
+        // Queueing works before the folder is known.
+        await engine.enqueueDownload(
+          id: '1700000000300',
+          url: Uri.parse('https://localhost:${server.port}/$name'),
+          displayName: 'Waiting',
+          suggestedFileName: name,
+        );
+
+        final running = engine.runTask('1700000000300');
+        Future<String> stateNow() async =>
+            (await (db.select(db.downloadsTable)..where((t) => t.id.equals('1700000000300'))).getSingle()).state;
+        for (var i = 0; i < 50 && await stateNow() != DownloadTaskState.preparing.name; i++) {
+          await pumpEventQueue();
+        }
+        // Give it time to (wrongly) start downloading if it did not wait.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(await stateNow(), DownloadTaskState.preparing.name, reason: 'the task waits for the real folder');
+        expect(tempDir.listSync(), isEmpty);
+
+        folder.complete(tempDir);
+        await running;
+
+        final row = await (db.select(db.downloadsTable)..where((t) => t.id.equals('1700000000300'))).getSingle();
+        expect(row.state, DownloadTaskState.completed.name);
+        expect(File(row.finalPath!).parent.path, tempDir.path);
+        expect(File(p.join(Directory.systemTemp.path, name)).existsSync(), isFalse);
+        engine.dispose();
+      } finally {
+        await server.close(force: true);
+      }
+    });
+
+    test('a download folder that cannot be resolved fails the task instead of using a fallback', () async {
+      final engine = DownloadEngine(
+        db: db,
+        httpClient: SafeHttpClient(seam: const TestSafeHttpClientSeam()),
+        downloadDir: Future<Directory>.error(Exception('documents folder unavailable')),
+      );
+      await engine.enqueueDownload(
+        id: '1700000000400',
+        url: Uri.parse('https://example.com/song.mp3'),
+        displayName: 'No Folder',
+        suggestedFileName: 'song.mp3',
+      );
+      await engine.runTask('1700000000400');
+
+      final row = await (db.select(db.downloadsTable)..where((t) => t.id.equals('1700000000400'))).getSingle();
+      expect(row.state, DownloadTaskState.failed.name);
+      expect(row.errorCode, 'write_failed');
+
+      // pause / cancel stay safe too.
+      await engine.cancel('1700000000400');
+      engine.dispose();
+    });
+  });
+
+  group('SafeFilename.finalMediaName', () {
+    test('replaces internal extensions with the media extension', () {
+      expect(SafeFilename.finalMediaName('song.part', mediaExtension: 'mp3'), 'song.mp3');
+      expect(SafeFilename.finalMediaName('clip.THUMB', mediaExtension: '.mp4'), 'clip.mp4');
+      expect(SafeFilename.finalMediaName('a.ytdl', mediaExtension: 'm4a'), 'a.m4a');
+      expect(SafeFilename.finalMediaName('b.temp', mediaExtension: 'webm'), 'b.webm');
+      expect(SafeFilename.finalMediaName('c.tmp', mediaExtension: 'flac'), 'c.flac');
+      // Stacked internal extensions are all removed; an existing media
+      // extension is not doubled.
+      expect(SafeFilename.finalMediaName('song.mp3.part', mediaExtension: 'mp3'), 'song.mp3');
+      expect(SafeFilename.finalMediaName('x.part.tmp', mediaExtension: 'mp3'), 'x.mp3');
+      // An unusable media extension falls back to .bin.
+      expect(SafeFilename.finalMediaName('d.part', mediaExtension: ''), 'd.bin');
+      expect(SafeFilename.finalMediaName('e.part', mediaExtension: 'part'), 'e.bin');
+    });
+
+    test('leaves ordinary names exactly as sanitize does', () {
+      expect(SafeFilename.finalMediaName('track.mp3', mediaExtension: 'mp4'), 'track.mp3');
+      expect(SafeFilename.finalMediaName('../evil/partner.mp3', mediaExtension: 'mp3'), 'partner.mp3');
+      expect(SafeFilename.hasReservedExtension('song.part'), isTrue);
+      expect(SafeFilename.hasReservedExtension('song.mp3'), isFalse);
+      expect(SafeFilename.hasReservedExtension('part'), isFalse);
     });
   });
 }

@@ -8,6 +8,7 @@ import '../../data/repositories/direct_url_resolver.dart';
 import '../../domain/models/download_progress.dart';
 import '../../domain/models/download_state.dart';
 import '../../domain/repositories/platform_resolver.dart';
+import '../../core/platform_info.dart';
 import '../music_player/playback_notifier.dart';
 import 'download_providers.dart';
 
@@ -138,6 +139,26 @@ final downloadProgressStreamProvider =
   return engine.progressStream;
 });
 
+/// Latest progress update per download id. The UI used to keep only the very
+/// last update of any task, so two parallel downloads made each other's speed
+/// and ETA flicker.
+class DownloadProgressMapNotifier extends Notifier<Map<String, DownloadProgressUpdate>> {
+  @override
+  Map<String, DownloadProgressUpdate> build() {
+    final engine = ref.watch(downloadEngineProvider);
+    final sub = engine.progressStream.listen((u) {
+      state = {...state, u.id: u};
+    });
+    ref.onDispose(sub.cancel);
+    return const {};
+  }
+}
+
+final downloadProgressMapProvider =
+    NotifierProvider<DownloadProgressMapNotifier, Map<String, DownloadProgressUpdate>>(
+  DownloadProgressMapNotifier.new,
+);
+
 // Storage space info provider
 class StorageInfo {
   final int usedBytes;
@@ -176,7 +197,6 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
     final serviceController = ref.watch(downloadServiceControllerProvider);
     _actionEventsSub = serviceController.actionEvents.listen((event) async {
       final db = ref.read(appDatabaseProvider);
-      final engine = ref.read(downloadEngineProvider);
       if (event == 'pauseAll' || event == 'timeout') {
         final active = await (db.select(db.downloadsTable)
               ..where((t) =>
@@ -185,7 +205,7 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
                   t.state.equals(DownloadTaskState.queued.name)))
             .get();
         for (final t in active) {
-          await engine.pause(t.id);
+          await pauseTask(t);
         }
         await serviceController.stopService();
       }
@@ -290,22 +310,63 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
       await serviceController.stopService();
     }
 
-    if (activeDownloadingCount >= 2) return;
+    // _runningTaskIds is updated synchronously, the DB state a moment later:
+    // use whichever is larger so rapid trigger() calls cannot exceed 2 workers.
+    final busy = activeDownloadingCount > _runningTaskIds.length
+        ? activeDownloadingCount
+        : _runningTaskIds.length;
+    if (busy >= 2) return;
 
     final nextQueued = queuedTasks;
-    int slotsAvailable = 2 - activeDownloadingCount;
+    int slotsAvailable = 2 - busy;
 
     for (final task in nextQueued) {
       if (slotsAvailable <= 0) break;
       if (!_runningTaskIds.contains(task.id)) {
         _runningTaskIds.add(task.id);
         slotsAvailable--;
-        engine.runTask(task.id).whenComplete(() {
+        final Future<void> job = task.engine == 'extractor'
+            ? ref.read(extractorDownloadRunnerProvider).run(task.id)
+            : engine.runTask(task.id);
+        job.whenComplete(() {
           _runningTaskIds.remove(task.id);
           trigger();
         });
       }
     }
+  }
+
+  /// Pause a task with the engine that owns it.
+  Future<void> pauseTask(DownloadEntry task) {
+    if (task.engine == 'extractor') {
+      return ref.read(extractorDownloadRunnerProvider).pause(task.id);
+    }
+    return ref.read(downloadEngineProvider).pause(task.id);
+  }
+
+  /// Cancel a task with the engine that owns it.
+  Future<void> cancelTask(DownloadEntry task) {
+    if (task.engine == 'extractor') {
+      return ref.read(extractorDownloadRunnerProvider).cancel(task.id);
+    }
+    return ref.read(downloadEngineProvider).cancel(task.id);
+  }
+
+  /// Called once at app start: repairs tasks that were interrupted by the app
+  /// being killed and resumes them (and anything still queued).
+  Future<void> recoverAndResume() async {
+    if (!PlatformInfo.supportsDownloads) return;
+    await ref.read(downloadDirectoryProvider.future);
+    final db = ref.read(appDatabaseProvider);
+    final engine = ref.read(downloadEngineProvider);
+    final httpIds = await engine.reconcileOnStartup();
+    for (final id in httpIds) {
+      await (db.update(db.downloadsTable)..where((t) => t.id.equals(id))).write(
+        const DownloadsTableCompanion(state: Value('queued')),
+      );
+    }
+    await ref.read(extractorDownloadRunnerProvider).reconcileOnStartup();
+    await trigger();
   }
 }
 
@@ -330,3 +391,8 @@ final downloadNoticeAgreedProvider =
     NotifierProvider<DownloadNoticeAgreedNotifier, bool>(
   DownloadNoticeAgreedNotifier.new,
 );
+
+/// Reads once from main() after the first frame to recover interrupted downloads.
+final downloadStartupProvider = FutureProvider<void>((ref) async {
+  await ref.read(downloadQueueCoordinatorProvider.notifier).recoverAndResume();
+});

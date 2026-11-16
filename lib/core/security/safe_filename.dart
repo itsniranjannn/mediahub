@@ -80,6 +80,46 @@ class SafeFilename {
     return '$baseName$extension';
   }
 
+  /// Extensions the download code uses for its own work files: `<id>.part`
+  /// (direct-link partial), `<id>.thumb` (cover image) and yt-dlp's `.part`,
+  /// `.ytdl` and `.temp` files; `.tmp` is the usual scratch suffix for atomic
+  /// writes. A finished library file must never carry one of these, or a
+  /// cleanup pass could mistake it for garbage and delete it.
+  static const Set<String> reservedExtensions = {'.part', '.thumb', '.ytdl', '.temp', '.tmp'};
+
+  /// True when [name] ends in one of [reservedExtensions] (case-insensitive).
+  static bool hasReservedExtension(String name) {
+    final lastDot = name.lastIndexOf('.');
+    if (lastDot < 0) return false;
+    return reservedExtensions.contains(name.substring(lastDot).toLowerCase());
+  }
+
+  /// Makes [name] safe to use as a finished media file name.
+  ///
+  /// Returns `sanitize(name)` unchanged unless it ends in a reserved internal
+  /// extension (see [reservedExtensions]). In that case every trailing
+  /// reserved extension is removed and [mediaExtension] (for example the one
+  /// matching the sniffed MIME type, with or without the dot) is used instead,
+  /// without doubling it: with `mp3`, `song.part` -> `song.mp3` and
+  /// `song.mp3.part` -> `song.mp3`. If [mediaExtension] is empty or itself
+  /// reserved, `.bin` is used.
+  static String finalMediaName(String name, {required String mediaExtension}) {
+    var safe = sanitize(name);
+    if (!hasReservedExtension(safe)) return safe;
+
+    var ext = mediaExtension.trim().toLowerCase();
+    if (ext.isNotEmpty && !ext.startsWith('.')) ext = '.$ext';
+    if (ext.length < 2 || reservedExtensions.contains(ext)) ext = '.bin';
+
+    while (hasReservedExtension(safe)) {
+      safe = safe.substring(0, safe.lastIndexOf('.'));
+    }
+    safe = safe.replaceAll(RegExp(r'[\. ]+$'), '');
+    if (safe.isEmpty) safe = 'download';
+    if (safe.toLowerCase().endsWith(ext)) return sanitize(safe);
+    return sanitize('$safe$ext');
+  }
+
   static String _generateFallback(String ext) {
     final rand = Random().nextInt(0xFFFFFF).toRadixString(16).padLeft(6, '0');
     final cleanExt = ext.isNotEmpty ? (ext.startsWith('.') ? ext : '.$ext') : '';

@@ -1,23 +1,16 @@
 import 'package:flutter/material.dart';
+import '../app/theme/app_colors.dart';
+import '../app/theme/app_spacing.dart';
+import '../app/theme/app_typography.dart';
+import '../shared/widgets/artwork_placeholder.dart';
+import '../shared/widgets/ui_kit.dart';
 import 'extractor_backend.dart';
+import 'format_options.dart';
 
-class FormatPreset {
-  final String label;
-  final String formatSelector;
-  final String description;
-  final bool isAudio;
-
-  const FormatPreset({
-    required this.label,
-    required this.formatSelector,
-    required this.description,
-    required this.isAudio,
-  });
-}
-
+/// Bottom sheet listing every quality yt-dlp reported for a link.
 class FormatSelectionSheet extends StatelessWidget {
   final ExtractorMetadata metadata;
-  final void Function(FormatPreset preset) onSelect;
+  final void Function(FormatChoice choice) onSelect;
 
   const FormatSelectionSheet({
     super.key,
@@ -25,130 +18,325 @@ class FormatSelectionSheet extends StatelessWidget {
     required this.onSelect,
   });
 
-  static List<FormatPreset> getPresets(ExtractorMetadata meta) {
-    return [
-      const FormatPreset(
-        label: 'Best Video & Audio (Auto)',
-        formatSelector: 'bestvideo+bestaudio/best',
-        description: 'Highest quality combined video and audio',
-        isAudio: false,
-      ),
-      const FormatPreset(
-        label: 'Balanced 720p',
-        formatSelector: 'bestvideo[height<=720]+bestaudio/best[height<=720]',
-        description: 'Standard HD video (faster download)',
-        isAudio: false,
-      ),
-      const FormatPreset(
-        label: 'Audio Only (Best Quality)',
-        formatSelector: 'bestaudio/best',
-        description: 'Extracts highest quality audio stream',
-        isAudio: true,
-      ),
-    ];
+  static List<FormatChoice> getPresets(ExtractorMetadata meta) => FormatOptions.build(meta);
+
+  /// Whether the modal route already reserves a drag-handle strip above this
+  /// sheet (the theme turns handles on). The caller opens the sheet with a
+  /// transparent background, so in that case the sheet paints that strip
+  /// itself; otherwise it draws its own handle on top.
+  static bool _routeDrawsDragHandle(BuildContext context) {
+    final route = ModalRoute.of(context);
+    if (route is! ModalBottomSheetRoute) return false;
+    return route.showDragHandle ??
+        (route.enableDrag && (Theme.of(context).bottomSheetTheme.showDragHandle ?? false));
   }
 
   @override
   Widget build(BuildContext context) {
-    final presets = getPresets(metadata);
+    final choices = getPresets(metadata);
+    final videoChoices = choices.where((c) => !c.isAudio).toList();
+    final audioChoices = choices.where((c) => c.isAudio).toList();
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.85;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      decoration: const BoxDecoration(
-        color: Color(0xFF131720),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                if (metadata.thumbnailUrl.isNotEmpty) ...[
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      metadata.thumbnailUrl,
-                      width: 60,
-                      height: 60,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.video_library, size: 40),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                ],
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        metadata.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      if (metadata.uploader.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          metadata.uploader,
-                          style: TextStyle(fontSize: 13, color: Colors.grey[400]),
-                        ),
-                      ],
-                    ],
-                  ),
+    final content = ColoredBox(
+      color: AppColors.surface,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg16,
+                  0,
+                  AppSpacing.lg16,
+                  AppSpacing.xs4,
                 ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Select Quality / Preset',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF9E86FF),
+                child: _Header(metadata: metadata),
               ),
-            ),
-            const SizedBox(height: 12),
-            ...presets.map((preset) => Card(
-                  color: const Color(0xFF1B202D),
-                  margin: const EdgeInsets.only(bottom: 8),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(color: Color(0xFF282F40)),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg16,
+                    0,
+                    AppSpacing.lg16,
+                    AppSpacing.lg16,
                   ),
-                  child: ListTile(
-                    leading: Icon(
-                      preset.isAudio ? Icons.music_note : Icons.video_file,
-                      color: const Color(0xFF9E86FF),
-                    ),
-                    title: Text(
-                      preset.label,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                    subtitle: Text(
-                      preset.description,
-                      style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                    ),
-                    trailing: const Icon(Icons.download, color: Colors.white70),
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      onSelect(preset);
-                    },
-                  ),
-                )),
-          ],
+                  children: [
+                    if (videoChoices.isNotEmpty) ...[
+                      const _SectionLabel('Video (with sound)'),
+                      ...videoChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
+                    ],
+                    const _SectionLabel('Audio only'),
+                    ...audioChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (_routeDrawsDragHandle(context)) {
+      // The route's handle sits in a transparent strip right above us: paint
+      // the strip (with an identical handle) so the sheet reads as one surface.
+      // Touches there still reach the route's own handle.
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Positioned(
+            left: 0,
+            right: 0,
+            top: -kMinInteractiveDimension,
+            height: kMinInteractiveDimension,
+            child: _GrabHandle(),
+          ),
+          content,
+        ],
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _GrabHandle(),
+        Flexible(child: content),
+      ],
+    );
+  }
+}
+
+/// Rounded top edge of the sheet with the drag handle pill. Corner radius and
+/// handle come from the app's bottom sheet theme so the sheet matches every
+/// other sheet in the app.
+class _GrabHandle extends StatelessWidget {
+  const _GrabHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    final sheetTheme = Theme.of(context).bottomSheetTheme;
+    final handleSize = sheetTheme.dragHandleSize ?? const Size(32, 4);
+    final handleColor = sheetTheme.dragHandleColor ?? AppColors.surfacePressed;
+    final sheetShape = sheetTheme.shape;
+    final themeRadius = sheetShape is RoundedRectangleBorder
+        ? sheetShape.borderRadius.resolve(Directionality.maybeOf(context))
+        : BorderRadius.zero;
+    return Container(
+      height: kMinInteractiveDimension,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.only(
+          topLeft: themeRadius.topLeft,
+          topRight: themeRadius.topRight,
+        ),
+      ),
+      child: Container(
+        width: handleSize.width,
+        height: handleSize.height,
+        decoration: BoxDecoration(
+          color: handleColor,
+          borderRadius: BorderRadius.circular(handleSize.height / 2),
         ),
       ),
     );
   }
 }
 
+class _Header extends StatelessWidget {
+  final ExtractorMetadata metadata;
+
+  const _Header({required this.metadata});
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = metadata.durationSec > 0 ? Duration(seconds: metadata.durationSec) : null;
+    final placeholder = ArtworkPlaceholder(
+      seed: metadata.id.isNotEmpty ? metadata.id : metadata.title,
+      icon: Icons.video_library_rounded,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          header: true,
+          child: Text('Choose quality', style: AppTypography.sectionTitle),
+        ),
+        const SizedBox(height: AppSpacing.md12),
+        Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppSpacing.md12),
+              child: SizedBox(
+                width: 112,
+                height: 63,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (metadata.thumbnailUrl.isEmpty)
+                      placeholder
+                    else
+                      Image.network(
+                        metadata.thumbnailUrl,
+                        fit: BoxFit.cover,
+                        cacheWidth: 336,
+                        errorBuilder: (_, _, _) => placeholder,
+                        loadingBuilder: (context, child, progress) =>
+                            progress == null ? child : placeholder,
+                      ),
+                    if (duration != null)
+                      Positioned(
+                        right: AppSpacing.xs4,
+                        bottom: AppSpacing.xs4,
+                        child: DurationBadge(duration: duration),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    metadata.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTypography.bodyStrong,
+                  ),
+                  if (metadata.uploader.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.xs4),
+                    Text(
+                      metadata.uploader,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTypography.metadata,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String text;
+
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.xl20, bottom: AppSpacing.sm8),
+      child: Semantics(
+        header: true,
+        child: Text(
+          text,
+          style: AppTypography.label.copyWith(
+            color: AppColors.primary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One option card: tinted type icon, quality label, size line, download glyph.
+class _ChoiceTile extends StatelessWidget {
+  final FormatChoice choice;
+  final void Function(FormatChoice choice) onSelect;
+
+  const _ChoiceTile({required this.choice, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    final tint = choice.isAudio ? AppColors.primary : AppColors.accent;
+    final radius = BorderRadius.circular(AppSpacing.cardRadius);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm8),
+      child: MergeSemantics(
+        child: Semantics(
+          button: true,
+          hint: 'Download',
+          child: Material(
+            color: AppColors.surfaceElevated,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: radius,
+              side: const BorderSide(color: AppColors.divider),
+            ),
+            child: InkWell(
+              onTap: () {
+                Navigator.of(context).pop();
+                onSelect(choice);
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 64),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md12,
+                    vertical: AppSpacing.md12,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: tint.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(AppSpacing.md12),
+                        ),
+                        child: Icon(
+                          choice.isAudio ? Icons.music_note_rounded : Icons.videocam_rounded,
+                          size: 22,
+                          color: tint,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              choice.label,
+                              style: AppTypography.bodyStrong,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: AppSpacing.xs4),
+                            Text(
+                              choice.subtitle,
+                              style: AppTypography.metadata,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm8),
+                      const Icon(Icons.download_rounded, size: 22, color: AppColors.textSecondary),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
