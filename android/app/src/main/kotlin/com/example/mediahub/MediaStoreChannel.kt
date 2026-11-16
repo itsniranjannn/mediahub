@@ -3,6 +3,8 @@ package com.example.mediahub
 import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -14,6 +16,7 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -25,6 +28,13 @@ class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger
 
     init {
         channel.setMethodCallHandler(this)
+    }
+
+    /** Called only when the Flutter engine itself goes away (see MainActivity.EngineChannels). */
+    fun cleanup() {
+        channel.setMethodCallHandler(null)
+        scanExecutor.shutdown()
+        artworkExecutor.shutdown()
     }
 
     override fun onMethodCall(call: MethodCall, rawResult: MethodChannel.Result) {
@@ -82,7 +92,7 @@ class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger
 
                 artworkExecutor.execute {
                     try {
-                        val bytes = loadArtworkBytes(Uri.parse(uriString), width, height)
+                        val bytes = loadArtworkBytes(uriString, width, height)
                         safeResult.success(bytes)
                     } catch (e: Exception) {
                         safeResult.success(null)
@@ -217,15 +227,18 @@ class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger
         return videoList
     }
 
-    private fun loadArtworkBytes(uri: Uri, width: Int, height: Int): ByteArray? {
+    /**
+     * Artwork for either a MediaStore content:// URI or a plain file path / file:// URI
+     * (downloaded files live in app-private storage and have no MediaStore entry).
+     */
+    private fun loadArtworkBytes(uriString: String, width: Int, height: Int): ByteArray? {
         return try {
-            val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                context.contentResolver.loadThumbnail(uri, Size(width, height), null)
+            val isFile = uriString.startsWith("/") || uriString.startsWith("file://")
+            val bitmap: Bitmap? = if (isFile) {
+                loadFileBitmap(uriString.removePrefix("file://"), width, height)
             } else {
-                @Suppress("DEPRECATION")
-                MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+                loadContentBitmap(Uri.parse(uriString), width, height)
             }
-
             if (bitmap != null) {
                 val stream = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
@@ -237,5 +250,58 @@ class MediaStoreChannel(private val context: Context, messenger: BinaryMessenger
             null
         }
     }
-}
 
+    private fun loadContentBitmap(uri: Uri, width: Int, height: Int): Bitmap? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return context.contentResolver.loadThumbnail(uri, Size(width, height), null)
+        }
+        // API 26-28: no loadThumbnail. Use the retriever (embedded picture / video frame).
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            bitmapFromRetriever(retriever, width, height)
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
+        }
+    }
+
+    private fun loadFileBitmap(path: String, width: Int, height: Int): Bitmap? {
+        val file = File(path)
+        if (!file.isFile) return null
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(path)
+            bitmapFromRetriever(retriever, width, height)
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
+        }
+    }
+
+    private fun bitmapFromRetriever(retriever: MediaMetadataRetriever, width: Int, height: Int): Bitmap? {
+        val picture = retriever.embeddedPicture
+        if (picture != null) {
+            return decodeScaled(picture, width, height)
+        }
+        val hasVideo = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes"
+        if (!hasVideo) return null
+        val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        val timeUs = minOf(1_000_000L, (durationMs * 1000L) / 2L)
+        val frame = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            retriever.getScaledFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, width, height)
+        } else {
+            retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+        }
+        return frame
+    }
+
+    private fun decodeScaled(bytes: ByteArray, reqWidth: Int, reqHeight: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= reqWidth && bounds.outHeight / (sample * 2) >= reqHeight) {
+            sample *= 2
+        }
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    }
+}

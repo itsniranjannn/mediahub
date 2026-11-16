@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ backup policy.
+     - Google cloud backup: nothing leaves the phone.
+     - Phone-to-phone transfer (cable / Wi-Fi when setting up a new phone, started by you):
+       the library database, settings and downloads (all under app_flutter/) move with you,
+       so a new phone does not lose them. The yt-dlp engine files live in no_backup/ and are
+       never copied; they are unpacked again on the new phone. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="root" path="app_flutter/" />
+    </device-transfer>
+</data-extraction-rules>
