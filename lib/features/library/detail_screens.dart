@@ -1,15 +1,39 @@
+import 'package:flutter/gestures.dart' show DelayedMultiDragGestureRecognizer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
+import '../../app/theme/motion_tokens.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/playlist_and_groups.dart';
+import '../../shared/widgets/artwork_placeholder.dart';
+import '../../shared/widgets/ui_kit.dart';
 import '../library/media_context_menu.dart';
 import '../library/media_song_row.dart';
 import '../music_player/playback_notifier.dart';
+
+/// Size of the cover in the hero header of every detail screen.
+const double _kHeroArtSize = 168;
+
+/// Corner radius of a square hero cover.
+const double _kHeroArtRadius = AppSpacing.xxl24;
+
+/// Scroll distance after which the hero title is under the app bar, so the
+/// app bar shows the title instead.
+const double _kCollapseOffset = _kHeroArtSize + 48;
+
+/// Placeholder seeds for album and artist covers (shared with their tiles).
+String _albumSeed(AlbumGroup album) => ArtworkPlaceholder.albumSeed(album.album);
+String _artistSeed(ArtistGroup artist) => ArtworkPlaceholder.artistSeed(artist.artist);
+
+/// Violet "tonal" button used next to the filled Play button.
+final ButtonStyle _tonalStyle = FilledButton.styleFrom(
+  backgroundColor: AppColors.primary.withValues(alpha: 0.16),
+  foregroundColor: AppColors.primary,
+);
 
 class AlbumDetailScreen extends ConsumerWidget {
   final AlbumGroup album;
@@ -20,100 +44,85 @@ class AlbumDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final songsAsync = ref.watch(_albumSongsProvider(album.album));
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Text(album.album, style: AppTypography.sectionTitle),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.more_vert_rounded),
-            onPressed: () {
-              songsAsync.whenData((songs) {
-                if (songs.isNotEmpty) {
-                  MediaContextMenu.show(context, ref, songs.first);
-                }
-              });
-            },
-          ),
-        ],
-      ),
+    return _DetailScaffold(
+      title: album.album,
+      // Only the song list has a hero; loading / error / empty need the bar title.
+      showTitle: !songsAsync.maybeWhen(data: (songs) => songs.isNotEmpty, orElse: () => false),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.more_vert_rounded),
+          tooltip: 'More options',
+          onPressed: () {
+            songsAsync.whenData((songs) {
+              if (songs.isNotEmpty) {
+                MediaContextMenu.show(context, ref, songs.first);
+              }
+            });
+          },
+        ),
+      ],
       body: songsAsync.when(
         data: (songs) {
           if (songs.isEmpty) {
-            return Center(child: Text('No songs in album', style: AppTypography.metadata));
+            return const EmptyHint(
+              icon: Icons.album_rounded,
+              title: 'No songs in album',
+              message: 'Songs from this album are no longer in your library.',
+            );
           }
           return CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.xxl24),
-                  child: Column(
-                    children: [
-                      ArtworkThumbnail(
-                        uri: songs.first.uri,
-                        size: 180,
-                        borderRadius: AppSpacing.cardRadius,
-                      ),
-                      const SizedBox(height: AppSpacing.lg16),
-                      Text(
-                        album.album,
-                        style: AppTypography.screenTitle.copyWith(fontSize: 22),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: AppSpacing.xs4),
-                      Text(
-                        album.artist,
-                        style: AppTypography.metadata.copyWith(fontSize: 16),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: AppSpacing.lg16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          ElevatedButton.icon(
-                            icon: const Icon(Icons.play_arrow_rounded),
-                            label: const Text('Play'),
-                            onPressed: () {
-                              ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
-                            },
-                          ),
-                          const SizedBox(width: AppSpacing.md12),
-                          OutlinedButton.icon(
-                            icon: const Icon(Icons.shuffle_rounded),
-                            label: const Text('Shuffle'),
-                            onPressed: () {
-                              final shuffled = List<MediaItem>.from(songs)..shuffle();
-                              ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
+                child: _HeroHeader(
+                  tint: ArtworkTint.surfaceGradient(_albumSeed(album)),
+                  artwork: _HeroArtwork(
+                    glowColor: ArtworkTint.glow(_albumSeed(album)),
+                    child: ArtworkThumbnail(
+                      uri: songs.first.uri,
+                      artworkPath: songs.first.artworkPath,
+                      size: _kHeroArtSize,
+                      borderRadius: _kHeroArtRadius,
+                      placeholderIcon: Icons.album_rounded,
+                      // Same colours as the album's tile in Music > Albums.
+                      placeholderSeed: _albumSeed(album),
+                    ),
                   ),
-                ),
-              ),
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final song = songs[index];
-                    return MediaSongRow(
-                      item: song,
-                      showArtwork: false,
-                      onTap: () {
-                        ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
-                      },
-                    );
+                  eyebrow: 'Album',
+                  title: album.album,
+                  subtitle: album.artist,
+                  meta: _songsMeta(songs),
+                  onPlay: () {
+                    ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
                   },
-                  childCount: songs.length,
+                  onShuffle: () {
+                    final shuffled = List<MediaItem>.from(songs)..shuffle();
+                    ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
+                  },
                 ),
               ),
+              SliverList.builder(
+                itemCount: songs.length,
+                itemBuilder: (context, index) {
+                  final song = songs[index];
+                  return MediaSongRow(
+                    item: song,
+                    showArtwork: false,
+                    onTap: () {
+                      ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
+                    },
+                  );
+                },
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl32)),
             ],
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Error: $err', style: AppTypography.metadata)),
+        error: (err, _) => EmptyHint(
+          icon: Icons.error_outline_rounded,
+          title: 'Could not load songs',
+          message: 'Error: $err',
+        ),
       ),
     );
   }
@@ -128,87 +137,70 @@ class ArtistDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final songsAsync = ref.watch(_artistSongsProvider(artist.artist));
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Text(artist.artist, style: AppTypography.sectionTitle),
-      ),
+    return _DetailScaffold(
+      title: artist.artist,
+      // Only the song list has a hero; loading / error / empty need the bar title.
+      showTitle: !songsAsync.maybeWhen(data: (songs) => songs.isNotEmpty, orElse: () => false),
       body: songsAsync.when(
         data: (songs) {
           if (songs.isEmpty) {
-            return Center(child: Text('No songs for artist', style: AppTypography.metadata));
+            return const EmptyHint(
+              icon: Icons.person_rounded,
+              title: 'No songs for artist',
+              message: 'Songs by this artist are no longer in your library.',
+            );
           }
           return CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.xxl24),
-                  child: Column(
-                    children: [
-                      ArtworkThumbnail(
-                        uri: songs.first.uri,
-                        size: 180,
-                        borderRadius: 90, // Circular for artist
-                      ),
-                      const SizedBox(height: AppSpacing.lg16),
-                      Text(
-                        artist.artist,
-                        style: AppTypography.screenTitle.copyWith(fontSize: 22),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: AppSpacing.xs4),
-                      Text(
-                        '${songs.length} songs',
-                        style: AppTypography.metadata.copyWith(fontSize: 16),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: AppSpacing.lg16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          ElevatedButton.icon(
-                            icon: const Icon(Icons.play_arrow_rounded),
-                            label: const Text('Play'),
-                            onPressed: () {
-                              ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
-                            },
-                          ),
-                          const SizedBox(width: AppSpacing.md12),
-                          OutlinedButton.icon(
-                            icon: const Icon(Icons.shuffle_rounded),
-                            label: const Text('Shuffle'),
-                            onPressed: () {
-                              final shuffled = List<MediaItem>.from(songs)..shuffle();
-                              ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
+                child: _HeroHeader(
+                  tint: ArtworkTint.surfaceGradient(_artistSeed(artist)),
+                  artwork: _HeroArtwork(
+                    circle: true,
+                    glowColor: ArtworkTint.glow(_artistSeed(artist)),
+                    child: ArtworkThumbnail(
+                      uri: songs.first.uri,
+                      artworkPath: songs.first.artworkPath,
+                      size: _kHeroArtSize,
+                      borderRadius: _kHeroArtSize / 2, // Circular for artist
+                      placeholderIcon: Icons.person_rounded,
+                      placeholderSeed: _artistSeed(artist),
+                    ),
                   ),
-                ),
-              ),
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final song = songs[index];
-                    return MediaSongRow(
-                      item: song,
-                      onTap: () {
-                        ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
-                      },
-                    );
+                  eyebrow: 'Artist',
+                  title: artist.artist,
+                  meta: _songsMeta(songs),
+                  onPlay: () {
+                    ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
                   },
-                  childCount: songs.length,
+                  onShuffle: () {
+                    final shuffled = List<MediaItem>.from(songs)..shuffle();
+                    ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
+                  },
                 ),
               ),
+              SliverList.builder(
+                itemCount: songs.length,
+                itemBuilder: (context, index) {
+                  final song = songs[index];
+                  return MediaSongRow(
+                    item: song,
+                    onTap: () {
+                      ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
+                    },
+                  );
+                },
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl32)),
             ],
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Error: $err', style: AppTypography.metadata)),
+        error: (err, _) => EmptyHint(
+          icon: Icons.error_outline_rounded,
+          title: 'Could not load songs',
+          message: 'Error: $err',
+        ),
       ),
     );
   }
@@ -223,97 +215,104 @@ class PlaylistDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final songsAsync = ref.watch(_playlistSongsProvider(playlist.id));
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Text(playlist.name, style: AppTypography.sectionTitle),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit_rounded),
-            tooltip: 'Rename',
-            onPressed: () {
-              _showRenameDialog(context, ref);
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline_rounded),
-            tooltip: 'Delete playlist',
-            onPressed: () {
-              _showDeleteConfirmation(context, ref);
-            },
-          ),
-        ],
-      ),
+    return _DetailScaffold(
+      title: playlist.name,
+      // An empty playlist still shows its hero; loading / error need the bar title.
+      showTitle: !songsAsync.maybeWhen(data: (_) => true, orElse: () => false),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.edit_rounded),
+          tooltip: 'Rename',
+          onPressed: () {
+            _showRenameDialog(context, ref);
+          },
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete_outline_rounded),
+          tooltip: 'Delete playlist',
+          onPressed: () {
+            _showDeleteConfirmation(context, ref);
+          },
+        ),
+      ],
       body: songsAsync.when(
         data: (songs) {
+          final header = _HeroHeader(
+            artwork: const _HeroArtwork(child: _PlaylistCover(size: _kHeroArtSize)),
+            eyebrow: 'Playlist',
+            title: playlist.name,
+            meta: _songsMeta(songs),
+            onPlay: songs.isEmpty
+                ? null
+                : () {
+                    ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
+                  },
+            onShuffle: songs.isEmpty
+                ? null
+                : () {
+                    final shuffled = List<MediaItem>.from(songs)..shuffle();
+                    ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
+                  },
+          );
+
           if (songs.isEmpty) {
-            return Center(child: Text('Playlist is empty', style: AppTypography.metadata));
+            return CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(child: header),
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: EmptyHint(
+                    icon: Icons.queue_music_rounded,
+                    title: 'Playlist is empty',
+                    message: 'Add songs with "Add to playlist" in any song\'s menu.',
+                  ),
+                ),
+              ],
+            );
           }
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.sm8),
-                child: Row(
-                  children: [
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.play_arrow_rounded),
-                      label: const Text('Play'),
-                      onPressed: () {
-                        ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
-                      },
-                    ),
-                    const SizedBox(width: AppSpacing.md12),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.shuffle_rounded),
-                      label: const Text('Shuffle'),
-                      onPressed: () {
-                        final shuffled = List<MediaItem>.from(songs)..shuffle();
-                        ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
-                      },
-                    ),
-                  ],
+
+          return ReorderableListView.builder(
+            header: header,
+            padding: const EdgeInsets.only(bottom: AppSpacing.xxxl32),
+            itemCount: songs.length,
+            // The rows bring their own drag starters: long-press anywhere on
+            // the row, or an immediate drag from the handle (_RowDragListener
+            // keeps the two from both starting a recognizer).
+            buildDefaultDragHandles: false,
+            // ignore: deprecated_member_use
+            onReorder: (oldIndex, newIndex) {
+              if (newIndex > oldIndex) newIndex -= 1;
+              ref.read(libraryRepositoryProvider).reorderPlaylist(playlist.id, oldIndex, newIndex);
+            },
+            itemBuilder: (context, index) {
+              final song = songs[index];
+              return Dismissible(
+                key: ValueKey('${song.id}_$index'),
+                direction: DismissDirection.endToStart,
+                background: const _RemoveBackground(),
+                onDismissed: (_) {
+                  ref.read(libraryRepositoryProvider).removeSongFromPlaylist(playlist.id, song.id, index);
+                },
+                child: _RowDragListener(
+                  index: index,
+                  child: MediaSongRow(
+                    item: song,
+                    trailing: _DragHandle(index: index),
+                    onTap: () {
+                      ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
+                    },
+                  ),
                 ),
-              ),
-              Expanded(
-                child: ReorderableListView.builder(
-                  itemCount: songs.length,
-                  // ignore: deprecated_member_use
-                  onReorder: (oldIndex, newIndex) {
-                    if (newIndex > oldIndex) newIndex -= 1;
-                    ref.read(libraryRepositoryProvider).reorderPlaylist(playlist.id, oldIndex, newIndex);
-                  },
-                  itemBuilder: (context, index) {
-                    final song = songs[index];
-                    return Dismissible(
-                      key: ValueKey('${song.id}_$index'),
-                      direction: DismissDirection.endToStart,
-                      background: Container(
-                        color: AppColors.error,
-                        alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.only(right: AppSpacing.lg16),
-                        child: const Icon(Icons.delete_rounded, color: Colors.white),
-                      ),
-                      onDismissed: (_) {
-                        ref.read(libraryRepositoryProvider).removeSongFromPlaylist(playlist.id, song.id, index);
-                      },
-                      child: MediaSongRow(
-                        item: song,
-                        trailing: const Icon(Icons.drag_handle_rounded, color: AppColors.textMuted),
-                        onTap: () {
-                          ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
+              );
+            },
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => Center(child: Text('Error: $err', style: AppTypography.metadata)),
+        error: (err, _) => EmptyHint(
+          icon: Icons.error_outline_rounded,
+          title: 'Could not load songs',
+          message: 'Error: $err',
+        ),
       ),
     );
   }
@@ -324,19 +323,23 @@ class PlaylistDetailScreen extends ConsumerWidget {
       context: context,
       builder: (dialogCtx) {
         return AlertDialog(
-          backgroundColor: AppColors.surfaceElevated,
-          title: Text('Rename Playlist', style: AppTypography.sectionTitle),
+          title: const Text('Rename Playlist'),
           content: TextField(
             controller: controller,
             autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
             style: AppTypography.body,
+            decoration: const InputDecoration(
+              hintText: 'Playlist name',
+              prefixIcon: Icon(Icons.edit_rounded, color: AppColors.textSecondary),
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogCtx),
               child: const Text('Cancel'),
             ),
-            ElevatedButton(
+            FilledButton(
               onPressed: () {
                 final newName = controller.text.trim();
                 if (newName.isNotEmpty) {
@@ -357,19 +360,21 @@ class PlaylistDetailScreen extends ConsumerWidget {
       context: context,
       builder: (dialogCtx) {
         return AlertDialog(
-          backgroundColor: AppColors.surfaceElevated,
-          title: Text('Delete Playlist', style: AppTypography.sectionTitle),
-          content: Text(
+          icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
+          title: const Text('Delete Playlist'),
+          content: const Text(
             'Are you sure you want to delete this playlist? This will NOT delete the actual audio files on your device.',
-            style: AppTypography.body,
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogCtx),
               child: const Text('Cancel'),
             ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.error,
+                foregroundColor: AppColors.background,
+              ),
               onPressed: () {
                 Navigator.pop(dialogCtx); // close dialog
                 Navigator.pop(context); // close screen
@@ -383,6 +388,388 @@ class PlaylistDetailScreen extends ConsumerWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// "12 songs • 48 min"
+String _songsMeta(List<MediaItem> songs) {
+  final count = songs.length;
+  final countText = count == 1 ? '1 song' : '$count songs';
+  var totalMs = 0;
+  for (final song in songs) {
+    if (song.durationMs > 0) totalMs += song.durationMs;
+  }
+  if (totalMs <= 0) return countText;
+  final total = Duration(milliseconds: totalMs);
+  final hours = total.inHours;
+  final minutes = total.inMinutes.remainder(60);
+  final String durationText;
+  if (hours > 0) {
+    durationText = minutes > 0 ? '$hours hr $minutes min' : '$hours hr';
+  } else if (total.inMinutes > 0) {
+    durationText = '${total.inMinutes} min';
+  } else {
+    durationText = '${total.inSeconds} sec';
+  }
+  return '$countText • $durationText';
+}
+
+/// Scaffold for the detail screens: a transparent app bar over the hero glow
+/// that turns solid (and shows the title) once the hero title scrolls away.
+class _DetailScaffold extends StatefulWidget {
+  final String title;
+  final List<Widget> actions;
+  final Widget body;
+
+  /// True when [body] has no hero header (loading, error, empty): the bar
+  /// then always shows the title, so the user can tell what they opened.
+  final bool showTitle;
+
+  const _DetailScaffold({
+    required this.title,
+    required this.body,
+    this.actions = const [],
+    this.showTitle = false,
+  });
+
+  @override
+  State<_DetailScaffold> createState() => _DetailScaffoldState();
+}
+
+class _DetailScaffoldState extends State<_DetailScaffold> {
+  final ValueNotifier<bool> _collapsed = ValueNotifier<bool>(false);
+
+  @override
+  void didUpdateWidget(_DetailScaffold oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A different kind of body (e.g. the playlist list turning into its empty
+    // state after the last song is swiped away) starts again at offset 0, and
+    // no scroll notification reports that.
+    if (!Widget.canUpdate(oldWidget.body, widget.body)) {
+      _collapsed.value = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _collapsed.dispose();
+    super.dispose();
+  }
+
+  void _track(int depth, ScrollMetrics metrics) {
+    if (depth == 0 && metrics.axis == Axis.vertical) {
+      _collapsed.value = metrics.pixels > _kCollapseOffset;
+    }
+  }
+
+  bool _onScroll(ScrollNotification notification) {
+    _track(notification.depth, notification.metrics);
+    return false;
+  }
+
+  /// Also fires after a scroll view's first layout and when its content
+  /// changes size, which can move the offset without a scroll.
+  bool _onMetrics(ScrollMetricsNotification notification) {
+    _track(notification.depth, notification.metrics);
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      extendBodyBehindAppBar: true,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: ValueListenableBuilder<bool>(
+          valueListenable: _collapsed,
+          builder: (context, collapsed, _) {
+            final solid = collapsed || widget.showTitle;
+            final duration = MotionTokens.duration(context, MotionTokens.feedback);
+            return AnimatedContainer(
+              duration: duration,
+              curve: MotionTokens.easeOut,
+              color: solid ? AppColors.background : AppColors.background.withValues(alpha: 0),
+              child: AppBar(
+                backgroundColor: Colors.transparent,
+                title: AnimatedOpacity(
+                  opacity: solid ? 1 : 0,
+                  duration: duration,
+                  curve: MotionTokens.easeOut,
+                  child: Text(
+                    widget.title,
+                    style: AppTypography.sectionTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                actions: [
+                  ...widget.actions,
+                  const SizedBox(width: AppSpacing.xs4),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+      body: NotificationListener<ScrollMetricsNotification>(
+        onNotification: _onMetrics,
+        child: NotificationListener<ScrollNotification>(
+          onNotification: _onScroll,
+          child: widget.body,
+        ),
+      ),
+    );
+  }
+}
+
+/// Cover, eyebrow, title, subtitle, song count and the Play / Shuffle pair,
+/// on a soft violet glow that fades into the page.
+class _HeroHeader extends StatelessWidget {
+  final Widget artwork;
+  final String eyebrow;
+  final String title;
+  final String? subtitle;
+  final String meta;
+  final VoidCallback? onPlay;
+  final VoidCallback? onShuffle;
+
+  /// Glow behind the header; the violet hero gradient unless the cover's
+  /// own colours are passed.
+  final Gradient tint;
+
+  const _HeroHeader({
+    required this.artwork,
+    required this.eyebrow,
+    required this.title,
+    required this.meta,
+    this.subtitle,
+    this.onPlay,
+    this.onShuffle,
+    this.tint = AppColors.heroGradient,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // The body sits behind the transparent app bar; this is its height.
+    final topInset = MediaQuery.paddingOf(context).top;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(gradient: tint),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [AppColors.background.withValues(alpha: 0), AppColors.background],
+            stops: const [0.3, 1.0],
+          ),
+        ),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.lg16,
+            topInset + AppSpacing.sm8,
+            AppSpacing.lg16,
+            AppSpacing.xl20,
+          ),
+          child: Column(
+            children: [
+              artwork,
+              const SizedBox(height: AppSpacing.xl20),
+              Text(
+                eyebrow.toUpperCase(),
+                style: AppTypography.label.copyWith(
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs4),
+              Semantics(
+                header: true,
+                child: Text(
+                  title,
+                  style: AppTypography.screenTitle,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (subtitle != null) ...[
+                const SizedBox(height: AppSpacing.xs4),
+                Text(
+                  subtitle!,
+                  style: AppTypography.body.copyWith(color: AppColors.textSecondary),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+              const SizedBox(height: AppSpacing.xs4),
+              Text(
+                meta,
+                style: AppTypography.metadata.copyWith(color: AppColors.textMuted),
+                textAlign: TextAlign.center,
+              ),
+              if (onPlay != null || onShuffle != null) ...[
+                const SizedBox(height: AppSpacing.xl20),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: onPlay,
+                          icon: const Icon(Icons.play_arrow_rounded, size: 22),
+                          label: const Text('Play'),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md12),
+                      Expanded(
+                        child: FilledButton.tonalIcon(
+                          style: _tonalStyle,
+                          onPressed: onShuffle,
+                          icon: const Icon(Icons.shuffle_rounded, size: 20),
+                          label: const Text('Shuffle'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Cover with a soft glow underneath (violet, or the cover's own colour).
+class _HeroArtwork extends StatelessWidget {
+  final Widget child;
+  final bool circle;
+  final Color? glowColor;
+
+  const _HeroArtwork({required this.child, this.circle = false, this.glowColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: circle ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: circle ? null : BorderRadius.circular(_kHeroArtRadius),
+        boxShadow: [
+          BoxShadow(
+            color: glowColor ?? AppColors.primaryBase.withValues(alpha: 0.28),
+            blurRadius: 40,
+            offset: const Offset(0, 16),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Gradient tile standing in for a playlist cover.
+class _PlaylistCover extends StatelessWidget {
+  final double size;
+
+  const _PlaylistCover({required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: AppColors.primaryGradient,
+        borderRadius: BorderRadius.circular(_kHeroArtRadius),
+      ),
+      child: Icon(Icons.queue_music_rounded, size: size * 0.42, color: AppColors.onPrimary),
+    );
+  }
+}
+
+/// Long-press anywhere on a playlist row to start dragging it.
+///
+/// Pointers that went down on the row's [_DragHandle] are left to the handle's
+/// own immediate listener: both listeners see the same pointer-down, and two
+/// recognizers for one pointer would leave one of them undisposed.
+class _RowDragListener extends StatelessWidget {
+  final int index;
+  final Widget child;
+
+  const _RowDragListener({required this.index, required this.child});
+
+  /// The last pointer that went down on a drag handle. Deeper widgets get a
+  /// pointer-down first, so the handle sets this before the row reads it.
+  static int? _handlePointer;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (event) {
+        if (event.pointer == _handlePointer) return;
+        SliverReorderableList.maybeOf(context)?.startItemDragReorder(
+          index: index,
+          event: event,
+          recognizer: DelayedMultiDragGestureRecognizer(debugOwner: this)
+            ..gestureSettings = MediaQuery.maybeGestureSettingsOf(context),
+        );
+      },
+      child: child,
+    );
+  }
+}
+
+/// Grip at the end of a playlist row: dragging it moves the row right away.
+class _DragHandle extends StatelessWidget {
+  final int index;
+
+  const _DragHandle({required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (event) => _RowDragListener._handlePointer = event.pointer,
+      child: ReorderableDragStartListener(
+        index: index,
+        // Screen readers move rows with the list's own "Move up / down"
+        // actions; this only tells them what the grip is.
+        child: Semantics(
+          label: 'Drag to reorder',
+          child: const SizedBox(
+            width: AppSpacing.minTouchTarget,
+            height: AppSpacing.minTouchTarget,
+            child: Icon(Icons.drag_handle_rounded, color: AppColors.textMuted),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown behind a playlist row while it is swiped away.
+class _RemoveBackground extends StatelessWidget {
+  const _RemoveBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.error.withValues(alpha: 0.16),
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.only(right: AppSpacing.xxl24),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Remove', style: AppTypography.button.copyWith(color: AppColors.error)),
+          const SizedBox(width: AppSpacing.sm8),
+          const Icon(Icons.delete_rounded, color: AppColors.error),
+        ],
+      ),
     );
   }
 }

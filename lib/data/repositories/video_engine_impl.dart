@@ -48,7 +48,9 @@ class OfficialVideoEngine implements VideoEngine {
     try {
       if (uri.startsWith('http://') || uri.startsWith('https://')) {
         _controller = VideoPlayerController.networkUrl(Uri.parse(uri));
-      } else if (uri.startsWith('content://') || uri.startsWith('file://')) {
+      } else if (uri.startsWith('file://')) {
+        _controller = VideoPlayerController.file(File.fromUri(Uri.parse(uri)));
+      } else if (uri.startsWith('content://')) {
         _controller = VideoPlayerController.contentUri(Uri.parse(uri));
       } else {
         _controller = VideoPlayerController.file(File(uri));

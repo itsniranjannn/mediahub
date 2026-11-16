@@ -4,9 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
+import '../../app/theme/motion_tokens.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import 'now_playing_sheet.dart';
 import 'playback_notifier.dart';
+
+const double _kCardRadius = 20;
+const double _kArtworkSize = 44;
 
 class MiniPlayer extends ConsumerStatefulWidget {
   const MiniPlayer({super.key});
@@ -60,14 +64,17 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
     }
 
     MiniPlayer.isNowPlayingOpen = true;
+    final sheetDuration = MotionTokens.duration(context, MotionTokens.sheet);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      transitionAnimationController: AnimationController(
-        vsync: Navigator.of(context),
-        duration: const Duration(milliseconds: 280),
+      // Now Playing draws its own rounded top and grabber.
+      showDragHandle: false,
+      sheetAnimationStyle: AnimationStyle(
+        duration: sheetDuration,
+        reverseDuration: sheetDuration,
       ),
       builder: (_) => const NowPlayingSheet(),
     ).whenComplete(() {
@@ -120,7 +127,6 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
   Widget build(BuildContext context) {
     final currentItem = ref.watch(currentMediaItemProvider);
     final isPlaying = ref.watch(isPlayingProvider);
-    final positionAsync = ref.watch(throttledPositionStreamProvider);
     final notifier = ref.read(playbackNotifierProvider.notifier);
 
     // Hide when queue is empty or no item
@@ -128,118 +134,166 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
       return const SizedBox.shrink();
     }
 
-    final durationMs = currentItem.durationMs > 0 ? currentItem.durationMs : 1;
-    final positionMs = positionAsync.value?.inMilliseconds ?? 0;
-    final progress = (positionMs / durationMs).clamp(0.0, 1.0);
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.sizeOf(context).width;
 
     return Semantics(
       label: 'Mini player: ${currentItem.title}',
-      child: GestureDetector(
-        key: const ValueKey('mini_player_gesture_detector'),
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _openNowPlaying(context),
-        onHorizontalDragUpdate: (details) => _handleHorizontalDragUpdate(details, screenWidth),
-        onHorizontalDragEnd: (details) => _handleHorizontalDragEnd(details, screenWidth),
-        onVerticalDragEnd: (details) {
-          if (details.primaryVelocity != null && details.primaryVelocity! < -100) {
-            _openNowPlaying(context);
-          }
-        },
-        child: Container(
-          decoration: const BoxDecoration(
-            color: AppColors.surfaceElevated,
-            border: Border(
-              top: BorderSide(color: AppColors.divider, width: 0.5),
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Thin progress line
-              LinearProgressIndicator(
-                value: progress,
-                minHeight: 2,
-                backgroundColor: Colors.transparent,
-                valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+      hint: 'Opens Now Playing',
+      child: Padding(
+        // floats above the navigation bar as its own card; the 8 dp side
+        // inset plus the card's 8 dp padding puts the cover on the 16 dp gutter
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.sm8,
+          AppSpacing.sm8,
+          AppSpacing.sm8,
+          AppSpacing.xs4,
+        ),
+        child: GestureDetector(
+          key: const ValueKey('mini_player_gesture_detector'),
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _openNowPlaying(context),
+          onHorizontalDragUpdate: (details) => _handleHorizontalDragUpdate(details, screenWidth),
+          onHorizontalDragEnd: (details) => _handleHorizontalDragEnd(details, screenWidth),
+          onVerticalDragEnd: (details) {
+            if (details.primaryVelocity != null && details.primaryVelocity! < -100) {
+              _openNowPlaying(context);
+            }
+          },
+          // A plain card: nothing scrolls behind the mini player (the shell
+          // does not extend its body), so a backdrop blur would cost a pass
+          // every frame without changing a pixel.
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(_kCardRadius),
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.surfaceElevated,
+                borderRadius: BorderRadius.circular(_kCardRadius),
+                border: Border.all(color: AppColors.divider),
               ),
-              Transform.translate(
-                offset: Offset(_dragExtent, 0),
-                child: SlideTransition(
-                  position: _slideAnimation,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md12,
-                      vertical: AppSpacing.xs4,
-                    ),
-                    child: Row(
-                      children: [
-                        // Artwork thumbnail with Hero
-                        Hero(
-                          tag: 'now_playing_artwork',
-                          child: ArtworkThumbnail(
-                            uri: currentItem.uri,
-                            size: 44,
-                            borderRadius: AppSpacing.buttonRadius,
-                          ),
+              child: Stack(
+                children: [
+                  // The card clips, so swiped content slides in from its edge.
+                  Transform.translate(
+                    offset: Offset(_dragExtent, 0),
+                    child: SlideTransition(
+                      position: _slideAnimation,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.sm8,
+                          AppSpacing.sm8,
+                          AppSpacing.xs4,
+                          AppSpacing.sm8,
                         ),
-                        const SizedBox(width: AppSpacing.md12),
-
-                        // Title & Artist
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                currentItem.title,
-                                style: AppTypography.body.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                        child: Row(
+                          children: [
+                            // Artwork thumbnail with Hero
+                            Hero(
+                              tag: 'now_playing_artwork',
+                              child: ArtworkThumbnail(
+                                uri: currentItem.uri,
+                                artworkPath: currentItem.artworkPath,
+                                size: _kArtworkSize,
+                                borderRadius: AppSpacing.md12,
                               ),
-                              Text(
-                                currentItem.artist ?? 'Unknown Artist',
-                                style: AppTypography.metadata.copyWith(
-                                  fontSize: 12,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
+                            ),
+                            const SizedBox(width: AppSpacing.md12),
 
-                        // Controls: Skip previous, Play/Pause, Skip next
-                        IconButton(
-                          icon: const Icon(Icons.skip_previous_rounded, size: 24),
-                          tooltip: 'Previous',
-                          onPressed: () => notifier.skipToPrevious(),
+                            // Title & Artist
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    currentItem.title,
+                                    style: AppTypography.bodyStrong,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text(
+                                    currentItem.artist ?? 'Unknown Artist',
+                                    style: AppTypography.metadata,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.xs4),
+
+                            // Controls: Skip previous, Play/Pause, Skip next
+                            IconButton(
+                              icon: const Icon(Icons.skip_previous_rounded, size: 26),
+                              color: AppColors.textSecondary,
+                              tooltip: 'Previous',
+                              onPressed: () => notifier.skipToPrevious(),
+                            ),
+                            IconButton.filled(
+                              icon: Icon(
+                                isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                size: 26,
+                              ),
+                              style: IconButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: AppColors.onPrimary,
+                                fixedSize: const Size.square(40),
+                                shape: const CircleBorder(),
+                              ),
+                              tooltip: isPlaying ? 'Pause' : 'Play',
+                              onPressed: () => notifier.togglePlayPause(),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.skip_next_rounded, size: 26),
+                              color: AppColors.textPrimary,
+                              tooltip: 'Next',
+                              onPressed: () => notifier.skipToNext(),
+                            ),
+                          ],
                         ),
-                        IconButton(
-                          icon: Icon(
-                            isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                            size: 28,
-                            color: AppColors.primary,
-                          ),
-                          tooltip: isPlaying ? 'Pause' : 'Play',
-                          onPressed: () => notifier.togglePlayPause(),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.skip_next_rounded, size: 24),
-                          tooltip: 'Next',
-                          onPressed: () => notifier.skipToNext(),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
+                  // Sits in the last 2 dp of the bottom padding, so the row
+                  // stays vertically centred in the card.
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: _MiniProgressLine(durationMs: currentItem.durationMs),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 2 dp progress line along the bottom edge of the card. It is the only part
+/// listening to the position stream, so the rest of the card stays still.
+class _MiniProgressLine extends ConsumerWidget {
+  final int durationMs;
+
+  const _MiniProgressLine({required this.durationMs});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final positionAsync = ref.watch(throttledPositionStreamProvider);
+    final safeDurationMs = durationMs > 0 ? durationMs : 1;
+    final positionMs = positionAsync.value?.inMilliseconds ?? 0;
+    final progress = (positionMs / safeDurationMs).clamp(0.0, 1.0);
+
+    return Padding(
+      // inset past the 20 dp corners so the line stays on the straight edge
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+      child: LinearProgressIndicator(
+        value: progress,
+        minHeight: 2,
+        borderRadius: BorderRadius.circular(1),
+        backgroundColor: AppColors.textPrimary.withValues(alpha: 0.12),
+        valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
       ),
     );
   }

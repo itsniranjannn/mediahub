@@ -169,7 +169,9 @@ void main() {
       expect(handler.mediaItem.value?.id, '10');
     });
 
-    test('resume-on-reconnect rule toggles and updates handler state', () {
+    test('resume-on-reconnect rule is on by default and can be switched off and on', () {
+      expect(handler.resumeOnHeadphonesReconnect, isTrue);
+      handler.setResumeOnHeadphonesReconnect(false);
       expect(handler.resumeOnHeadphonesReconnect, isFalse);
       handler.setResumeOnHeadphonesReconnect(true);
       expect(handler.resumeOnHeadphonesReconnect, isTrue);
@@ -257,6 +259,21 @@ void main() {
       expect(handler.shuffleEnabled, isFalse);
       expect(handler.playOrderQueue.map((e) => e.id).toList(), ['1', '2', '3']);
       expect(handler.currentIndex, 1);
+    });
+
+    test('the same song queued twice keeps both copies through shuffle on/off and removing one', () async {
+      await handler.loadQueue([item1, item2], startIndex: 0, autoPlay: false);
+      await handler.addToQueue(item1);
+      expect(handler.playOrderQueue.map((e) => e.id).toList(), ['1', '2', '1']);
+
+      await handler.toggleShuffle();
+      expect(handler.playOrderQueue.length, 3);
+      await handler.toggleShuffle();
+      expect(handler.playOrderQueue.map((e) => e.id).toList(), ['1', '2', '1']);
+
+      await handler.removeQueueItemAt(2);
+      expect(handler.playOrderQueue.map((e) => e.id).toList(), ['1', '2']);
+      expect(handler.originalQueue.map((e) => e.id).toList(), ['1', '2']);
     });
 
     test('50 skips on a queue of 10 with shuffle on never repeats a track inside a cycle', () async {

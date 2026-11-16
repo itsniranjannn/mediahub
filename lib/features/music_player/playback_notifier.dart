@@ -53,8 +53,13 @@ class PlaybackNotifier extends Notifier<domain.PlaybackState> {
 
   Future<void> _init() async {
     if (_isDisposed) return;
-    // 1. Try restoring last session from DB
-    final savedState = await _repo.loadLastPlaybackState();
+    // 1. Try restoring last session from DB. Online items are filtered here
+    // too, for rows saved before they were excluded (the old full-JSON queue
+    // format kept their expiring stream URLs). Then the index is matched back
+    // to the saved current item, as the repository drops ids it cannot find.
+    final loaded = await _repo.loadLastPlaybackState();
+    final savedState =
+        loaded == null ? null : alignIndexWithCurrentItem(withoutOnlineItems(loaded));
     if (_isDisposed) return;
     if (savedState != null && savedState.queue.isNotEmpty) {
       await _handler.restoreSession(savedState);
@@ -95,10 +100,88 @@ class PlaybackNotifier extends Notifier<domain.PlaybackState> {
   Future<void> _persistCurrentState() async {
     _lastSavedAt = DateTime.now();
     try {
-      await _repo.savePlaybackState(state);
+      await _repo.savePlaybackState(withoutOnlineItems(state));
     } catch (e) {
       // Persistence error shouldn't crash playback
     }
+  }
+
+  /// The part of [s] that is safe to keep across app restarts.
+  ///
+  /// Explore items (`source == 'online'`) play from signed YouTube stream URLs
+  /// that expire within hours and embed the phone's public IP address, so they
+  /// are never written to the database: a restored session must not try (or
+  /// keep) such a link. The queue index is moved to match the shorter queue:
+  /// - the current item is kept: the index points at it again;
+  /// - the current item is online: the next kept item after it becomes current
+  ///   (or the last kept one before it), starting from the beginning;
+  /// - nothing is left: an empty queue, so nothing is restored next launch.
+  static domain.PlaybackState withoutOnlineItems(domain.PlaybackState s) {
+    bool isOnline(domain_models.MediaItem m) => m.source == 'online';
+    if (!s.queue.any(isOnline) && !s.originalQueue.any(isOnline)) return s;
+
+    final queue = s.queue.where((m) => !isOnline(m)).toList();
+    final originalQueue = s.originalQueue.where((m) => !isOnline(m)).toList();
+    if (queue.isEmpty) {
+      return s.copyWith(
+        clearCurrentItemId: true,
+        queue: const [],
+        originalQueue: const [],
+        queueIndex: -1,
+        position: Duration.zero,
+        duration: Duration.zero,
+      );
+    }
+
+    final current = s.currentItem;
+    if (current == null) {
+      // No valid current item: keep "nothing selected" or clamp into range.
+      return s.copyWith(
+        queue: queue,
+        originalQueue: originalQueue,
+        queueIndex: s.queueIndex < 0 ? s.queueIndex : queue.length - 1,
+      );
+    }
+
+    // Kept items before the current one = the current item's new index (or,
+    // when the current item is dropped, the index of the next kept item).
+    var index = s.queue.take(s.queueIndex).where((m) => !isOnline(m)).length;
+    if (!isOnline(current)) {
+      return s.copyWith(queue: queue, originalQueue: originalQueue, queueIndex: index);
+    }
+    if (index >= queue.length) index = queue.length - 1;
+    final next = queue[index];
+    return s.copyWith(
+      currentItemId: next.id,
+      queue: queue,
+      originalQueue: originalQueue,
+      queueIndex: index,
+      position: Duration.zero,
+      duration: Duration(milliseconds: next.durationMs),
+    );
+  }
+
+  /// Makes a restored [s] point at its saved current item again.
+  ///
+  /// The repository silently skips queue ids it cannot resolve (`yt_` ids in
+  /// rows saved before online items were excluded, local files deleted since
+  /// the save), while the saved index and position still refer to the longer
+  /// saved queue. So:
+  /// - the current item is still in the queue: the index moves to it (the
+  ///   position belonged to it, so it is kept);
+  /// - it is gone: start from the first item at 0:00, with no current id;
+  /// - the index already matches (or nothing was current): unchanged.
+  static domain.PlaybackState alignIndexWithCurrentItem(domain.PlaybackState s) {
+    final id = s.currentItemId;
+    if (id == null || s.currentItem?.id == id) return s;
+    final index = s.queue.indexWhere((m) => m.id == id);
+    if (index >= 0) return s.copyWith(queueIndex: index);
+    return s.copyWith(
+      clearCurrentItemId: true,
+      queueIndex: s.queue.isEmpty ? -1 : 0,
+      position: Duration.zero,
+      duration: s.queue.isEmpty ? Duration.zero : Duration(milliseconds: s.queue.first.durationMs),
+    );
   }
 
   // Playback actions

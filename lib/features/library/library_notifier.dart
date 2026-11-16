@@ -123,6 +123,11 @@ abstract class BaseLibraryNotifier extends Notifier<LibraryState> {
   MediaType get mediaType;
   StreamSubscription<List<MediaItem>>? _subscription;
 
+  /// Repositories that already had their automatic "once per app start" rescan.
+  /// Keyed by repository instance so the Music and Videos tabs share one scan
+  /// (one scan reads both audio and video) and tests with fresh repos start clean.
+  static final Expando<bool> _autoScannedRepos = Expando<bool>('libraryAutoScan');
+
   LibraryRepository get _repository => ref.read(libraryRepositoryProvider);
   MediaPermissionService get _permissionService =>
       ref.read(mediaPermissionServiceProvider);
@@ -155,7 +160,30 @@ abstract class BaseLibraryNotifier extends Notifier<LibraryState> {
         state = state.copyWith(status: LibraryStatus.loading);
         _subscribeToMediaItems();
       }
+      _autoScanOnce();
     }
+  }
+
+  /// Songs and videos added to the phone since the last visit (or downloaded by
+  /// another app) appear without tapping refresh: one quiet rescan per app start.
+  /// The list updates by itself because it streams from the database. A failure
+  /// here is only logged; the manual refresh button still reports errors.
+  void _autoScanOnce() {
+    final LibraryRepository repo;
+    try {
+      repo = _repository;
+    } catch (_) {
+      return;
+    }
+    if (_autoScannedRepos[repo] == true) return;
+    _autoScannedRepos[repo] = true;
+    unawaited(() async {
+      try {
+        await repo.scanDeviceMedia();
+      } catch (e) {
+        debugPrint('[LibraryNotifier] automatic rescan failed: $e');
+      }
+    }());
   }
 
   Future<void> checkPermissionAndInit() async {

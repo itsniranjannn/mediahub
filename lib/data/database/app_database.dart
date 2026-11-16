@@ -28,6 +28,7 @@ class MediaItemsTable extends Table {
       text().withDefault(const Constant('available'))(); // 'available' or 'missing'
   TextColumn get source =>
       text().nullable().withDefault(const Constant('device'))(); // 'device' or 'download'
+  TextColumn get artworkPath => text().nullable()(); // local image file (downloads)
 
   @override
   Set<Column> get primaryKey => {id};
@@ -52,6 +53,29 @@ class DownloadsTable extends Table {
   DateTimeColumn get updatedAt => dateTime()();
   TextColumn get finalPath => text().nullable()();
   TextColumn get mediaId => text().nullable()();
+
+  // --- v6: richer download metadata -------------------------------------
+  /// 'audio' | 'video' (null = not known yet, e.g. direct link before sniffing)
+  TextColumn get kind => text().nullable()();
+
+  /// 'http' (direct link engine) | 'extractor' (yt-dlp web link downloader)
+  TextColumn get engine => text().withDefault(const Constant('http'))();
+  TextColumn get thumbnailUrl => text().nullable()();
+  TextColumn get thumbnailPath => text().nullable()();
+  TextColumn get qualityLabel => text().nullable()();
+  TextColumn get formatSelector => text().nullable()();
+  TextColumn get audioFormat => text().nullable()();
+  TextColumn get extractorArgs => text().nullable()();
+  TextColumn get uploader => text().nullable()();
+  IntColumn get durationSec => integer().nullable()();
+
+  /// JSON list of expected stream sizes in bytes (e.g. [video, audio]); used
+  /// to turn yt-dlp's per-stream percentages into one overall progress value.
+  TextColumn get streamSizes => text().nullable()();
+
+  // --- v7 ---------------------------------------------------------------
+  /// Short, sanitized reason reported by the downloader (shown under the error).
+  TextColumn get errorDetail => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -119,7 +143,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? e]) : super(e ?? _openConnection());
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration {
@@ -141,6 +165,29 @@ class AppDatabase extends _$AppDatabase {
         if (from < 5) {
           await m.createTable(downloadsTable);
           await m.addColumn(mediaItemsTable, mediaItemsTable.source);
+        }
+        if (from < 6) {
+          await m.addColumn(mediaItemsTable, mediaItemsTable.artworkPath);
+        }
+        if (from == 5) {
+          // Only a v5 database has the old downloads table; older ones just got
+          // the current table from the `from < 5` step above.
+          await m.addColumn(downloadsTable, downloadsTable.kind);
+          await m.addColumn(downloadsTable, downloadsTable.engine);
+          await m.addColumn(downloadsTable, downloadsTable.thumbnailUrl);
+          await m.addColumn(downloadsTable, downloadsTable.thumbnailPath);
+          await m.addColumn(downloadsTable, downloadsTable.qualityLabel);
+          await m.addColumn(downloadsTable, downloadsTable.formatSelector);
+          await m.addColumn(downloadsTable, downloadsTable.audioFormat);
+          await m.addColumn(downloadsTable, downloadsTable.extractorArgs);
+          await m.addColumn(downloadsTable, downloadsTable.uploader);
+          await m.addColumn(downloadsTable, downloadsTable.durationSec);
+          await m.addColumn(downloadsTable, downloadsTable.streamSizes);
+        }
+        if (from >= 5 && from < 7) {
+          // v5/v6 databases have a downloads table without this column; older ones
+          // just got the current table from the `from < 5` step.
+          await m.addColumn(downloadsTable, downloadsTable.errorDetail);
         }
       },
     );
@@ -173,6 +220,7 @@ extension MediaItemEntryMapper on MediaItemEntry {
           ? MediaAvailability.missing
           : MediaAvailability.available,
       source: source ?? 'device',
+      artworkPath: artworkPath,
     );
   }
 }
@@ -197,6 +245,7 @@ extension MediaItemMapper on MediaItem {
       isFavorite: Value(isFavorite),
       availability: Value(availability.name),
       source: Value(source),
+      artworkPath: Value(artworkPath),
     );
   }
 
@@ -218,6 +267,8 @@ extension MediaItemMapper on MediaItem {
       'playCount': playCount,
       'isFavorite': isFavorite,
       'availability': availability.name,
+      'source': source,
+      'artworkPath': artworkPath,
     };
   }
 
@@ -243,6 +294,8 @@ extension MediaItemMapper on MediaItem {
       availability: map['availability'] == 'missing'
           ? MediaAvailability.missing
           : MediaAvailability.available,
+      source: map['source'] as String? ?? 'device',
+      artworkPath: map['artworkPath'] as String?,
     );
   }
 }

@@ -40,6 +40,7 @@ class VideoPlaybackState {
   final bool fitCover;
   final bool isLocked;
   final bool showControls;
+  final bool isLandscape;
   final String? errorMessage;
 
   const VideoPlaybackState({
@@ -52,6 +53,7 @@ class VideoPlaybackState {
     this.fitCover = false,
     this.isLocked = false,
     this.showControls = true,
+    this.isLandscape = false,
     this.errorMessage,
   });
 
@@ -65,6 +67,7 @@ class VideoPlaybackState {
     bool? fitCover,
     bool? isLocked,
     bool? showControls,
+    bool? isLandscape,
     String? errorMessage,
   }) {
     return VideoPlaybackState(
@@ -77,6 +80,7 @@ class VideoPlaybackState {
       fitCover: fitCover ?? this.fitCover,
       isLocked: isLocked ?? this.isLocked,
       showControls: showControls ?? this.showControls,
+      isLandscape: isLandscape ?? this.isLandscape,
       errorMessage: errorMessage,
     );
   }
@@ -138,19 +142,31 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
     try {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky).ignore();
 
-      // Check video orientation to auto-rotate
+      // Library items know their size; downloaded ones do not (handled after init).
       final width = state.item.width ?? 0;
       final height = state.item.height ?? 0;
       if (width > 0 && height > 0 && width > height) {
-        SystemChrome.setPreferredOrientations([
-          DeviceOrientation.landscapeLeft,
-          DeviceOrientation.landscapeRight,
-        ]).ignore();
+        _setOrientation(true);
       }
     } catch (_) {}
 
     try {
       await _engine.initialize(state.item.uri);
+
+      // Auto-rotate from the real video size (works for downloaded files too).
+      final size = _engine.videoSize;
+      if (size.width > 0 && size.height > 0) {
+        _setOrientation(size.width > size.height);
+      }
+
+      // Downloaded files are stored with an unknown duration: remember it.
+      final learned = _engine.duration;
+      if (state.item.durationMs == 0 && learned > Duration.zero) {
+        final repo = _libraryRepo;
+        if (repo is LibraryRepositoryImpl) {
+          repo.updateDurationIfUnknown(state.item.id, learned.inMilliseconds).ignore();
+        }
+      }
 
       // Check saved progress
       final savedProgress = await _progressRepo.getProgress(state.item.id);
@@ -285,6 +301,21 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
   Future<void> setSpeed(double speed) async {
     await _engine.setPlaybackSpeed(speed);
     state = state.copyWith(speed: speed);
+    if (state.isPlaying) _startHideControlsTimer();
+  }
+
+  void _setOrientation(bool landscape) {
+    try {
+      SystemChrome.setPreferredOrientations(landscape
+          ? const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+          : const [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]).ignore();
+    } catch (_) {}
+    state = state.copyWith(isLandscape: landscape);
+  }
+
+  /// Manual rotate button, like other video players.
+  void toggleOrientation() {
+    _setOrientation(!state.isLandscape);
     if (state.isPlaying) _startHideControlsTimer();
   }
 

@@ -144,6 +144,13 @@ class LibraryRepositoryImpl implements LibraryRepository {
     // 3. Atomically update DB in one transaction with availability tracking
     try {
       await _db.transaction(() async {
+        // Ids known before this scan, to spot rows that are new in this scan (step D).
+        final idsBefore = (await (_db.selectOnly(_db.mediaItemsTable)
+                  ..addColumns([_db.mediaItemsTable.id]))
+                .map((r) => r.read(_db.mediaItemsTable.id)!)
+                .get())
+            .toSet();
+
         // A. Insert/update all scanned items setting availability='available'
         final allScanned = [...audioToInsert, ...videoToInsert];
         if (allScanned.isNotEmpty) {
@@ -211,11 +218,84 @@ class LibraryRepositoryImpl implements LibraryRepository {
             }
           }
         }
+
+        // D. Same file, new MediaStore id (file deleted and added back, phone restored
+        //    or moved to a new phone, SD card re-mounted): carry the user's data over.
+        final newIds = allScanned.map((c) => c.id.value).where((id) => !idsBefore.contains(id)).toSet();
+        if (newIds.isNotEmpty) {
+          await _carryOverUserData(newIds);
+        }
       });
       debugPrint('[Scan] DB write completed successfully');
     } catch (dbErr, dbStack) {
       debugPrint('[Scan] Drift DB write error: $dbErr\n$dbStack');
       rethrow;
+    }
+  }
+
+  /// Moves favourites, play history, playlist entries and video progress from a
+  /// "missing" row to the new row of the same file, then removes the old row.
+  ///
+  /// A pair is only matched when it is unambiguous: same media type, same title
+  /// (ignoring case), same size in bytes, durations within 2 seconds, and exactly
+  /// one missing row and one new row share that identity. Downloads are never touched.
+  /// Must run inside the scan transaction.
+  Future<void> _carryOverUserData(Set<String> newIds) async {
+    final t = _db.mediaItemsTable;
+    final missing = await (_db.select(t)
+          ..where((r) => r.availability.equals('missing') & (r.source.isNull() | r.source.equals('device'))))
+        .get();
+    if (missing.isEmpty) return;
+    final fresh = await (_db.select(t)..where((r) => r.id.isIn(newIds))).get();
+
+    String identity(MediaItemEntry r) => '${r.mediaType}|${r.title.trim().toLowerCase()}|${r.sizeBytes}';
+    final missingByKey = <String, List<MediaItemEntry>>{};
+    for (final r in missing) {
+      if (r.sizeBytes <= 0) continue; // size unknown: not safe to match
+      missingByKey.putIfAbsent(identity(r), () => []).add(r);
+    }
+    final freshByKey = <String, List<MediaItemEntry>>{};
+    for (final r in fresh) {
+      if (r.sizeBytes <= 0) continue;
+      freshByKey.putIfAbsent(identity(r), () => []).add(r);
+    }
+
+    var moved = 0;
+    for (final entry in freshByKey.entries) {
+      final olds = missingByKey[entry.key];
+      if (olds == null || olds.length != 1 || entry.value.length != 1) continue;
+      final old = olds.single;
+      final neu = entry.value.single;
+      if ((old.durationMs - neu.durationMs).abs() > 2000) continue;
+
+      final lastPlayed = switch ((old.lastPlayed, neu.lastPlayed)) {
+        (null, final b) => b,
+        (final a, null) => a,
+        (final a?, final b?) => a.isAfter(b) ? a : b,
+      };
+      await (_db.update(t)..where((r) => r.id.equals(neu.id))).write(MediaItemsTableCompanion(
+        isFavorite: Value(old.isFavorite || neu.isFavorite),
+        playCount: Value(old.playCount + neu.playCount),
+        lastPlayed: Value(lastPlayed),
+        // Keep its place in "Recently added" instead of jumping to the top.
+        dateAdded: Value(old.dateAdded.isBefore(neu.dateAdded) ? old.dateAdded : neu.dateAdded),
+        artworkPath: Value(neu.artworkPath ?? old.artworkPath),
+      ));
+      await (_db.update(_db.playlistItemsTable)..where((r) => r.mediaId.equals(old.id)))
+          .write(PlaylistItemsTableCompanion(mediaId: Value(neu.id)));
+      final hasProgress = await (_db.select(_db.videoProgressTable)..where((r) => r.mediaId.equals(neu.id)))
+          .getSingleOrNull();
+      if (hasProgress == null) {
+        await (_db.update(_db.videoProgressTable)..where((r) => r.mediaId.equals(old.id)))
+            .write(VideoProgressTableCompanion(mediaId: Value(neu.id)));
+      } else {
+        await (_db.delete(_db.videoProgressTable)..where((r) => r.mediaId.equals(old.id))).go();
+      }
+      await (_db.delete(t)..where((r) => r.id.equals(old.id))).go();
+      moved++;
+    }
+    if (moved > 0) {
+      DiagnosticsService.instance.logEvent('library_identity_carried_over', {'count': moved});
     }
   }
 
@@ -686,6 +766,18 @@ class LibraryRepositoryImpl implements LibraryRepository {
       playCount: row.playCount,
       isFavorite: row.isFavorite,
       availability: MediaAvailability.values.byName(row.availability),
+      source: row.source ?? 'device',
+      artworkPath: row.artworkPath,
     );
+  }
+
+  /// Downloaded files are inserted with an unknown (0) duration. Once a player
+  /// has opened the file and learned the real duration we persist it so lists
+  /// stop showing 00:00.
+  Future<void> updateDurationIfUnknown(String id, int durationMs) async {
+    if (durationMs <= 0) return;
+    await (_db.update(_db.mediaItemsTable)
+          ..where((tbl) => tbl.id.equals(id) & tbl.durationMs.equals(0)))
+        .write(MediaItemsTableCompanion(durationMs: Value(durationMs)));
   }
 }

@@ -320,4 +320,68 @@ void main() {
     expect(items.length, 1);
     expect(items.first.availability, MediaAvailability.available);
   });
+
+  test("rescan carries favourites, plays, playlists and video progress to a file's new id", () async {
+    final mockChannel = MockMethodChannel();
+    final scanRepo = LibraryRepositoryImpl(db, mockChannel);
+
+    Map<String, Object> song(String id, String title, int size, int ms) =>
+        {'id': id, 'uri': 'content://media/external/audio/media/$id', 'title': title, 'sizeBytes': size, 'durationMs': ms};
+    Map<String, Object> video(String id, String title, int size, int ms) =>
+        {'id': id, 'uri': 'content://media/external/video/media/$id', 'title': title, 'sizeBytes': size, 'durationMs': ms};
+
+    mockChannel.queryAudioResult = [song('1', 'Morning Raga', 4000000, 240000), song('2', 'Other', 123, 1000)];
+    mockChannel.queryVideoResult = [video('7', 'Trip', 9000000, 60000)];
+    await scanRepo.scanDeviceMedia();
+
+    await scanRepo.toggleFavorite('audio_1');
+    await scanRepo.recordPlay('audio_1');
+    await scanRepo.recordPlay('audio_1');
+    final playlist = await scanRepo.createPlaylist('Road trip');
+    await scanRepo.addSongToPlaylist(playlist.id, 'audio_1');
+    await db.into(db.videoProgressTable).insert(VideoProgressTableCompanion.insert(
+        mediaId: 'video_7', positionMs: 30000, durationMs: 60000, updatedAt: DateTime.now()));
+
+    // The same files come back with new MediaStore ids (e.g. after moving to a new phone);
+    // the second song did not change at all.
+    mockChannel.queryAudioResult = [song('101', 'Morning Raga', 4000000, 240500), song('2', 'Other', 123, 1000)];
+    mockChannel.queryVideoResult = [video('207', 'Trip', 9000000, 60000)];
+    await scanRepo.scanDeviceMedia();
+
+    final rows = await db.select(db.mediaItemsTable).get();
+    expect(rows.map((r) => r.id).toSet(), {'audio_101', 'audio_2', 'video_207'},
+        reason: 'old rows are replaced, not duplicated');
+    final moved = rows.firstWhere((r) => r.id == 'audio_101');
+    expect(moved.isFavorite, isTrue);
+    expect(moved.playCount, 2);
+    expect(moved.lastPlayed != null, isTrue);
+    final entries = await db.select(db.playlistItemsTable).get();
+    expect(entries.single.mediaId, 'audio_101');
+    final progress = await db.select(db.videoProgressTable).get();
+    expect(progress.single.mediaId, 'video_207');
+    expect(progress.single.positionMs, 30000);
+  });
+
+  test('rescan does not carry data over when the match is ambiguous', () async {
+    final mockChannel = MockMethodChannel();
+    final scanRepo = LibraryRepositoryImpl(db, mockChannel);
+    mockChannel.queryAudioResult = [
+      {'id': '1', 'uri': 'content://a/1', 'title': 'Same', 'sizeBytes': 500, 'durationMs': 1000},
+    ];
+    await scanRepo.scanDeviceMedia();
+    await scanRepo.toggleFavorite('audio_1');
+
+    // Two new files look identical to the missing one: do not guess.
+    mockChannel.queryAudioResult = [
+      {'id': '2', 'uri': 'content://a/2', 'title': 'Same', 'sizeBytes': 500, 'durationMs': 1000},
+      {'id': '3', 'uri': 'content://a/3', 'title': 'Same', 'sizeBytes': 500, 'durationMs': 1000},
+    ];
+    await scanRepo.scanDeviceMedia();
+
+    final rows = await db.select(db.mediaItemsTable).get();
+    final old = rows.firstWhere((r) => r.id == 'audio_1');
+    expect(old.isFavorite, isTrue, reason: 'kept on the old (missing) row');
+    expect(old.availability, 'missing');
+    expect(rows.where((r) => r.id != 'audio_1').every((r) => !r.isFavorite), isTrue);
+  });
 }

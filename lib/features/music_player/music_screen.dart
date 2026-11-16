@@ -12,11 +12,28 @@ import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/playlist_and_groups.dart';
 import '../../shared/widgets/empty_state_widget.dart';
+import '../../shared/widgets/artwork_placeholder.dart';
+import '../../shared/widgets/ui_kit.dart';
 import '../library/detail_screens.dart';
 import '../library/library_notifier.dart';
 import '../library/media_context_menu.dart';
 import '../library/media_song_row.dart';
 import 'playback_notifier.dart';
+
+/// Violet "tonal" button used next to a filled primary action.
+final ButtonStyle _tonalStyle = FilledButton.styleFrom(
+  backgroundColor: AppColors.primary.withValues(alpha: 0.16),
+  foregroundColor: AppColors.primary,
+);
+
+/// Compact toolbar buttons (40 dp tall, 48 dp touch target via padding).
+final ButtonStyle _compactStyle = FilledButton.styleFrom(
+  minimumSize: const Size(0, AppSpacing.giant40),
+  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md12),
+);
+
+/// "1 song", "12 songs".
+String _count(int n, String singular, String plural) => '$n ${n == 1 ? singular : plural}';
 
 class MusicScreen extends ConsumerStatefulWidget {
   const MusicScreen({super.key});
@@ -26,6 +43,11 @@ class MusicScreen extends ConsumerStatefulWidget {
 }
 
 class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProviderStateMixin {
+  static const List<String> _tabs = ['Songs', 'Albums', 'Artists', 'Playlists', 'Favorites'];
+
+  /// Gap above and below the selected-tab pill: a 48 dp tab gets a 36 dp pill.
+  static const double _tabPillInset = 6;
+
   late TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
   bool _notificationPermissionRequested = false;
@@ -34,7 +56,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: _tabs.length, vsync: this);
   }
 
   @override
@@ -60,229 +82,262 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     final notifier = ref.read(musicLibraryProvider.notifier);
     final repo = ref.watch(libraryRepositoryProvider);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Music'),
-        actions: [
-          if (state.permissionState == MediaPermissionState.granted) ...[
-            IconButton(
-              icon: state.isScanning
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.primary,
-                      ),
-                    )
-                  : const Icon(Icons.refresh_rounded),
-              tooltip: 'Scan device media',
-              onPressed: state.isScanning ? null : () => notifier.scanDevice(),
-            ),
-            PopupMenuButton<MediaSortOption>(
-              icon: const Icon(Icons.sort_rounded),
-              tooltip: 'Sort songs',
-              onSelected: (sort) => notifier.setSortOption(sort),
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: MediaSortOption.title, child: Text('Title')),
-                const PopupMenuItem(value: MediaSortOption.artist, child: Text('Artist')),
-                const PopupMenuItem(value: MediaSortOption.dateAdded, child: Text('Date Added')),
-                const PopupMenuItem(value: MediaSortOption.duration, child: Text('Duration')),
-              ],
-            ),
-          ],
+    final permission = state.permissionState;
+    final hasLibrary =
+        permission == MediaPermissionState.granted || permission == MediaPermissionState.limited;
+
+    final header = _MusicHeader(
+      actions: [
+        if (permission == MediaPermissionState.granted) ...[
+          IconButton(
+            icon: state.isScanning
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primary,
+                    ),
+                  )
+                : const Icon(Icons.refresh_rounded),
+            tooltip: 'Scan device media',
+            onPressed: state.isScanning ? null : () => notifier.scanDevice(),
+          ),
+          PopupMenuButton<MediaSortOption>(
+            icon: const Icon(Icons.sort_rounded),
+            tooltip: 'Sort songs',
+            onSelected: (sort) => notifier.setSortOption(sort),
+            itemBuilder: (context) => [
+              _sortItem(MediaSortOption.title, 'Title', state),
+              _sortItem(MediaSortOption.artist, 'Artist', state),
+              _sortItem(MediaSortOption.dateAdded, 'Date Added', state),
+              _sortItem(MediaSortOption.duration, 'Duration', state),
+            ],
+          ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          isScrollable: true,
-          indicatorColor: AppColors.primary,
-          labelColor: AppColors.primary,
-          unselectedLabelColor: AppColors.textSecondary,
-          tabAlignment: TabAlignment.start,
-          tabs: const [
-            Tab(text: 'Songs'),
-            Tab(text: 'Albums'),
-            Tab(text: 'Artists'),
-            Tab(text: 'Playlists'),
-            Tab(text: 'Favorites'),
-          ],
-        ),
+      ],
+    );
+
+    return Scaffold(
+      body: SafeArea(
+        bottom: false,
+        child: hasLibrary
+            ? NestedScrollView(
+                // Scrolling back up brings the title, scan / sort actions and
+                // search field back straight away, even deep in a long list.
+                floatHeaderSlivers: true,
+                headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                  SliverToBoxAdapter(child: header),
+                  if (permission == MediaPermissionState.limited)
+                    SliverToBoxAdapter(
+                      child: _LimitedAccessBanner(onOpenSettings: () => notifier.openSettings()),
+                    ),
+                  SliverToBoxAdapter(child: _searchField(notifier)),
+                  SliverOverlapAbsorber(
+                    handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+                    sliver: SliverPersistentHeader(
+                      pinned: true,
+                      delegate: _PinnedTabBarDelegate(
+                        tabBar: _tabBar(),
+                        showDivider: innerBoxIsScrolled,
+                      ),
+                    ),
+                  ),
+                ],
+                body: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildSongsTab(state),
+                    _buildAlbumsTab(repo, state.searchQuery),
+                    _buildArtistsTab(repo, state.searchQuery),
+                    _buildPlaylistsTab(repo),
+                    _buildFavoritesTab(repo, state.searchQuery),
+                  ],
+                ),
+              )
+            : CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(child: header),
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _buildPermissionState(state, notifier),
+                  ),
+                ],
+              ),
       ),
-      body: _buildBody(context, state, notifier, repo),
     );
   }
 
-  Widget _buildBody(
-    BuildContext context,
-    LibraryState state,
-    BaseLibraryNotifier notifier,
-    LibraryRepository repo,
-  ) {
-    if (state.permissionState == MediaPermissionState.checking) {
-      return const SizedBox.shrink();
-    }
-
-    if (state.permissionState == MediaPermissionState.denied) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.xxxl32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.security_rounded, size: 64, color: AppColors.textMuted),
-              const SizedBox(height: AppSpacing.lg16),
-              Text('Permission Required', style: AppTypography.sectionTitle, textAlign: TextAlign.center),
-              const SizedBox(height: AppSpacing.sm8),
-              Text(
-                '${AppConfig.appName} needs media permission to access your audio files and build your music library.',
-                style: AppTypography.metadata,
-                textAlign: TextAlign.center,
+  PopupMenuItem<MediaSortOption> _sortItem(MediaSortOption option, String label, LibraryState state) {
+    final selected = state.sortBy == option;
+    return PopupMenuItem<MediaSortOption>(
+      value: option,
+      child: Semantics(
+        selected: selected,
+        child: Row(
+          children: [
+            SizedBox(
+              width: 24,
+              child: selected ? const Icon(Icons.check_rounded, size: 20, color: AppColors.primary) : null,
+            ),
+            const SizedBox(width: AppSpacing.md12),
+            Expanded(
+              child: Text(
+                label,
+                style: selected
+                    ? AppTypography.bodyStrong.copyWith(color: AppColors.primary)
+                    : AppTypography.body,
               ),
-              const SizedBox(height: AppSpacing.xxl24),
-              ElevatedButton.icon(
-                onPressed: () => notifier.requestPermission(),
-                icon: const Icon(Icons.lock_open_rounded),
-                label: const Text('Allow Access'),
+            ),
+            if (selected) ...[
+              const SizedBox(width: AppSpacing.md12),
+              Icon(
+                state.ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                size: 16,
+                color: AppColors.textSecondary,
+                semanticLabel: state.ascending ? 'Ascending' : 'Descending',
               ),
             ],
-          ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _searchField(BaseLibraryNotifier notifier) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.sm8),
+      child: TextField(
+        controller: _searchController,
+        onChanged: (val) => notifier.setSearchQuery(val),
+        textInputAction: TextInputAction.search,
+        style: AppTypography.body,
+        decoration: InputDecoration(
+          hintText: 'Search songs, albums, artists',
+          prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textSecondary),
+          suffixIcon: _searchController.text.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  tooltip: 'Clear search',
+                  onPressed: () {
+                    _searchController.clear();
+                    notifier.setSearchQuery('');
+                  },
+                )
+              : null,
+        ),
+      ),
+    );
+  }
+
+  TabBar _tabBar() {
+    return TabBar(
+      controller: _tabController,
+      isScrollable: true,
+      tabAlignment: TabAlignment.start,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+      labelPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+      indicatorSize: TabBarIndicatorSize.tab,
+      indicatorPadding: const EdgeInsets.symmetric(vertical: _tabPillInset),
+      indicator: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(AppSpacing.xxl24),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+      ),
+      dividerColor: Colors.transparent,
+      dividerHeight: 0,
+      labelColor: AppColors.primary,
+      unselectedLabelColor: AppColors.textSecondary,
+      labelStyle: AppTypography.button,
+      unselectedLabelStyle: AppTypography.button.copyWith(fontWeight: FontWeight.w500),
+      // The sliding pill is the feedback; an ink box (taller than the pill) would fight it.
+      overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+      splashFactory: NoSplash.splashFactory,
+      tabs: [
+        for (final label in _tabs) Tab(text: label, height: AppSpacing.minTouchTarget),
+      ],
+    );
+  }
+
+  Widget _buildPermissionState(LibraryState state, BaseLibraryNotifier notifier) {
+    if (state.permissionState == MediaPermissionState.denied) {
+      return EmptyHint(
+        icon: Icons.security_rounded,
+        title: 'Permission Required',
+        message:
+            '${AppConfig.appName} needs media permission to access your audio files and build your music library.',
+        action: FilledButton.icon(
+          onPressed: () => notifier.requestPermission(),
+          icon: const Icon(Icons.lock_open_rounded, size: 20),
+          label: const Text('Allow Access'),
         ),
       );
     }
 
     if (state.permissionState == MediaPermissionState.permanentlyDenied) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.xxxl32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.no_encryption_gmailerrorred_rounded, size: 64, color: AppColors.warning),
-              const SizedBox(height: AppSpacing.lg16),
-              Text('Permission Permanently Denied', style: AppTypography.sectionTitle, textAlign: TextAlign.center),
-              const SizedBox(height: AppSpacing.sm8),
-              Text(
-                'Media permission was permanently denied. Please grant permission in system settings to access your music library.',
-                style: AppTypography.metadata,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppSpacing.xxl24),
-              ElevatedButton.icon(
-                onPressed: () => notifier.openSettings(),
-                icon: const Icon(Icons.settings_rounded),
-                label: const Text('Open Settings'),
-              ),
-            ],
-          ),
+      return EmptyHint(
+        icon: Icons.no_encryption_gmailerrorred_rounded,
+        title: 'Permission Permanently Denied',
+        message:
+            'Media permission was permanently denied. Please grant permission in system settings to access your music library.',
+        action: FilledButton.icon(
+          onPressed: () => notifier.openSettings(),
+          icon: const Icon(Icons.settings_rounded, size: 20),
+          label: const Text('Open Settings'),
         ),
       );
     }
 
-    return Column(
-      children: [
-        if (state.permissionState == MediaPermissionState.limited)
-          Container(
-            width: double.infinity,
-            margin: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.xs4),
-            padding: const EdgeInsets.all(AppSpacing.md12),
-            decoration: BoxDecoration(
-              color: AppColors.surfaceElevated,
-              borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-              border: Border.all(color: AppColors.divider),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.info_outline_rounded, color: AppColors.accent, size: 20),
-                const SizedBox(width: AppSpacing.sm8),
-                Expanded(
-                  child: Text(
-                    'You gave access to selected items only. To see all your media, grant full access in Settings.',
-                    style: AppTypography.metadata,
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => notifier.openSettings(),
-                  child: const Text('Settings'),
-                ),
-              ],
-            ),
-          ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.sm8),
-          child: TextField(
-            controller: _searchController,
-            onChanged: (val) => notifier.setSearchQuery(val),
-            style: AppTypography.body,
-            decoration: InputDecoration(
-              hintText: 'Search songs, albums, artists...',
-              hintStyle: AppTypography.metadata,
-              prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textMuted),
-              suffixIcon: _searchController.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear_rounded, color: AppColors.textMuted),
-                      tooltip: 'Clear search',
-                      onPressed: () {
-                        _searchController.clear();
-                        notifier.setSearchQuery('');
-                      },
-                    )
-                  : null,
-              filled: true,
-              fillColor: AppColors.surfaceElevated,
-              contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.md12),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-        ),
-        Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: [
-              _buildSongsTab(state),
-              _buildAlbumsTab(repo, state.searchQuery),
-              _buildArtistsTab(repo, state.searchQuery),
-              _buildPlaylistsTab(repo),
-              _buildFavoritesTab(repo, state.searchQuery),
-            ],
-          ),
-        ),
-      ],
-    );
+    // Still checking the permission.
+    return const SizedBox.shrink();
   }
 
   Widget _buildSongsTab(LibraryState state) {
     if (state.status == LibraryStatus.loading || state.status == LibraryStatus.initial) {
-      return const Center(
-        child: SizedBox(
-          width: 24,
-          height: 24,
-          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
-        ),
+      return const _TabScrollView(
+        storageKey: 'songs',
+        slivers: [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+              ),
+            ),
+          ),
+        ],
       );
     }
 
     if (state.items.isEmpty) {
-      return EmptyStateWidget(
-        icon: Icons.music_off_outlined,
-        title: 'No Music Found',
-        message: state.searchQuery.isNotEmpty
-            ? 'No songs matching "${state.searchQuery}".'
-            : 'Tap the scan button in the top right to scan your device for audio files.',
+      return _TabScrollView(
+        storageKey: 'songs',
+        slivers: [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: EmptyStateWidget(
+              icon: Icons.music_off_outlined,
+              title: 'No Music Found',
+              message: state.searchQuery.isNotEmpty
+                  ? 'No songs matching "${state.searchQuery}".'
+                  : 'Tap the scan button in the top right to scan your device for audio files.',
+            ),
+          ),
+        ],
       );
     }
 
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.xs4),
-          child: Row(
-            children: [
-              Text('${state.items.length} songs', style: AppTypography.metadata),
-              const Spacer(),
-              TextButton.icon(
+    return _TabScrollView(
+      storageKey: 'songs',
+      slivers: [
+        SliverToBoxAdapter(
+          child: _ListToolbar(
+            label: _count(state.items.length, 'song', 'songs'),
+            actions: [
+              FilledButton.icon(
+                style: _compactStyle,
                 icon: const Icon(Icons.shuffle_rounded, size: 18),
                 label: const Text('Shuffle all'),
                 onPressed: () {
@@ -305,20 +360,18 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
             ],
           ),
         ),
-        Expanded(
-          child: ListView.builder(
-            itemCount: state.items.length,
-            itemBuilder: (context, index) {
-              final song = state.items[index];
-              return MediaSongRow(
-                item: song,
-                onTap: () async {
-                  await _requestNotificationPermissionOnce();
-                  await ref.read(playbackNotifierProvider.notifier).playTrack(song, state.items);
-                },
-              );
-            },
-          ),
+        SliverList.builder(
+          itemCount: state.items.length,
+          itemBuilder: (context, index) {
+            final song = state.items[index];
+            return MediaSongRow(
+              item: song,
+              onTap: () async {
+                await _requestNotificationPermissionOnce();
+                await ref.read(playbackNotifierProvider.notifier).playTrack(song, state.items);
+              },
+            );
+          },
         ),
       ],
     );
@@ -328,57 +381,35 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     return StreamBuilder<List<AlbumGroup>>(
       stream: repo.watchAlbums(searchQuery: query),
       builder: (context, snapshot) {
+        if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
+          return const _TabScrollView(storageKey: 'albums', slivers: [_LoadingSliver()]);
+        }
         final albums = snapshot.data ?? [];
         if (albums.isEmpty) {
-          return Center(child: Text('No albums found', style: AppTypography.metadata));
-        }
-        return GridView.builder(
-          padding: const EdgeInsets.all(AppSpacing.lg16),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            mainAxisSpacing: AppSpacing.md12,
-            crossAxisSpacing: AppSpacing.md12,
-            childAspectRatio: 0.8,
-          ),
-          itemCount: albums.length,
-          itemBuilder: (context, index) {
-            final album = albums[index];
-            return InkWell(
-              borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => AlbumDetailScreen(album: album)),
-                );
-              },
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceElevated,
-                  borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-                ),
-                padding: const EdgeInsets.all(AppSpacing.sm8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-                        child: Container(
-                          width: double.infinity,
-                          color: AppColors.surface,
-                          child: const Icon(Icons.album_rounded, size: 56, color: AppColors.primary),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm8),
-                    Text(album.album, style: AppTypography.body.copyWith(fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
-                    Text(album.artist, style: AppTypography.metadata, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    Text('${album.songCount} songs', style: AppTypography.metadata.copyWith(fontSize: 11)),
-                  ],
+          return _TabScrollView(
+            storageKey: 'albums',
+            slivers: [
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: EmptyHint(
+                  icon: Icons.album_rounded,
+                  title: 'No albums found',
+                  message: query.isNotEmpty
+                      ? 'No albums matching "$query".'
+                      : 'Albums appear here once your songs are scanned.',
                 ),
               ),
-            );
-          },
+            ],
+          );
+        }
+        return _TabScrollView(
+          storageKey: 'albums',
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, 0),
+              sliver: _AlbumGrid(albums: albums),
+            ),
+          ],
         );
       },
     );
@@ -388,53 +419,82 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     return StreamBuilder<List<ArtistGroup>>(
       stream: repo.watchArtists(searchQuery: query),
       builder: (context, snapshot) {
+        if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
+          return const _TabScrollView(storageKey: 'artists', slivers: [_LoadingSliver()]);
+        }
         final artists = snapshot.data ?? [];
         if (artists.isEmpty) {
-          return Center(child: Text('No artists found', style: AppTypography.metadata));
-        }
-        return ListView.builder(
-          itemCount: artists.length,
-          itemBuilder: (context, index) {
-            final artist = artists[index];
-            return Material(
-              color: Colors.transparent,
-              child: ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: AppColors.surfaceElevated,
-                  child: const Icon(Icons.person_rounded, color: AppColors.primary),
+          return _TabScrollView(
+            storageKey: 'artists',
+            slivers: [
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: EmptyHint(
+                  icon: Icons.person_rounded,
+                  title: 'No artists found',
+                  message: query.isNotEmpty
+                      ? 'No artists matching "$query".'
+                      : 'Artists appear here once your songs are scanned.',
                 ),
-                title: Text(artist.artist, style: AppTypography.body),
-                subtitle: Text('${artist.songCount} songs', style: AppTypography.metadata),
-                trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => ArtistDetailScreen(artist: artist)),
+              ),
+            ],
+          );
+        }
+        return _TabScrollView(
+          storageKey: 'artists',
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, 0),
+              sliver: SliverList.separated(
+                itemCount: artists.length,
+                separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm8),
+                itemBuilder: (context, index) {
+                  final artist = artists[index];
+                  return _GroupCard(
+                    leading: _ArtistAvatar(name: artist.artist),
+                    title: artist.artist,
+                    subtitle: _artistSubtitle(artist),
+                    semanticsLabel: 'Artist ${artist.artist}, ${_count(artist.songCount, 'song', 'songs')}',
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => ArtistDetailScreen(artist: artist)),
+                      );
+                    },
                   );
                 },
               ),
-            );
-          },
+            ),
+          ],
         );
       },
     );
+  }
+
+  static String _artistSubtitle(ArtistGroup artist) {
+    final songs = _count(artist.songCount, 'song', 'songs');
+    if (artist.albumCount <= 0) return songs;
+    return '$songs • ${_count(artist.albumCount, 'album', 'albums')}';
   }
 
   Widget _buildPlaylistsTab(LibraryRepository repo) {
     return StreamBuilder<List<Playlist>>(
       stream: repo.watchPlaylists(),
       builder: (context, snapshot) {
+        if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
+          return const _TabScrollView(storageKey: 'playlists', slivers: [_LoadingSliver()]);
+        }
         final playlists = snapshot.data ?? [];
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.sm8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('${playlists.length} playlists', style: AppTypography.metadata),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.add, size: 18),
+        return _TabScrollView(
+          storageKey: 'playlists',
+          slivers: [
+            SliverToBoxAdapter(
+              child: _ListToolbar(
+                label: _count(playlists.length, 'playlist', 'playlists'),
+                actions: [
+                  FilledButton.icon(
+                    style: _compactStyle,
+                    icon: const Icon(Icons.add_rounded, size: 18),
                     label: const Text('New playlist'),
                     onPressed: () => MediaContextMenu.showNewPlaylistDialog(context, ref),
                   ),
@@ -442,40 +502,34 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
               ),
             ),
             if (playlists.isEmpty)
-              Expanded(
-                child: Center(
-                  child: Text('No playlists yet. Tap "New playlist" to create one!', style: AppTypography.metadata),
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: EmptyHint(
+                  icon: Icons.queue_music_rounded,
+                  title: 'No playlists yet',
+                  message: 'Tap "New playlist" to create one!',
                 ),
               )
             else
-              Expanded(
-                child: ListView.builder(
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, 0),
+                sliver: SliverList.separated(
                   itemCount: playlists.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm8),
                   itemBuilder: (context, index) {
                     final pl = playlists[index];
-                    return Material(
-                      color: Colors.transparent,
-                      child: ListTile(
-                        leading: Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: AppColors.surfaceElevated,
-                          borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-                        ),
-                        child: const Icon(Icons.queue_music_rounded, color: AppColors.primary),
-                      ),
-                      title: Text(pl.name, style: AppTypography.body),
-                      subtitle: Text('${pl.songCount} songs', style: AppTypography.metadata),
-                      trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
+                    return _GroupCard(
+                      leading: const _PlaylistGlyph(),
+                      title: pl.name,
+                      subtitle: _count(pl.songCount, 'song', 'songs'),
+                      semanticsLabel: 'Playlist ${pl.name}, ${_count(pl.songCount, 'song', 'songs')}',
                       onTap: () {
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (_) => PlaylistDetailScreen(playlist: pl)),
                         );
                       },
-                    ),
-                  );
+                    );
                   },
                 ),
               ),
@@ -489,26 +543,44 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     return StreamBuilder<List<MediaItem>>(
       stream: repo.watchFavorites(searchQuery: query),
       builder: (context, snapshot) {
+        if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
+          return const _TabScrollView(storageKey: 'favorites', slivers: [_LoadingSliver()]);
+        }
         final favs = snapshot.data ?? [];
         if (favs.isEmpty) {
-          return Center(child: Text('No favorite songs yet', style: AppTypography.metadata));
+          return _TabScrollView(
+            storageKey: 'favorites',
+            slivers: [
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: EmptyHint(
+                  icon: Icons.favorite_border_rounded,
+                  title: 'No favorite songs yet',
+                  message: query.isNotEmpty
+                      ? 'No favorites matching "$query".'
+                      : 'Tap the heart on any song to keep it here.',
+                ),
+              ),
+            ],
+          );
         }
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.xs4),
-              child: Row(
-                children: [
-                  Text('${favs.length} favorites', style: AppTypography.metadata),
-                  const Spacer(),
-                  TextButton.icon(
-                    icon: const Icon(Icons.play_arrow_rounded, size: 18),
+        return _TabScrollView(
+          storageKey: 'favorites',
+          slivers: [
+            SliverToBoxAdapter(
+              child: _ListToolbar(
+                label: _count(favs.length, 'favorite', 'favorites'),
+                actions: [
+                  FilledButton.icon(
+                    style: _compactStyle,
+                    icon: const Icon(Icons.play_arrow_rounded, size: 20),
                     label: const Text('Play all'),
                     onPressed: () {
                       ref.read(playbackNotifierProvider.notifier).loadQueue(favs, autoPlay: true);
                     },
                   ),
-                  TextButton.icon(
+                  FilledButton.tonalIcon(
+                    style: _compactStyle.merge(_tonalStyle),
                     icon: const Icon(Icons.shuffle_rounded, size: 18),
                     label: const Text('Shuffle'),
                     onPressed: () {
@@ -519,23 +591,437 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                 ],
               ),
             ),
-            Expanded(
-              child: ListView.builder(
-                itemCount: favs.length,
-                itemBuilder: (context, index) {
-                  final song = favs[index];
-                  return MediaSongRow(
-                    item: song,
-                    onTap: () {
-                      ref.read(playbackNotifierProvider.notifier).playTrack(song, favs);
-                    },
-                  );
-                },
-              ),
+            SliverList.builder(
+              itemCount: favs.length,
+              itemBuilder: (context, index) {
+                final song = favs[index];
+                return MediaSongRow(
+                  item: song,
+                  onTap: () {
+                    ref.read(playbackNotifierProvider.notifier).playTrack(song, favs);
+                  },
+                );
+              },
             ),
           ],
         );
       },
+    );
+  }
+}
+
+/// Large screen title with a one-line subtitle and optional icon actions.
+class _MusicHeader extends StatelessWidget {
+  final List<Widget> actions;
+
+  const _MusicHeader({required this.actions});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.lg16,
+        AppSpacing.xl20,
+        actions.isEmpty ? AppSpacing.lg16 : AppSpacing.xs4,
+        AppSpacing.md12,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Semantics(header: true, child: Text('Music', style: AppTypography.display)),
+                const SizedBox(height: AppSpacing.xs4),
+                Text(
+                  'Your songs, albums and playlists.',
+                  style: AppTypography.metadata,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          ...actions,
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown when the user granted access to selected media only.
+class _LimitedAccessBanner extends StatelessWidget {
+  final VoidCallback onOpenSettings;
+
+  const _LimitedAccessBanner({required this.onOpenSettings});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.md12),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md12, AppSpacing.sm8, AppSpacing.xs4, AppSpacing.sm8),
+        decoration: BoxDecoration(
+          color: AppColors.accent.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(AppSpacing.lg16),
+          border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.info_outline_rounded, color: AppColors.accent, size: 20),
+            const SizedBox(width: AppSpacing.md12),
+            Expanded(
+              child: Text(
+                'You gave access to selected items only. To see all your media, grant full access in Settings.',
+                style: AppTypography.metadata.copyWith(color: AppColors.textPrimary),
+              ),
+            ),
+            TextButton(
+              onPressed: onOpenSettings,
+              child: const Text('Settings'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Keeps the pill tab bar stuck to the top while the header scrolls away.
+class _PinnedTabBarDelegate extends SliverPersistentHeaderDelegate {
+  final TabBar tabBar;
+  final bool showDivider;
+
+  const _PinnedTabBarDelegate({required this.tabBar, required this.showDivider});
+
+  static const double _verticalPadding = AppSpacing.xs4;
+
+  @override
+  double get minExtent => tabBar.preferredSize.height + _verticalPadding * 2;
+
+  @override
+  double get maxExtent => minExtent;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        border: Border(
+          bottom: BorderSide(color: showDivider ? AppColors.divider : Colors.transparent),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: _verticalPadding),
+        child: tabBar,
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(_PinnedTabBarDelegate oldDelegate) {
+    return oldDelegate.tabBar != tabBar || oldDelegate.showDivider != showDivider;
+  }
+}
+
+/// Scroll view for one tab inside the NestedScrollView: injects the space the
+/// pinned tab bar takes and remembers its scroll offset per tab.
+class _TabScrollView extends StatelessWidget {
+  final String storageKey;
+  final List<Widget> slivers;
+
+  const _TabScrollView({required this.storageKey, required this.slivers});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomScrollView(
+      key: PageStorageKey<String>(storageKey),
+      primary: true,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      slivers: [
+        SliverOverlapInjector(handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context)),
+        ...slivers,
+        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxl24)),
+      ],
+    );
+  }
+}
+
+class _LoadingSliver extends StatelessWidget {
+  const _LoadingSliver();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SliverFillRemaining(
+      hasScrollBody: false,
+      child: Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+        ),
+      ),
+    );
+  }
+}
+
+/// "128 songs" on the left, compact actions on the right. When both do not
+/// fit on one line (large text on a narrow phone) the actions move under the
+/// count instead of squeezing it to "12 favo…".
+class _ListToolbar extends StatelessWidget {
+  final String label;
+  final List<Widget> actions;
+
+  const _ListToolbar({required this.label, required this.actions});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.xs4),
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: AppSpacing.md12,
+        runSpacing: AppSpacing.xs4,
+        children: [
+          Text(
+            label,
+            style: AppTypography.label.copyWith(color: AppColors.textSecondary),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Wrap(
+            spacing: AppSpacing.sm8,
+            runSpacing: AppSpacing.sm8,
+            children: actions,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Two-column album grid; each tile's height follows the text scale so the
+/// captions never overflow.
+class _AlbumGrid extends StatelessWidget {
+  final List<AlbumGroup> albums;
+
+  const _AlbumGrid({required this.albums});
+
+  /// Rounding allowance so a fractional line height never clips a caption.
+  static const double _captionSlack = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    // Height of one line of [style] at the user's text size, read from the
+    // typography tokens so the tile grows with them.
+    double line(TextStyle style) => scaler.scale(style.fontSize!) * (style.height ?? 1);
+    // _AlbumCard caption: title, artist, gap, song count, padding.
+    final captionHeight = line(AppTypography.bodyStrong) +
+        line(AppTypography.metadata) +
+        _AlbumCard.countGap +
+        line(AppTypography.caption) +
+        _AlbumCard.captionPadding * 2 +
+        _captionSlack;
+
+    return SliverLayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = AppSpacing.md12;
+        final columns = (constraints.crossAxisExtent / 200).floor().clamp(2, 5);
+        final tileWidth = (constraints.crossAxisExtent - spacing * (columns - 1)) / columns;
+        return SliverGrid(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: spacing,
+            crossAxisSpacing: spacing,
+            mainAxisExtent: tileWidth + captionHeight,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (context, index) => _AlbumCard(album: albums[index], artSize: tileWidth),
+            childCount: albums.length,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AlbumCard extends StatelessWidget {
+  final AlbumGroup album;
+  final double artSize;
+
+  const _AlbumCard({required this.album, required this.artSize});
+
+  /// Padding around the caption and the gap above the song count; [_AlbumGrid]
+  /// sizes the tiles from these.
+  static const double captionPadding = AppSpacing.md12;
+  static const double countGap = 2;
+
+  @override
+  Widget build(BuildContext context) {
+    void open() {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => AlbumDetailScreen(album: album)),
+      );
+    }
+
+    // excludeSemantics drops the InkWell's tap action, so the node carries
+    // its own: TalkBack / Switch Access can open the album.
+    return Semantics(
+      button: true,
+      label: 'Album ${album.album} by ${album.artist}, ${_count(album.songCount, 'song', 'songs')}',
+      onTap: open,
+      excludeSemantics: true,
+      child: SurfaceCard(
+        padding: EdgeInsets.zero,
+        onTap: open,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(AppSpacing.cardRadius)),
+              child: SizedBox(
+                width: double.infinity,
+                height: artSize,
+                // Same colours as the album's cover on its detail screen.
+                child: ArtworkPlaceholder(
+                  seed: ArtworkPlaceholder.albumSeed(album.album),
+                  icon: Icons.album_rounded,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(captionPadding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      album.album,
+                      style: AppTypography.bodyStrong,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      album.artist,
+                      style: AppTypography.metadata,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: countGap),
+                    Text(
+                      _count(album.songCount, 'song', 'songs'),
+                      style: AppTypography.caption,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Card row used for artists and playlists.
+class _GroupCard extends StatelessWidget {
+  final Widget leading;
+  final String title;
+  final String subtitle;
+  final String semanticsLabel;
+  final VoidCallback onTap;
+
+  const _GroupCard({
+    required this.leading,
+    required this.title,
+    required this.subtitle,
+    required this.semanticsLabel,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // excludeSemantics drops the InkWell's tap action, so the node carries
+    // its own: TalkBack / Switch Access can open the artist or playlist.
+    return Semantics(
+      button: true,
+      label: semanticsLabel,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: SurfaceCard(
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md12, AppSpacing.md12, AppSpacing.sm8, AppSpacing.md12),
+        onTap: onTap,
+        child: Row(
+          children: [
+            leading,
+            const SizedBox(width: AppSpacing.md12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title, style: AppTypography.bodyStrong, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: AppTypography.metadata, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm8),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Round initial on a soft violet glow.
+class _ArtistAvatar extends StatelessWidget {
+  final String name;
+
+  const _ArtistAvatar({required this.name});
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmed = name.trim();
+    final initial = trimmed.isEmpty ? '?' : trimmed.characters.first.toUpperCase();
+    return Container(
+      width: 48,
+      height: 48,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: AppColors.heroGradient,
+      ),
+      child: Text(
+        initial,
+        style: AppTypography.sectionTitle.copyWith(color: AppColors.primary),
+        textScaler: TextScaler.noScaling,
+      ),
+    );
+  }
+}
+
+/// Small violet tile standing in for a playlist cover.
+class _PlaylistGlyph extends StatelessWidget {
+  const _PlaylistGlyph();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        gradient: AppColors.primaryGradient,
+        borderRadius: BorderRadius.circular(AppSpacing.md12),
+      ),
+      child: const Icon(Icons.queue_music_rounded, color: AppColors.onPrimary),
     );
   }
 }
