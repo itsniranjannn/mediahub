@@ -8,6 +8,14 @@ import 'package:drift/native.dart';
 import 'package:drift/drift.dart' as d;
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
 
+/// Lets drift deliver stream events (real async) and rebuilds the widget tree.
+Future<void> settleFavorite(WidgetTester tester) async {
+  for (var i = 0; i < 6; i++) {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+    await tester.pump(const Duration(milliseconds: 60));
+  }
+}
+
 void main() {
   group('FavoriteFeedbackButton Widget Tests', () {
     late AppDatabase db;
@@ -95,42 +103,38 @@ void main() {
       ScaffoldMessenger.of(tester.element(find.byType(Scaffold))).hideCurrentSnackBar();
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
+
+      // unmount so drift's stream clean-up timer fires before the test ends
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
     });
 
-    testWidgets('Favorite heart updates live when favorite state changes', (tester) async {
-      final favValueNotifier = ValueNotifier<bool>(false);
-      addTearDown(favValueNotifier.dispose);
-
+    testWidgets('Heart follows the database even when the passed value is stale', (tester) async {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
             appDatabaseProvider.overrideWithValue(db),
             libraryRepositoryProvider.overrideWithValue(repo),
           ],
-          child: MaterialApp(
+          child: const MaterialApp(
             home: Scaffold(
-              body: ValueListenableBuilder<bool>(
-                valueListenable: favValueNotifier,
-                builder: (context, val, _) {
-                  return FavoriteFeedbackButton(
-                    itemId: 'test_song_1',
-                    isFavorite: val,
-                  );
-                },
-              ),
+              // the queue snapshot says "not favorite" and never changes
+              body: FavoriteFeedbackButton(itemId: 'test_song_1', isFavorite: false),
             ),
           ),
         ),
       );
-      await tester.pumpAndSettle();
-
+      await settleFavorite(tester);
       expect(find.bySemanticsLabel('Add to favorites'), findsOneWidget);
 
-      // Change state live
-      favValueNotifier.value = true;
-      await tester.pumpAndSettle();
+      // The song becomes a favorite somewhere else (context menu, another screen ...)
+      await tester.runAsync(() => repo.toggleFavorite('test_song_1'));
+      await settleFavorite(tester);
 
       expect(find.bySemanticsLabel('Remove from favorites'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
     });
   });
 }

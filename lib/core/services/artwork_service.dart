@@ -17,6 +17,12 @@ class ArtworkService {
   // In-flight deduplication map
   final Map<String, Future<Uint8List?>> _inFlight = {};
 
+  /// Artwork already in the memory cache for [uri] at [size], without a
+  /// platform call; null when it has not been loaded (or there is none).
+  /// Lets a thumbnail scrolled back into view paint its cover on the first
+  /// frame instead of flashing its placeholder.
+  Uint8List? peek(String uri, {int size = 256}) => _cache['$uri@$size'];
+
   Future<Uint8List?> getArtwork(String uri, {int size = 256}) async {
     final cacheKey = '$uri@$size';
 

@@ -6,6 +6,9 @@ abstract class MotionTokens {
   static const Duration page = Duration(milliseconds: 240);
   static const Duration sheet = Duration(milliseconds: 280);
 
+  /// Slow colour drifts in the background (Now Playing tint on track change).
+  static const Duration ambient = Duration(milliseconds: 600);
+
   static const Curve easeOut = Curves.easeOut;
   static const Curve easeIn = Curves.easeIn;
 
