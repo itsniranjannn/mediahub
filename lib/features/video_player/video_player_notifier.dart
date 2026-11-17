@@ -4,6 +4,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import '../../core/logging/diagnostics_service.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../data/repositories/video_engine_impl.dart';
 import '../../data/repositories/video_progress_repository_impl.dart';
@@ -29,6 +30,53 @@ final allVideoProgressStreamProvider = StreamProvider<List<VideoProgress>>((ref)
   final repo = ref.watch(videoProgressRepositoryProvider);
   return repo.watchAllProgress();
 });
+
+/// Why a video could not be played, so the screen can show a short plain
+/// message instead of the raw player exception.
+enum VideoErrorKind {
+  /// The phone's decoder (MediaCodec / renderer) could not handle the video:
+  /// a busy hardware decoder, memory pressure or an unsupported format.
+  decoder,
+
+  /// The file could not be opened: moved, deleted or no permission.
+  source,
+
+  /// Anything else.
+  other;
+
+  /// The plain message shown under "Unable to play video".
+  String get message => switch (this) {
+        VideoErrorKind.decoder =>
+          "This phone couldn't decode this video. Trying again often helps.",
+        VideoErrorKind.source =>
+          "The video file couldn't be opened. It may have been moved or deleted.",
+        VideoErrorKind.other => 'Something went wrong while starting this video.',
+      };
+}
+
+// "format" but not "information"; "decod" covers decode / decoder / decoding.
+final RegExp _decoderError = RegExp(
+  r'mediacodec|renderer|decod|codec|(?<!in)format',
+  caseSensitive: false,
+);
+
+// "\bfile" so "FileNotFoundException" and "/x/file.mp4" count but "profile" does not.
+final RegExp _sourceError = RegExp(
+  r'not ?found|no such file|enoent|missing|permission|denied|not permitted|'
+  r"eacces|securityexception|source error|datasource|cannot open|can't open|"
+  r"could not open|couldn't open|unable to open|\bfile",
+  caseSensitive: false,
+);
+
+/// Sorts a raw player error ([VideoPlaybackState.errorMessage]) into a
+/// [VideoErrorKind]. Decoder words are checked first: a decoder failure may
+/// also mention the source or the file, so it would otherwise be mistaken
+/// for a missing file.
+VideoErrorKind classifyVideoError(String raw) {
+  if (_decoderError.hasMatch(raw)) return VideoErrorKind.decoder;
+  if (_sourceError.hasMatch(raw)) return VideoErrorKind.source;
+  return VideoErrorKind.other;
+}
 
 class VideoPlaybackState {
   final MediaItem item;
@@ -95,6 +143,11 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<String?>? _errSub;
   DateTime _lastSavedAt = DateTime.now();
+  bool _retrying = false;
+
+  /// Set when a failed attempt flagged the item missing in the library, so a
+  /// later attempt that plays (Try again) can put it back.
+  bool _markedMissing = false;
 
   VideoPlayerControllerNotifier(this.item);
 
@@ -106,11 +159,7 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
   @override
   VideoPlaybackState build() {
     ref.onDispose(() {
-      _hideControlsTimer?.cancel();
-      _persistenceTimer?.cancel();
-      _posSub?.cancel();
-      _playingSub?.cancel();
-      _errSub?.cancel();
+      _cancelPlaybackListeners();
       try {
         WakelockPlus.disable().ignore();
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -127,7 +176,22 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
     return state;
   }
 
-  Future<void> _initPlayer() async {
+  /// Stops listening to the current engine and stops the timers.
+  void _cancelPlaybackListeners() {
+    _hideControlsTimer?.cancel();
+    _persistenceTimer?.cancel();
+    _posSub?.cancel();
+    _playingSub?.cancel();
+    _errSub?.cancel();
+    _hideControlsTimer = null;
+    _persistenceTimer = null;
+    _posSub = null;
+    _playingSub = null;
+    _errSub = null;
+  }
+
+  /// [resumeAt] (set by [retry]) is used instead of the saved progress.
+  Future<void> _initPlayer({Duration resumeAt = Duration.zero}) async {
     // 1. Explicitly pause music audio handler & request audio focus
     try {
       debugPrint('[VideoPlayer] Starting video, paused music playback');
@@ -152,6 +216,7 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
 
     try {
       await _engine.initialize(state.item.uri);
+      if (!ref.mounted) return;
 
       // Auto-rotate from the real video size (works for downloaded files too).
       final size = _engine.videoSize;
@@ -168,24 +233,38 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
         }
       }
 
-      // Check saved progress
-      final savedProgress = await _progressRepo.getProgress(state.item.id);
       int targetMs = 0;
-      if (savedProgress != null) {
+      if (resumeAt > Duration.zero) {
+        // Retrying after a failure: carry on where the failed attempt was.
         targetMs = VideoProgress.calculateResumePosition(
-          savedPositionMs: savedProgress.positionMs,
-          totalDurationMs: savedProgress.durationMs > 0
-              ? savedProgress.durationMs
-              : _engine.duration.inMilliseconds,
+          savedPositionMs: resumeAt.inMilliseconds,
+          totalDurationMs: _engine.duration.inMilliseconds,
         );
+      } else {
+        // Check saved progress
+        final savedProgress = await _progressRepo.getProgress(state.item.id);
+        if (!ref.mounted) return;
+        if (savedProgress != null) {
+          targetMs = VideoProgress.calculateResumePosition(
+            savedPositionMs: savedProgress.positionMs,
+            totalDurationMs: savedProgress.durationMs > 0
+                ? savedProgress.durationMs
+                : _engine.duration.inMilliseconds,
+          );
+        }
       }
 
       if (targetMs > 0) {
         await _engine.seekTo(Duration(milliseconds: targetMs));
       }
+      // A retry keeps the speed the viewer picked (a new player starts at 1x).
+      if (state.speed != 1.0) {
+        await _engine.setPlaybackSpeed(state.speed);
+      }
 
       await _engine.play();
       await WakelockPlus.enable();
+      if (!ref.mounted) return;
 
       state = state.copyWith(
         isInitialized: true,
@@ -193,6 +272,16 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
         duration: _engine.duration,
         position: Duration(milliseconds: targetMs),
       );
+
+      // An earlier attempt in this session marked the item missing, but it
+      // plays now: without this it would stay "Missing" in Videos (and refuse
+      // to open) until the next library scan.
+      if (_markedMissing) {
+        _markedMissing = false;
+        _libraryRepo
+            .updateAvailability(state.item.id, MediaAvailability.available)
+            .ignore();
+      }
 
       _startHideControlsTimer();
 
@@ -226,17 +315,32 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
         }
       });
     } catch (e) {
+      if (!ref.mounted) return;
       _handleError(e.toString());
     }
   }
 
   void _handleError(String message) {
-    debugPrint('_handleError called: $message');
+    if (kDebugMode) debugPrint('_handleError called: $message');
+    if (state.errorMessage == null) {
+      // The raw text never reaches the screen; the diagnostics log keeps it
+      // (links and storage paths are redacted there).
+      DiagnosticsService.instance.logEvent('video_player_error', {
+        'kind': classifyVideoError(message).name,
+        'error': message,
+      });
+      // Remember how far the viewer got before the failed player goes quiet.
+      if (state.isInitialized) _saveCurrentProgress();
+    }
+    // The failed player is finished: its position / playing updates would
+    // otherwise rebuild the state and wipe the error (copyWith clears it).
+    _cancelPlaybackListeners();
     final lower = message.toLowerCase();
     if (lower.contains('file') ||
         lower.contains('not found') ||
         lower.contains('missing') ||
         lower.contains('cannot open')) {
+      _markedMissing = true;
       _libraryRepo
           .updateAvailability(state.item.id, MediaAvailability.missing)
           .ignore();
@@ -245,6 +349,36 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
       errorMessage: message,
       isInitialized: false,
     );
+  }
+
+  /// "Try again" on the error screen: releases the failed player, clears the
+  /// error and starts the same item again from where it was (or from the
+  /// saved progress). Taps while a retry is running are ignored.
+  Future<void> retry() async {
+    if (_retrying || state.errorMessage == null) return;
+    _retrying = true;
+    try {
+      final resumeAt = state.position;
+      _cancelPlaybackListeners();
+      state = VideoPlaybackState(
+        item: state.item,
+        position: resumeAt,
+        speed: state.speed,
+        fitCover: state.fitCover,
+        isLandscape: state.isLandscape,
+      );
+      // Free the failed player (and its hardware decoder) before a new one
+      // starts, then get a fresh engine: a disposed one cannot be reused.
+      // Bounded: a player whose creation failed can wait forever to dispose.
+      try {
+        await _engine.dispose().timeout(const Duration(seconds: 2));
+      } catch (_) {}
+      if (!ref.mounted) return;
+      ref.invalidate(videoEngineProvider);
+      await _initPlayer(resumeAt: resumeAt);
+    } finally {
+      _retrying = false;
+    }
   }
 
   void _startHideControlsTimer() {

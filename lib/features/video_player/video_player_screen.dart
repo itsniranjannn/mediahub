@@ -131,7 +131,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
     final sign = diff >= 0 ? '+' : '-';
     _showHud(_GestureHud(
       icon: diff >= 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded,
-      label: '${formatDuration(Duration(milliseconds: _seekTargetMs.round()))}  ($sign${formatDuration(Duration(milliseconds: diff.abs().round()))})',
+      label: '${formatClock(Duration(milliseconds: _seekTargetMs.round()))}  ($sign${formatClock(Duration(milliseconds: diff.abs().round()))})',
       value: durationMs > 0 ? _seekTargetMs / durationMs : 0,
     ));
   }
@@ -220,20 +220,22 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(videoPlayerControllerProvider(widget.item));
-    debugPrint('VideoPlayerScreen build state: errorMessage=${state.errorMessage}, isInitialized=${state.isInitialized}');
     final notifier = ref.read(videoPlayerControllerProvider(widget.item).notifier);
     final engine = ref.watch(videoEngineProvider);
     final inPip = ref.watch(_pipProvider);
 
     if (state.errorMessage != null) {
+      // Only a plain message by cause: the raw exception goes to the
+      // diagnostics log (see VideoPlayerControllerNotifier._handleError).
+      final kind = classifyVideoError(state.errorMessage!);
       return Scaffold(
         backgroundColor: Colors.black,
         body: SafeArea(
           child: Center(
-            child: Padding(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(AppSpacing.xxl24),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   const Icon(
                     Icons.error_outline_rounded,
@@ -241,19 +243,49 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                     color: AppColors.error,
                   ),
                   const SizedBox(height: AppSpacing.lg16),
-                  Text(
-                    'Unable to play video',
-                    style: AppTypography.screenTitle.copyWith(color: Colors.white),
-                  ),
-                  const SizedBox(height: AppSpacing.sm8),
-                  Text(
-                    'The file could not be played (${state.errorMessage}). '
-                    'Don\'t worry, your original media file is completely safe on your device.',
-                    textAlign: TextAlign.center,
-                    style: AppTypography.body.copyWith(color: AppColors.textMuted),
+                  // One heading node that is a live region: when this view
+                  // replaces the spinner (or a retry fails again) TalkBack /
+                  // VoiceOver read the title and the cause once, instead of
+                  // leaving a screen-reader user in silence.
+                  MergeSemantics(
+                    child: Semantics(
+                      liveRegion: true,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Semantics(
+                            header: true,
+                            child: Text(
+                              'Unable to play video',
+                              textAlign: TextAlign.center,
+                              style: AppTypography.screenTitle.copyWith(color: AppColors.textPrimary),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.sm8),
+                          Text(
+                            kind.message,
+                            textAlign: TextAlign.center,
+                            style: AppTypography.body.copyWith(color: AppColors.textSecondary),
+                          ),
+                          const SizedBox(height: AppSpacing.xs4),
+                          Text(
+                            'Your file is safe.',
+                            textAlign: TextAlign.center,
+                            style: AppTypography.metadata.copyWith(color: AppColors.textMuted),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                   const SizedBox(height: AppSpacing.xxl24),
-                  ElevatedButton.icon(
+                  FilledButton.icon(
+                    // The notifier ignores taps while a retry is running.
+                    onPressed: () => unawaited(notifier.retry()),
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Try again'),
+                  ),
+                  const SizedBox(height: AppSpacing.sm8),
+                  OutlinedButton.icon(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.arrow_back_rounded),
                     label: const Text('Back to Videos'),
@@ -542,12 +574,13 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
+                        // Same short clock as the music player ('1:14', '1:02:03').
                         Text(
-                          formatDuration(Duration(milliseconds: sliderVal.toInt())),
+                          formatClock(Duration(milliseconds: sliderVal.toInt())),
                           style: AppTypography.tabularFigures.copyWith(color: Colors.white),
                         ),
                         Text(
-                          formatDuration(state.duration),
+                          formatClock(state.duration),
                           style: AppTypography.tabularFigures.copyWith(color: Colors.white70),
                         ),
                       ],

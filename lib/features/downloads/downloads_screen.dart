@@ -625,7 +625,10 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       builder: (ctx) => AlertDialog(
         icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
         title: const Text('Delete Download'),
-        content: Text('Delete "${task.fileName}"? Your other files are safe.'),
+        content: Text(
+          'Delete "${breakableTitle(task.fileName)}"? Your other files are safe.',
+          semanticsLabel: 'Delete "${task.fileName}"? Your other files are safe.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -915,6 +918,20 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
   String? _inlineUrlError;
   bool _hasText = false;
 
+  /// Android bundles yt-dlp, so YouTube, Instagram and other supported sites
+  /// can be downloaded there while "Enable web link downloader" is on (the
+  /// same rule as the inspection card); otherwise (iOS, or the setting off)
+  /// only direct media links work. Called from [build]: it watches only the
+  /// on / off flag, so a keystroke still rebuilds nothing else.
+  String get _linkHelperText {
+    final downloaderEnabled = PlatformInfo.supportsWebLinkDownloader &&
+        kPersonalToolsEnabled &&
+        ref.watch(personalToolsProvider.select((s) => s.isEnabled));
+    return downloaderEnabled
+        ? 'Paste a YouTube, Instagram or direct https link'
+        : 'Enter a direct https link to audio or video';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -979,6 +996,7 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
   Widget build(BuildContext context) {
     final isInspecting = ref.watch(inspectionProvider.select((s) => s.isInspecting));
     final canInspect = _inlineUrlError == null && _hasText;
+    final linkHelperText = _linkHelperText;
 
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.sm8),
@@ -999,7 +1017,7 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
                 hintText: 'https://...',
                 errorText: _inlineUrlError,
                 errorMaxLines: 2,
-                helperText: _inlineUrlError == null ? 'Enter a direct https link to audio or video' : null,
+                helperText: _inlineUrlError == null ? linkHelperText : null,
                 helperMaxLines: 2,
                 prefixIcon: const Icon(Icons.link_rounded),
                 suffixIcon: IconButton(
@@ -1453,7 +1471,8 @@ class _DownloadCard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      title,
+                      breakableTitle(title),
+                      semanticsLabel: title,
                       style: AppTypography.bodyStrong,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mediahub/core/logging/diagnostics_service.dart';
 import 'package:mediahub/data/repositories/library_repository_impl.dart';
 import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/domain/models/video_progress.dart';
@@ -137,6 +138,10 @@ class FakeLibraryRepository implements LibraryRepository {
 }
 
 void main() {
+  // Playback errors are logged; write the log at once instead of leaving a
+  // debounce timer pending when the test ends.
+  setUp(() => DiagnosticsService.enableDebounce = false);
+
   testWidgets('VideoPlayerScreen displays error state with message, safety note, and Back button', (WidgetTester tester) async {
     final testItem = MediaItem(
       id: 'bad-vid',
@@ -169,10 +174,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     await tester.pump(const Duration(milliseconds: 50));
 
-    // Verify error UI is displayed
+    // Verify error UI is displayed: a plain message by cause, never the raw
+    // exception text ('Cannot open file').
     expect(find.byType(Scaffold), findsWidgets);
-    expect(find.textContaining('Cannot open file'), findsOneWidget);
-    expect(find.textContaining('safe on your device'), findsOneWidget);
+    expect(find.text('Unable to play video'), findsOneWidget);
+    expect(find.text("The video file couldn't be opened. It may have been moved or deleted."), findsOneWidget);
+    expect(find.textContaining('Cannot open file'), findsNothing);
+    expect(find.text('Your file is safe.'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
     expect(find.text('Back to Videos'), findsOneWidget);
 
     // Verify it marked missing file as unavailable in the library
