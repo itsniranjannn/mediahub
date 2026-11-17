@@ -34,80 +34,48 @@ The 7 goals of the rework are written and covered by unit/widget tests. What's m
 
 ### Helper tools in this repo
 
-- `tools/device/build_apks.sh test|emulator|family|relx64` builds APKs from a scratch copy
+- `tools/device/build_apks.sh test|emulator|family|relx64|testrel` builds APKs from a scratch copy
   (`$BUILD_COPY`, default `~/.mediahub/build-copy`). Every mode except `family` uses the app id
   `com.mediahub.app.audit` ("MediaHub Test"), so it installs next to the real app without touching it.
+  `testrel` is a release (fast) build of that test app for the phone. `family` and `testrel` both write
+  `app-release.apk`, so copy it away before building the other one.
 - `tools/device/dev.py` is a small adb helper (screenshots, UI dump, tap by label, swipes, crash log).
   `tools/device/qa_pass.py <round> [--install APK] [--only home,music,...]` visits every screen and saves
   screenshots to `tools/device/shots/` (git-ignored). `gen_media.py <dir>` makes tagged test WAV files.
   Tip: real test videos come from `adb shell screenrecord --bugreport --time-limit 8 --size 1280x720 /sdcard/Movies/x.mp4`.
   In Git Bash, set `MSYS_NO_PATHCONV=1` before `adb push` to `/sdcard/...`.
 - `flutter test tools/design_previews/preview_test.dart` renders Music, Now Playing, Home, Videos, Explore,
-  Album and Queue at 360x800 with fake data into `build/design_previews/`. Use it to check the section A fixes.
+  Album and Queue at 360x800 with fake data into `build/design_previews/`. It now has 22 scenes (real covers, a white cover, 1.3x text, 320 dp, empty states).
 
-## A. Design polish still to do (from the designer review of the artwork round)
+## A. Design polish (done)
 
-The artwork system is in: gradient covers per item (8 palettes, picked by a stable FNV-1a hash of the uri),
-real 16:9 video thumbnails with fade-in, a shared `DurationBadge`, and Now Playing tinted with the song's
-palette. A designer reviewed the rendered screens. The polish pass that should apply that review was
-stopped before it changed anything. The full list, highest impact first:
+Two designer reviews of rendered screens were applied, and a code review checked the result. What changed:
 
-1. **[high] Now Playing** (`lib/features/music_player/now_playing_sheet.dart`)
-   - Problem: contrast is wrong in both directions. (a) On a bright or white real cover, the "Now Playing"
-     header is 3.5:1 and the "1 of 8" caption about 1.8:1. (b) Without art, the glow sits behind the cover
-     and every song gets the same faint navy wash. No song tint is visible.
-   - Fix: `_kBackdropScrim` alphas `[0.82, 0.82, 0.60, 0.90, 1.0]` at stops `[0.0, 0.16, 0.26, 0.72, 1.0]`.
-     `_PaletteGlow`: `_lightCenter = Alignment(0, -0.30)`, light radius 0.9 (was 1.05). In
-     `artwork_placeholder.dart`: `ArtworkTint.backdropLightAlpha = 0.9`, `backdropDeepAlpha = 0.6`.
-     Update the contrast unit test to measure where text actually sits (0.82 at the header, ≥0.9 at the title).
-2. **[high] Tonal buttons look like primary buttons** (`lib/app/theme/app_theme.dart`)
-   - Problem: `filledButtonTheme` sets background/foreground, so `FilledButton.tonal` ("Listen" in Explore)
-     looks the same as `FilledButton` ("Watch"). This also affects `videos_screen.dart`, `router.dart` and
-     `settings_screen.dart`.
-   - Fix: remove `backgroundColor`/`foregroundColor` from `filledButtonTheme`. Add
-     `secondaryContainer: Color(0xFF25253F)` and `onSecondaryContainer: AppColors.primary` to the dark
-     `ColorScheme` (4.98:1). Then delete the local `_tonalStyle` in `detail_screens.dart` and `music_screen.dart`.
-3. **[high] Song titles cut off at about 12 characters** (`lib/features/library/media_song_row.dart`)
-   - Problem: duration + heart + more button take about 140 dp of a 360 dp row.
-   - Fix: remove the standalone duration `Text` and its `SizedBox(width: 8)`. Show the duration at the end of
-     the meta line instead: `Row([Expanded(artistText), Text(' · <duration>', style: metadata, textMuted,
-     tabular figures)])`, for both the plain and the download variants. Add `SizedBox(width: AppSpacing.xs4)`
-     before the heart. The title gains about 44 dp.
-4. **[high] Small covers look like app icons** (`lib/shared/widgets/artwork_placeholder.dart` + call sites)
-   - Fix: in `_CoverPainter`, draw the rings only when `shortest >= 96`. Radii: `media_song_row` `_artworkRadius`,
-     `mini_player.dart:196`, `queue_sheet.dart:283`, `media_context_menu.dart:322/330` → `AppSpacing.sm8`.
-     Home continue card (80 dp) → `AppSpacing.md12`. `detail_screens.dart` `_kHeroArtRadius` → `AppSpacing.lg16`.
-     Now Playing stays at 24.
-5. **[high] Tints ignore real artwork** (`home_screen.dart`, `detail_screens.dart`, `now_playing_sheet.dart`)
-   - Problem: the hash tint shows even when the item has a real cover, e.g. a red cover on a teal card.
-   - Fix: `_hasRealArt(item) = artworkPath not empty || ArtworkService.instance.peek(uri, size: 256/512) != null`.
-     When it's true, use `AppColors.heroGradient` or the neutral violet fallback instead of `ArtworkTint`. In Now
-     Playing, use `_PaletteGlow(seed: hasArt ? null : item.uri)`. Better later: average the 64 px blurred
-     swatch into one colour.
-6. **[medium] Now Playing cover size**: `_kArtworkMaxSize = 400` (was 300), so a 360 dp screen gets a
-   328 dp cover lined up with the 16 dp text and slider edges.
-7. **[medium] Now Playing title**: `maxLines: 2`. Artist in `AppTypography.body` + `textSecondary`. Adjust
-   `_snackMarginAboveInfo` (infoHeight = max(48, 2 × title line + 4 + body line)).
-8. **[medium] Palette**: emerald looks like teal and like the success green. Replace it with "dusk",
-   `[Color(0xFF7A6CC0), Color(0xFF221B4A)]`.
-9. **[medium] "Downloaded" pill over video covers disappears on violet covers** (`media_item_tile.dart`):
-   add a `MediaBadge({icon, text})` to `ui_kit.dart` in the overlay style (like `DurationBadge`, icon 12 in
-   `AppColors.accent`). Keep the text "Downloaded" (a test looks for it).
-10. **[medium] One duration format**: add `formatClock(Duration)` to `lib/core/utils/formatters.dart`, which drops
-    the leading zero under 10 minutes and keeps hours padded. Use it in the Now Playing seek labels,
-    `DurationBadge`, `media_item_tile.dart` and `MediaSongRow._trackDuration`.
-11. **[medium] Now-playing row highlight**: make `MediaSongRow` match the queue: an inset pill at 12% violet with
-    radius `AppSpacing.buttonRadius` and 8 dp side padding, keeping the 64 dp row and the art at 16 dp.
-12. **[medium] Album tile vs album page**: add `coverUri` (`uri.min()` in the albums query) to `AlbumGroup`.
-    Use it for `_AlbumCard` (`ArtworkThumbnail`) and pick the same song for the album header.
-13. **[low]** `SectionHeader` "See all" ends 28 dp from the edge instead of 16. Use right padding `AppSpacing.xs4`.
-14. **[low]** Use one separator everywhere: ` · ` (U+00B7) instead of ` • `. Leave `online_stream_sheet.dart:62`
-    alone, because a test expects "MP4 • size unknown".
-15. **[low]** In `format_selection_sheet.dart:161`, use `Icons.play_circle_outline_rounded`, the same glyph as the Explore card.
+- **Now Playing**: darker veil where text sits (header and "1 of 8" now pass 4.5:1 over a white cover), the glow
+  takes the song's palette and goes neutral violet when the song has real art, very bright covers are dimmed
+  (mean brightness capped at 0.40), 328 dp cover on a 360 dp phone lined up with the text, 2-line titles,
+  time labels sit with the seek bar. A widget test measures contrast where every text and icon really sits.
+- **Buttons**: `FilledButton.tonal` is now really tonal (`secondaryContainer` in the theme), so "Listen" and
+  "Shuffle" sit quietly next to the solid "Watch" and "Play".
+- **Song rows**: the duration ends the meta line ("Artist · 4:05") so titles get about 36 dp more; at large text
+  or on 320 dp phones titles wrap to 2 lines. The playing row is an inset violet pill, and its equaliser glyph
+  has a dark veil that stays readable on white covers. "Downloaded" is teal (violet means "playing").
+- **Covers**: rings only on covers of 96 dp or more; radii 8 (rows, mini player, queue, menus), 12 (Home card),
+  16 (album header), 24 (Now Playing). Palette "emerald" was replaced by "dusk". Tinted surfaces (Home card,
+  album/artist headers) go neutral when the item has real art and fade instead of flashing.
+- **Albums**: the tile and the album page use the same song's cover (`AlbumGroup.coverUri` and
+  `coverArtworkPath`, so downloaded albums show their saved thumbnail).
+- **Video cards**: no grey bottom scrim (bright family videos stay bright); "Downloaded" and duration chips
+  share one overlay style (`MediaBadge`, `DurationBadge`); the resume bar sits on a dark track.
+- **Queue**: the position numbers are gone, covers start on the 16 dp edge, titles gain 40 dp.
+- **One clock format** everywhere visible (`formatClock`: 4:05, 12:30, 1:02:03), including the video player.
+  Screen-reader labels keep the old format.
+- **Small fixes**: "See all" ends on the 16 dp edge, ` · ` as the one separator, the same play glyph in the
+  format sheet and Explore, Explore card buttons on the 16 dp edge with a 48 dp download button, "Scan device"
+  button on the empty Songs/Videos tabs, "Search your music" hint, mini player skip-previous no longer looks
+  disabled.
 
-Also: in `ArtworkThumbnail`, stop painting the placeholder under a cover once it has faded in (extra painting
-in long lists). When re-rendering previews, pick a second Now Playing song that lands on a different palette,
-so the tint change is visible.
+Not done on purpose: averaging the cover into one glow colour (the blurred cover already covers the glow).
 
 ## B. QA still to do (emulator first, then the phone)
 
@@ -135,8 +103,10 @@ Build `emulator` (demo data for Explore) and run `qa_pass.py`, then check by han
 
 ## D. Known follow-ups and accepted risks
 
-1. Make `download_streaming_engine_test.dart` robust under load: wait for the final progress event before
-   asserting, and raise the timeout for test 6 (`timeout: Timeout(Duration(minutes: 2))`).
+1. (Done) `download_streaming_engine_test.dart` no longer depends on timing: the test server holds the
+   response until the test has seen bytes on disk, and every real-socket test has an explicit timeout
+   (test 1: 12 min, because it moves 100 MB and a busy PC can be slow). It passed 3 times alone and twice
+   under a CPU stress loop.
 2. A direct-link download's `<id>.part` is only removed at the next app start after you delete the row. That's fine.
 3. Accepted (see DECISIONS 18): redirects through yt-dlp's generic extractor, yt-dlp self-update isn't
    signature-checked (Reset restores the bundled copy), the media service is exported (needed for Bluetooth and
