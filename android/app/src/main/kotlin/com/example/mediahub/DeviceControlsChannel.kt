@@ -101,6 +101,11 @@ class DeviceControlsChannel(
         channel.invokeMethod("pipChanged", inPip)
     }
 
+    /** The user closed the picture-in-picture window instead of expanding it. */
+    fun notifyPipDismissed() {
+        channel.invokeMethod("pipDismissed", null)
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {

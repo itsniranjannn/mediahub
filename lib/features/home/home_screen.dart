@@ -159,7 +159,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // Continue listening hero
           if (hasCurrentItem) const SliverToBoxAdapter(child: _ContinueListeningCard()),
 
-          // Quick actions (Shuffle all, Explore, Downloads)
+          // Quick actions (Shuffle all, Online, Downloads)
           SliverToBoxAdapter(
             child: _QuickActions(
               songsLoading: songs == null,
@@ -181,7 +181,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 icon: Icons.queue_music_rounded,
                 title: 'Nothing played yet',
                 message: 'Songs and videos you play or add will show up here. '
-                    'Find something new in Explore.',
+                    'Find something new in Online.',
               ),
             ),
 
@@ -316,7 +316,7 @@ class _SectionHeading extends StatelessWidget {
   }
 }
 
-/// Rounded loading placeholder bar (same tone as the Explore skeletons).
+/// Rounded loading placeholder bar.
 class _SkeletonBar extends StatelessWidget {
   final double width;
   final double height;
@@ -641,7 +641,9 @@ class _ContinueListeningCard extends ConsumerWidget {
                                 Text(
                                   breakableTitle(item.title),
                                   semanticsLabel: item.title,
-                                  style: AppTypography.sectionTitle,
+                                  // A name of a thing: Anek, which draws Latin and
+                                  // Devanagari alike (DESIGN.md 0.5).
+                                  style: AppTypography.cardTitle,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -760,11 +762,11 @@ class _QuickActions extends StatelessWidget {
           onTap: shuffle,
         ),
       _QuickActionTile(
-        icon: Icons.travel_explore_rounded,
-        label: 'Explore',
-        semanticLabel: 'Open Explore',
+        icon: Icons.smart_display_rounded,
+        label: 'Online',
+        semanticLabel: 'Open Online',
         color: AppColors.accent,
-        onTap: () => context.go('/explore'),
+        onTap: () => context.go('/online'),
       ),
       if (PlatformInfo.supportsDownloads)
         _QuickActionTile(

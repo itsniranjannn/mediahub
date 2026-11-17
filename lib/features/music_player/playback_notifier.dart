@@ -207,12 +207,17 @@ class PlaybackNotifier extends Notifier<domain.PlaybackState> {
     await _handler.loadQueue(allItems, startIndex: index, autoPlay: true);
   }
 
-  Future<void> play() => _handler.play();
-  Future<void> pause() => _handler.pause();
+  // In-app controls act on the LOCAL queue. While the Online tab's YouTube
+  // page owns the media session, playing or skipping here hands the session
+  // back to local music (YouTube pauses). The notification, lock screen and
+  // headset go through the handler's own play()/skipToNext()..., which route
+  // to whichever source is active.
+  Future<void> play() => _handler.playLocal();
+  Future<void> pause() => _handler.pauseLocal();
   Future<void> togglePlayPause() => state.isPlaying ? pause() : play();
-  Future<void> seek(Duration pos) => _handler.seek(pos);
-  Future<void> skipToNext() => _handler.skipToNext();
-  Future<void> skipToPrevious() => _handler.skipToPrevious();
+  Future<void> seek(Duration pos) => _handler.seekLocal(pos);
+  Future<void> skipToNext() => _handler.skipToNextLocal();
+  Future<void> skipToPrevious() => _handler.skipToPreviousLocal();
   Future<void> skipToQueueItem(int index) => _handler.skipToQueueItem(index);
   Future<void> setSpeed(double speed) => _handler.setSpeed(speed);
   void toggleShuffle() => _handler.toggleShuffle();
@@ -274,6 +279,30 @@ final throttledPositionStreamProvider = StreamProvider<Duration>((ref) {
 
   return controller.stream;
 });
+
+/// What the Online tab's YouTube page is playing while it owns the media
+/// session (null when local music owns it). The mini player shows it.
+///
+/// Synchronous from the first frame (no loading state that would flash the
+/// local track), and null where no handler is provided (widget tests that
+/// only override the local playback providers).
+class ExternalMediaNotifier extends Notifier<ExternalMediaSnapshot?> {
+  @override
+  ExternalMediaSnapshot? build() {
+    final MusicAudioHandler handler;
+    try {
+      handler = ref.watch(audioHandlerProvider);
+    } catch (_) {
+      return null;
+    }
+    final sub = handler.externalMediaStream.listen((s) => state = s);
+    ref.onDispose(sub.cancel);
+    return handler.externalMedia;
+  }
+}
+
+final externalMediaProvider =
+    NotifierProvider<ExternalMediaNotifier, ExternalMediaSnapshot?>(ExternalMediaNotifier.new);
 
 // Error notifications stream
 final playbackErrorStreamProvider = StreamProvider<String>((ref) {

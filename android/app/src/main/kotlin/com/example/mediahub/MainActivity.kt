@@ -1,6 +1,7 @@
 package com.example.mediahub
 
 import android.content.res.Configuration
+import androidx.lifecycle.Lifecycle
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import com.example.mediahub.personal.ExtractorChannel
@@ -67,7 +68,14 @@ class MainActivity : AudioServiceActivity() {
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        EngineChannels.deviceControls?.notifyPipChanged(isInPictureInPictureMode)
+        val controls = EngineChannels.deviceControls
+        controls?.notifyPipChanged(isInPictureInPictureMode)
+        // Leaving picture-in-picture while the Activity is no longer started means the user
+        // closed the floating window (X or swipe away) instead of expanding it: Android
+        // expects playback in it to stop. Expanding it back resumes the Activity instead.
+        if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            controls?.notifyPipDismissed()
+        }
     }
 
     override fun onDestroy() {

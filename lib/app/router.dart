@@ -5,9 +5,9 @@ import 'package:go_router/go_router.dart';
 import '../core/logging/diagnostics_service.dart';
 import '../domain/models/media_item.dart';
 import '../features/downloads/downloads_screen.dart';
-import '../features/explore/explore_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/music_player/music_screen.dart';
+import '../features/online/online_screen.dart';
 import '../features/settings/diagnostics_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/video_player/video_player_screen.dart';
@@ -55,8 +55,8 @@ final routerProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(
             routes: [
               GoRoute(
-                path: '/explore',
-                builder: (context, state) => const ExploreScreen(),
+                path: '/online',
+                builder: (context, state) => const OnlineScreen(),
               ),
             ],
           ),
@@ -70,6 +70,12 @@ final routerProvider = Provider<GoRouter>((ref) {
               ],
             ),
         ],
+      ),
+      // The tab used to be "Explore": old links (Home's quick action, saved
+      // routes) land on Online.
+      GoRoute(
+        path: '/explore',
+        redirect: (context, state) => '/online',
       ),
       // Settings: opened from the gear in the Home header (own page with a back arrow)
       GoRoute(

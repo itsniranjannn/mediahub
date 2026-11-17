@@ -1,0 +1,122 @@
+<!doctype html>
+<!-- Offline stand-in for a YouTube watch page, used only when the app is built
+     with --dart-define=MEDIAHUB_ONLINE_FIXTURE=true (debug builds). It is loaded
+     with the base URL https://m.youtube.com/watch?v=fixture0001 so the media
+     bridge, the notification controls and picture-in-picture can be exercised
+     on an emulator whose network cannot reach YouTube. No network requests:
+     the sound is generated here (a WAV in a blob: URL), the poster on a canvas. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediaHub fixture: Tone One - YouTube</title>
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; background: #0f0f0f; color: #f1f1f1; }
+  #movie_player { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+  video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; }
+  .row { display: flex; gap: 8px; padding: 12px 16px; flex-wrap: wrap; }
+  button { font: inherit; padding: 10px 14px; border-radius: 20px; border: 0; background: #272727; color: #f1f1f1; }
+  h1 { font-size: 18px; margin: 12px 16px 4px; }
+  .slim-owner-channel-name { margin: 0 16px; color: #aaa; }
+  #log { margin: 12px 16px; color: #aaa; font: 12px monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="movie_player"><video class="html5-main-video" playsinline preload="auto"></video></div>
+<h1 id="title">Tone One</h1>
+<div class="slim-owner-channel-name">MediaHub Fixture Channel</div>
+<div class="row">
+  <button id="play" type="button">Play / pause</button>
+  <button class="ytp-next-button" aria-label="Next video" type="button">Next video</button>
+</div>
+<div id="log"></div>
+<script>
+(function () {
+  'use strict';
+  var TRACKS = [
+    { title: 'Tone One', hz: 220, color: '#6b3fd6' },
+    { title: 'Tone Two', hz: 330, color: '#2f8f6a' },
+    { title: 'Tone Three', hz: 440, color: '#b5532c' }
+  ];
+  var index = 0;
+  var video = document.querySelector('video');
+  var logEl = document.getElementById('log');
+
+  function log(s) {
+    logEl.textContent = (s + '\n' + logEl.textContent).slice(0, 600);
+  }
+
+  // A quiet 60 s mono tone as an 8 kHz, 8-bit WAV: seekable, with a real duration.
+  function toneUrl(hz) {
+    var rate = 8000, seconds = 60, n = rate * seconds;
+    var buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+    function str(o, s) { for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+    str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    str(36, 'data'); v.setUint32(40, n, true);
+    for (var i = 0; i < n; i++) {
+      var env = 0.5 + 0.5 * Math.sin(2 * Math.PI * i / rate * 0.5); // slow pulse, easy to hear pause/play
+      v.setUint8(44 + i, 128 + Math.round(40 * env * Math.sin(2 * Math.PI * hz * i / rate)));
+    }
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+
+  function poster(track) {
+    var c = document.createElement('canvas');
+    c.width = 640; c.height = 360;
+    var g = c.getContext('2d');
+    g.fillStyle = track.color; g.fillRect(0, 0, 640, 360);
+    g.fillStyle = '#fff'; g.font = 'bold 48px sans-serif'; g.textAlign = 'center';
+    g.fillText(track.title, 320, 170); g.font = '24px sans-serif'; g.fillText('MediaHub fixture', 320, 220);
+    return c.toDataURL('image/png');
+  }
+
+  function load(i, autoplay) {
+    index = (i + TRACKS.length) % TRACKS.length;
+    var t = TRACKS[index];
+    document.title = 'MediaHub fixture: ' + t.title + ' - YouTube';
+    document.getElementById('title').textContent = t.title;
+    video.poster = poster(t);
+    video.src = toneUrl(t.hz);
+    if (navigator.mediaSession && typeof MediaMetadata === 'function') {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: t.title,
+        artist: 'MediaHub Fixture Channel',
+        artwork: []
+      });
+    }
+    log('loaded ' + t.title);
+    if (autoplay) {
+      var p = video.play();
+      if (p && p.catch) p.catch(function (e) { log('autoplay blocked: ' + e.name); });
+    }
+  }
+
+  if (navigator.mediaSession) {
+    var ms = navigator.mediaSession;
+    ms.setActionHandler('play', function () { log('handler play'); video.play(); });
+    ms.setActionHandler('pause', function () { log('handler pause'); video.pause(); });
+    ms.setActionHandler('nexttrack', function () { log('handler next'); load(index + 1, true); });
+    ms.setActionHandler('previoustrack', function () { log('handler previous'); load(index - 1, true); });
+    ms.setActionHandler('seekto', function (d) { log('handler seekto ' + d.seekTime); video.currentTime = d.seekTime; });
+  }
+
+  document.getElementById('play').addEventListener('click', function () {
+    if (video.paused) video.play(); else video.pause();
+  });
+  document.querySelector('.ytp-next-button').addEventListener('click', function () {
+    log('next button'); load(index + 1, true);
+  });
+  ['play', 'pause', 'ended', 'seeked'].forEach(function (type) {
+    video.addEventListener(type, function () { log(type + ' @ ' + video.currentTime.toFixed(1)); });
+  });
+  document.addEventListener('visibilitychange', function () {
+    log('page heard visibilitychange: ' + document.visibilityState);
+  });
+
+  load(0, true);
+})();
+</script>
+</body>
+</html>

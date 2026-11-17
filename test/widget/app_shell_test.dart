@@ -1,10 +1,12 @@
 import 'package:mediahub/core/logging/diagnostics_service.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:mediahub/app/app.dart';
+import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:drift/native.dart';
 import 'package:mediahub/core/app_config.dart';
 import 'package:mediahub/core/platform_info.dart';
@@ -15,7 +17,11 @@ import 'package:mediahub/data/repositories/library_repository_impl.dart' show da
 import 'package:mediahub/features/library/library_notifier.dart';
 import 'package:mediahub/features/music_player/music_audio_handler.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
+import 'package:mediahub/features/online/online_screen.dart';
+import 'package:mediahub/features/online/online_web_view.dart';
+import 'package:go_router/go_router.dart';
 import '../unit/permission_service_test.dart';
+import 'online_fakes.dart';
 
 class MockAudioPlayer extends Mock implements AudioPlayer {}
 class FakeAudioSource extends Fake implements AudioSource {}
@@ -60,8 +66,14 @@ void main() {
     final db = AppDatabase(NativeDatabase.memory());
     final handler = MusicAudioHandler(player: mockPlayer);
     final mockRepo = MockPlaybackRepository();
+    // Platform views do not run in flutter test: the Online tab gets a fake WebView.
+    final web = FakeOnlineWebView();
     when(() => mockRepo.loadLastPlaybackState()).thenAnswer((_) async => null);
     when(() => mockRepo.savePlaybackState(any())).thenAnswer((_) async {});
+
+    // The phone is in light mode.
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
 
     await tester.pumpWidget(
       ProviderScope(
@@ -71,6 +83,9 @@ void main() {
           audioHandlerProvider.overrideWithValue(handler),
           playbackRepositoryProvider.overrideWithValue(mockRepo),
           mediaPermissionServiceProvider.overrideWithValue(MockMediaPermissionService()),
+          onlineWebViewBuilderProvider.overrideWithValue(web.builder),
+          onlineAssetsProvider.overrideWith((ref) async => fakeOnlineAssets),
+          androidSdkIntProvider.overrideWith((ref) async => null),
         ],
         child: const MediaHubApp(),
       ),
@@ -79,6 +94,19 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(find.text(AppConfig.appName), findsWidgets);
+
+    // Until every screen reads the palette the app stays on ink, whatever
+    // the phone says; the mini player and the nav are ink in both themes.
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.themeMode, AppTheme.themeMode);
+    expect(app.theme, same(AppTheme.lightTheme));
+    expect(app.darkTheme, same(AppTheme.darkTheme));
+    final dock = find.byKey(const ValueKey('mini_player_slot'));
+    expect(Theme.of(tester.element(dock)).brightness, Brightness.dark);
+    final dockBars = tester.widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+      find.ancestor(of: dock, matching: find.byType(AnnotatedRegion<SystemUiOverlayStyle>)).first,
+    );
+    expect(dockBars.value, AppTheme.barsOnInk);
 
     // Tap Music tab
     await tester.tap(find.text('Music'));
@@ -102,13 +130,35 @@ void main() {
 
     expect(find.text('No downloads yet'), findsOneWidget);
 
-    // Tap Explore tab (YouTube search)
-    await tester.tap(find.text('Explore'));
+    // Tap the Online tab (YouTube in a WebView; "Explore" is gone)
+    expect(find.text('Explore'), findsNothing);
+    await tester.tap(find.text('Online'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('Search, play and save without leaving MediaHub.'), findsOneWidget);
-    expect(find.text('Find anything to watch or listen to'), findsOneWidget);
+    expect(find.byType(OnlineScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('fake_webview')), findsOneWidget);
+    expect(find.byTooltip('More options'), findsOneWidget);
+    expect(web.mounts, 1);
+
+    // The page is kept alive across tab switches (the shell's indexed stack).
+    await tester.tap(find.text('Music'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('Online'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(web.mounts, 1, reason: 'the WebView must not be recreated');
+
+    // Old "/explore" links land on Online.
+    GoRouter.of(tester.element(find.byType(OnlineScreen))).go('/explore');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.byType(OnlineScreen), findsOneWidget);
+    expect(
+      GoRouter.of(tester.element(find.byType(OnlineScreen))).routerDelegate.currentConfiguration.uri.path,
+      '/online',
+    );
 
     // Settings now opens from the gear in the Home header
     await tester.tap(find.text('Home'));
@@ -119,6 +169,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 800));
 
     expect(find.text('Audio & Headset'), findsOneWidget);
+    expect(find.text('Online'), findsWidgets); // Settings → Online card
     expect(find.text('Diagnostics Log'), findsOneWidget);
     expect(find.text('Open-source licenses'), findsOneWidget);
 

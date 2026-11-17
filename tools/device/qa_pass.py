@@ -242,25 +242,87 @@ def videos():
     wait(1.5)
 
 
+def media_session():
+    """Our app's entry in `dumpsys media_session`: (state, title) or (None, None)."""
+    import re
+    out = dev.sh('dumpsys media_session')
+    # One block per session, from our "package=" line to the next session's.
+    i = out.find('package=' + PKG)
+    if i < 0:
+        return (None, None)
+    j = out.find('package=', i + 8)
+    block = out[i:j if j > 0 else i + 4000]
+    # "state=PlaybackState {state=3, ..." (older) or "{state=PLAYING(3), ..." (newer): keep the number.
+    st = re.search(r'state=PlaybackState \{state=[A-Z_]*\(?(\d+)', block)
+    title = re.search(r'description=([^,\r\n]+)', block)
+    return (st.group(1) if st else None, title.group(1).strip() if title else None)
+
+
+def wait_media(pred, timeout=8):
+    end = time.time() + timeout
+    last = (None, None)
+    while time.time() < end:
+        last = media_session()
+        if pred(*last):
+            return last
+        time.sleep(0.8)
+    return last
+
+
 @step
-def explore():
+def online():
+    """Online tab on the emulator build (MEDIAHUB_ONLINE_FIXTURE=true): the fixture page plays a
+    generated tone, so the bridge, the media notification, media keys, the mini player and
+    picture-in-picture can be checked without reaching YouTube."""
     dismiss_system_tips()
-    tap('Explore Tab', required=False)
-    wait(2)
-    shot('explore_empty')
-    tap_field()
+    tap('Online Tab', required=False)
+    wait(4)
+    shot('online_fixture')
+    nodes('Download|Copy link|Picture-in-picture|Background play|Auto PiP|Search YouTube')
+    st, title = wait_media(lambda s, t: s is not None and t is not None and 'Tone' in t)
+    print('  media session:', st, title)
+    if not title or 'Tone' not in title:
+        print('  (no YouTube entry in the media session; is this the fixture build?)')
+    # The notification shade ("media dropdown").
+    dev.sh('cmd statusbar expand-notifications')
+    wait(1.5)
+    shot('online_notification')
+    dev.sh('cmd statusbar collapse')
     wait(0.8)
-    dev.sh("input text 'lofi%sbeats'")
-    key('ENTER')
-    wait(0.3)
-    shot('explore_loading')
+    # Media keys go through the notification's session to the page.
+    key('MEDIA_PAUSE')
+    print('  after MEDIA_PAUSE:', wait_media(lambda s, t: s == '2'))
+    key('MEDIA_PLAY')
+    print('  after MEDIA_PLAY:', wait_media(lambda s, t: s == '3'))
+    key('MEDIA_NEXT')
+    print('  after MEDIA_NEXT:', wait_media(lambda s, t: t is not None and 'Two' in t))
+    wait(1)
+    key('MEDIA_PREVIOUS')  # under 3 s: back to the previous track
+    print('  after MEDIA_PREVIOUS:', wait_media(lambda s, t: t is not None and 'One' in t))
+    # Mini player on another tab shows the video with a YOUTUBE tag.
+    tap('Home Tab', required=False)
+    wait(1.5)
+    nodes('Mini player')
+    shot('online_mini_player_on_home')
+    tap('Mini player: YouTube', required=False)
     wait(2)
-    hide_keyboard()
+    # Picture-in-picture from the watch strip, then back.
+    tap('^Picture-in-picture', required=False)
+    wait(3)
+    shot('online_pip')
+    print('  pinned:', 'pinned' in dev.sh('dumpsys activity activities').lower())
+    dev.sh('monkey -p %s -c android.intent.category.LAUNCHER 1' % PKG)
+    wait(3)
+    shot('online_after_pip')
+    # Auto PiP: leaving the app while the video plays (Android 12+ enters by itself).
+    key('HOME')
+    wait(3)
+    shot('online_auto_pip')
+    print('  media session after HOME (background play):', media_session())
+    dev.sh('monkey -p %s -c android.intent.category.LAUNCHER 1' % PKG)
+    wait(3)
+    key('MEDIA_PAUSE')
     wait(1)
-    shot('explore_results')
-    swipe(540, 1800, 540, 800)
-    wait(1)
-    shot('explore_results_scrolled')
 
 
 @step

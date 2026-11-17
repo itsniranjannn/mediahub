@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../platform_info.dart';
@@ -14,6 +16,17 @@ class DeviceControls {
   // --- picture in picture --------------------------------------------------
   /// True while the app is shown in the small floating picture-in-picture window.
   static final ValueNotifier<bool> inPip = ValueNotifier<bool>(false);
+
+  /// Who asked for picture-in-picture when the current window was entered
+  /// ([pipOwnerVideoPlayer], [pipOwnerOnline]); null outside picture-in-picture.
+  static final ValueNotifier<String?> pipOwner = ValueNotifier<String?>(null);
+
+  static final StreamController<void> _pipDismissed = StreamController<void>.broadcast();
+
+  /// The user closed the picture-in-picture window (its X, or swiped it away):
+  /// playback in it should stop, as Android expects.
+  static Stream<void> get pipDismissed => _pipDismissed.stream;
+
   static bool _handlerSet = false;
 
   /// Starts listening for native events (picture-in-picture changes). Safe to call often.
@@ -21,10 +34,47 @@ class DeviceControls {
     if (_handlerSet || !available) return;
     _handlerSet = true;
     _channel.setMethodCallHandler((call) async {
-      if (call.method == 'pipChanged') {
-        inPip.value = call.arguments == true;
+      switch (call.method) {
+        case 'pipChanged':
+          handlePipChanged(call.arguments == true);
+        case 'pipDismissed':
+          _pipDismissed.add(null);
       }
     });
+  }
+
+  /// Applies a picture-in-picture change reported by the platform.
+  @visibleForTesting
+  static void handlePipChanged(bool active) {
+    pipOwner.value = active ? effectivePipOwner : null;
+    inPip.value = active;
+  }
+
+  // --- picture-in-picture eligibility, shared by several screens ---------
+  static const String pipOwnerVideoPlayer = 'video_player';
+  static const String pipOwnerOnline = 'online';
+
+  /// Screens that currently want picture-in-picture when the user leaves the
+  /// app, oldest first. The newest claim wins; when it is withdrawn the one
+  /// before it applies again (e.g. closing the video player that was opened
+  /// over a playing YouTube page).
+  static final LinkedHashMap<String, double> _pipClaims = LinkedHashMap<String, double>();
+  static bool _appliedEligible = false;
+  static double _appliedAspect = 0;
+
+  /// The screen whose claim is in force, or null.
+  static String? get effectivePipOwner => _pipClaims.isEmpty ? null : _pipClaims.keys.last;
+
+  @visibleForTesting
+  static Map<String, double> get debugPipClaims => Map.unmodifiable(_pipClaims);
+
+  @visibleForTesting
+  static void resetPipForTests() {
+    _pipClaims.clear();
+    _appliedEligible = false;
+    _appliedAspect = 0;
+    inPip.value = false;
+    pipOwner.value = null;
   }
 
   static Future<bool> isPipSupported() async {
@@ -38,13 +88,35 @@ class DeviceControls {
 
   /// While a video is on screen Android may switch to picture-in-picture by itself
   /// when the user leaves the app. [aspect] is the video's width / height.
-  static Future<void> setPipEligible(bool eligible, {double aspect = 16 / 9}) async {
+  ///
+  /// [owner] names the screen asking; each screen withdraws only its own claim.
+  static Future<void> setPipEligible(
+    bool eligible, {
+    double aspect = 16 / 9,
+    String owner = pipOwnerVideoPlayer,
+  }) async {
+    final safeAspect = aspect.isFinite && aspect > 0 ? aspect : 16 / 9;
+    if (eligible) {
+      // A new claim (or a new aspect) moves to the end: the newest claim wins.
+      // Repeating the same claim keeps its place.
+      if (_pipClaims[owner] != safeAspect) {
+        _pipClaims.remove(owner);
+        _pipClaims[owner] = safeAspect;
+      }
+    } else {
+      _pipClaims.remove(owner);
+    }
+    final effectiveEligible = _pipClaims.isNotEmpty;
+    final effectiveAspect = effectiveEligible ? _pipClaims.values.last : _appliedAspect;
+    if (effectiveEligible == _appliedEligible && effectiveAspect == _appliedAspect) return;
+    _appliedEligible = effectiveEligible;
+    _appliedAspect = effectiveAspect;
     if (!available) return;
     try {
       // The channel carries integers: scale the ratio to 1000ths.
       await _channel.invokeMethod<bool>('setPipEligible', {
-        'eligible': eligible,
-        'width': (aspect * 1000).round().clamp(1, 100000),
+        'eligible': effectiveEligible,
+        'width': ((effectiveAspect > 0 ? effectiveAspect : 16 / 9) * 1000).round().clamp(1, 100000),
         'height': 1000,
       });
     } catch (_) {}

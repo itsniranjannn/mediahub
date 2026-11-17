@@ -3,7 +3,9 @@
 #
 # Usage: tools/device/build_apks.sh <mode>
 #   test      side-by-side "MediaHub Test" (com.mediahub.app.audit), debug, arm64 (phone)
-#   emulator  same app id, debug, x86_64, Explore demo data (--dart-define=MEDIAHUB_DEMO=true)
+#   emulator  same app id, debug, x86_64, demo data (--dart-define=MEDIAHUB_DEMO=true) and the
+#             offline Online-tab fixture (--dart-define=MEDIAHUB_ONLINE_FIXTURE=true: a local stand-in
+#             for a YouTube watch page, since the emulator's network may not reach YouTube; debug only)
 #   family    real app id com.mediahub.app, RELEASE, arm64, signed with the family key
 #   relx64    side-by-side id, RELEASE, x86_64 (R8 smoke test on the emulator)
 #   testrel   side-by-side id, RELEASE, arm64 (real-speed test build for the phone)
@@ -40,7 +42,9 @@ mkdir -p "$A/android/app/src"
 cp -r "$SRC/android/app/src/main" "$A/android/app/src/main"
 cp "$SRC/pubspec.yaml" "$SRC/pubspec.lock" "$A/"
 cp "$SRC/android/app/build.gradle.kts" "$SRC/android/app/proguard-rules.pro" "$A/android/app/"
-cp "$SRC/android/build.gradle.kts" "$SRC/android/settings.gradle.kts" "$A/android/"
+# gradle.properties carries android.r8.proguardAndroidTxt.disallowed=false, which AGP 9 needs for
+# flutter_inappwebview_android 1.1.3 (see the comment in that file).
+cp "$SRC/android/build.gradle.kts" "$SRC/android/settings.gradle.kts" "$SRC/android/gradle.properties" "$A/android/"
 if [ -f "$SRC/android/key.properties" ]; then cp "$SRC/android/key.properties" "$A/android/key.properties"; fi
 
 if [ "${SDK_PLATFORM_FIX:-0}" = 1 ]; then
@@ -55,7 +59,7 @@ cd "$A"
 flutter pub get >/dev/null
 case "$MODE" in
   test)     flutter build apk --debug --target-platform android-arm64 ;;
-  emulator) flutter build apk --debug --target-platform android-x64 --dart-define=MEDIAHUB_DEMO=true ;;
+  emulator) flutter build apk --debug --target-platform android-x64 --dart-define=MEDIAHUB_DEMO=true --dart-define=MEDIAHUB_ONLINE_FIXTURE=true ;;
   family)   flutter build apk --release --target-platform android-arm64 ;;
   relx64)   flutter build apk --release --target-platform android-x64 ;;
   testrel)  flutter build apk --release --target-platform android-arm64 ;;

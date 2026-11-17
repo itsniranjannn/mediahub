@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app/app.dart';
 import 'core/storage/settings_store.dart';
@@ -32,6 +33,8 @@ void main() {
 
 Future<void> _bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Draw behind the system bars (DESIGN.md 8.2; Android 15 enforces it anyway).
+  unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
   await DiagnosticsService.instance.init();
   await SettingsStore.instance.load();
 
@@ -58,6 +61,13 @@ Future<void> _bootstrap() async {
       onRecordPlay: (id) => libraryRepo.recordPlay(id),
       onDurationKnown: (id, ms) => libraryRepo.updateDurationIfUnknown(id, ms),
     ),
+    // The same session carries local music and, while it plays, the Online
+    // tab's YouTube video (MusicAudioHandler.setExternalSource). audio_service
+    // starts the mediaPlayback foreground service (and its wake lock) whenever
+    // the broadcast state turns to playing, whichever source it comes from, so
+    // YouTube audio keeps the process alive with the screen off. It stays in
+    // the foreground while paused (androidStopForegroundOnPause: false) and
+    // stops once the state goes idle.
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.mediahub.app.audio',
       androidNotificationChannelName: 'MediaHub Playback',

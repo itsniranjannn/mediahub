@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
+import '../../shared/widgets/ui_kit.dart';
+import 'music_audio_handler.dart';
 import 'now_playing_sheet.dart';
 import 'playback_notifier.dart';
 
@@ -13,7 +16,11 @@ const double _kCardRadius = 20;
 const double _kArtworkSize = 44;
 
 class MiniPlayer extends ConsumerStatefulWidget {
-  const MiniPlayer({super.key});
+  const MiniPlayer({super.key, this.hideExternal = false});
+
+  /// True on the Online tab: the YouTube page is on screen, so the card for
+  /// it (and the paused local track under it) is not shown.
+  final bool hideExternal;
 
   @visibleForTesting
   static bool isNowPlayingOpen = false;
@@ -125,6 +132,14 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
 
   @override
   Widget build(BuildContext context) {
+    // While the Online tab's YouTube page owns the media session, the card
+    // shows (and controls) it instead of the paused local track.
+    final external = ref.watch(externalMediaProvider);
+    if (external != null) {
+      if (widget.hideExternal) return const SizedBox.shrink();
+      return _ExternalMiniPlayer(media: external);
+    }
+
     final currentItem = ref.watch(currentMediaItemProvider);
     final isPlaying = ref.watch(isPlayingProvider);
     final notifier = ref.read(playbackNotifierProvider.notifier);
@@ -315,6 +330,138 @@ class _MiniProgressLine extends ConsumerWidget {
         backgroundColor: AppColors.textPrimary.withValues(alpha: 0.12),
         valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
       ),
+    );
+  }
+}
+
+/// The mini player while YouTube (the Online tab) owns the media session:
+/// thumbnail, title, channel with a "YOUTUBE" tag, play/pause and, when the
+/// page has one, next. Tapping the card opens the Online tab. The buttons go
+/// through the audio handler, which routes them to the page (exactly what the
+/// notification does).
+class _ExternalMiniPlayer extends ConsumerWidget {
+  const _ExternalMiniPlayer({required this.media});
+
+  final ExternalMediaSnapshot media;
+
+  void _openOnline(BuildContext context) {
+    GoRouter.maybeOf(context)?.go('/online');
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final channel = media.artist;
+    final art = media.artUri;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.sm8, AppSpacing.sm8, AppSpacing.sm8, AppSpacing.xs4),
+      child: Semantics(
+        container: true,
+        button: true,
+        label: 'Mini player: YouTube: ${media.title}${channel == null ? '' : ' by $channel'}',
+        hint: 'Opens Online',
+        onTap: () => _openOnline(context),
+        child: GestureDetector(
+          key: const ValueKey('mini_player_external'),
+          behavior: HitTestBehavior.opaque,
+          excludeFromSemantics: true,
+          onTap: () => _openOnline(context),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.surfaceElevated,
+              borderRadius: BorderRadius.circular(_kCardRadius),
+              border: Border.all(color: AppColors.divider),
+            ),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.sm8, AppSpacing.sm8, AppSpacing.xs4, AppSpacing.sm8),
+            child: Row(
+              children: [
+                ExcludeSemantics(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(AppSpacing.sm8),
+                    child: SizedBox(
+                      width: _kArtworkSize,
+                      height: _kArtworkSize,
+                      child: art == null
+                          ? const _ExternalArtFallback()
+                          : Image.network(
+                              art.toString(),
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stack) => const _ExternalArtFallback(),
+                            ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md12),
+                Expanded(
+                  child: ExcludeSemantics(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          media.title,
+                          style: AppTypography.bodyStrong,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Row(
+                          children: [
+                            const PillTag(text: 'YOUTUBE', color: AppColors.accent),
+                            if (channel != null) ...[
+                              const SizedBox(width: AppSpacing.xs4 + 2),
+                              Expanded(
+                                child: Text(
+                                  channel,
+                                  style: AppTypography.metadata,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.xs4),
+                IconButton.filled(
+                  icon: Icon(media.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 26),
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: AppColors.onPrimary,
+                    fixedSize: const Size.square(40),
+                    shape: const CircleBorder(),
+                  ),
+                  tooltip: media.playing ? 'Pause' : 'Play',
+                  onPressed: () {
+                    final handler = ref.read(audioHandlerProvider);
+                    media.playing ? handler.pause() : handler.play();
+                  },
+                ),
+                if (media.canSkipNext)
+                  IconButton(
+                    icon: const Icon(Icons.skip_next_rounded, size: 26),
+                    color: AppColors.textPrimary,
+                    tooltip: 'Next',
+                    onPressed: () => ref.read(audioHandlerProvider).skipToNext(),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ExternalArtFallback extends StatelessWidget {
+  const _ExternalArtFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ColoredBox(
+      color: AppColors.surfacePressed,
+      child: Center(child: Icon(Icons.smart_display_rounded, color: AppColors.textSecondary)),
     );
   }
 }

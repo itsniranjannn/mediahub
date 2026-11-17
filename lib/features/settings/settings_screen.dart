@@ -11,6 +11,9 @@ import '../../personal/extractor_backend.dart';
 import '../../personal/personal_tools_notifier.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../library/library_notifier.dart';
+import '../online/online_screen.dart' show confirmClearYouTubeData;
+import '../online/online_settings.dart';
+import '../online/online_web_view.dart' show onlineDataClearerProvider;
 import 'settings_notifier.dart';
 
 const String _appVersion = '1.0.0';
@@ -101,6 +104,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const _Header(),
             const SizedBox(height: AppSpacing.xxl24),
             const _PlaybackCard(),
+            const SizedBox(height: _cardGap),
+            const _OnlineCard(),
             if (showPersonalTools) ...const [
               SizedBox(height: _cardGap),
               _PersonalToolsCard(),
@@ -128,7 +133,7 @@ class _Header extends StatelessWidget {
         children: [
           Semantics(header: true, child: Text('Settings', style: AppTypography.display)),
           const SizedBox(height: AppSpacing.xs4),
-          Text('Playback, downloads and your privacy.', style: AppTypography.metadata),
+          Text('Playback, YouTube, downloads and your privacy.', style: AppTypography.metadata),
         ],
       ),
     );
@@ -160,6 +165,60 @@ class _PlaybackCard extends ConsumerWidget {
           subtitle: 'Picks up where you left off if they reconnect within 10 minutes of being disconnected.',
           value: resumeOnReconnect,
           onChanged: (_) => resumeNotifier.toggle(),
+        ),
+      ],
+    );
+  }
+}
+
+/// Settings → Online: the YouTube tab's background play, auto picture-in-picture
+/// and a way to forget its cookies and cache.
+class _OnlineCard extends ConsumerWidget {
+  const _OnlineCard();
+
+  Future<void> _clearData(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await confirmClearYouTubeData(context);
+    if (!ok) return;
+    await ref.read(onlineDataClearerProvider)();
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('YouTube data cleared')));
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final background = ref.watch(onlineBackgroundPlayProvider);
+    final autoPip = ref.watch(onlineAutoPipProvider);
+
+    return _SettingsCard(
+      children: [
+        const _CardHeading(
+          icon: Icons.smart_display_outlined,
+          title: 'Online',
+          subtitle: 'YouTube in the Online tab.',
+        ),
+        const _CardDivider.underHeading(),
+        _SwitchRow(
+          title: 'Background play',
+          subtitle: 'Keeps the sound going with the screen off or while you use another app.',
+          value: background,
+          onChanged: (v) => ref.read(onlineBackgroundPlayProvider.notifier).set(v),
+        ),
+        const _CardDivider.betweenRows(hasLeadingIcon: false),
+        _SwitchRow(
+          title: 'Auto picture-in-picture',
+          subtitle: 'Shows the video in a small window when you leave the app while it plays.',
+          value: autoPip,
+          onChanged: (v) => ref.read(onlineAutoPipProvider.notifier).set(v),
+        ),
+        const _CardDivider.betweenRows(hasLeadingIcon: false),
+        _NavRow(
+          icon: Icons.delete_sweep_outlined,
+          title: 'Clear YouTube data',
+          subtitle: "Signs you out and forgets YouTube's cookies and cache on this phone.",
+          trailingIcon: Icons.chevron_right_rounded,
+          onTap: () => _clearData(context, ref),
         ),
       ],
     );
@@ -290,7 +349,7 @@ class _PrivacyCard extends ConsumerWidget {
         const _InfoRow(
           icon: Icons.public_rounded,
           title: 'The internet',
-          body: 'Only for searches, streaming and downloads you start yourself.',
+          body: 'Only for YouTube in the Online tab, streaming and downloads you start yourself.',
         ),
         // iOS never asks for notification permission; its lock-screen
         // controls are not notifications.

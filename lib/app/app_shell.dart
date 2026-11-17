@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import '../core/platform/device_controls.dart';
 import '../core/platform_info.dart';
 import '../features/music_player/mini_player.dart';
 import '../shared/widgets/ui_kit.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_spacing.dart';
+import 'theme/app_theme.dart';
 import 'theme/app_typography.dart';
 import 'theme/motion_tokens.dart';
 
@@ -16,6 +18,9 @@ class AppShell extends StatelessWidget {
     super.key,
     required this.navigationShell,
   });
+
+  /// Branch index of the Online (YouTube) tab.
+  static const int onlineBranchIndex = 3;
 
   void _onTap(int index) {
     if (index != navigationShell.currentIndex) HapticFeedback.selectionClick();
@@ -37,21 +42,43 @@ class AppShell extends StatelessWidget {
           _onTap(0);
         }
       },
-      child: Scaffold(
-        body: navigationShell,
-        bottomNavigationBar: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Persistent mini-player above the bottom nav
-            const MiniPlayer(
-              key: ValueKey('mini_player_slot'),
-            ),
-            _CustomBottomNavBar(
-              currentIndex: navigationShell.currentIndex,
-              onTap: _onTap,
-            ),
-          ],
+      // In picture-in-picture the small window shows only the page's video:
+      // no mini player and no navigation bar (they come back on exit).
+      child: ValueListenableBuilder<bool>(
+        valueListenable: DeviceControls.inPip,
+        builder: (context, inPip, body) => Scaffold(
+          body: body,
+          // The mini player and the nav are ink in both themes (DESIGN.md
+          // 7.7): they still paint the dark AppColors, and the dark theme
+          // gives them the matching glass, so they read the same on a phone
+          // in light mode. The bar style keeps the Android navigation bar's
+          // icons light over them.
+          bottomNavigationBar: inPip
+              ? null
+              : Theme(
+                  data: AppTheme.darkTheme,
+                  child: AnnotatedRegion<SystemUiOverlayStyle>(
+                    value: AppTheme.barsOnInk,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Persistent mini-player above the bottom nav. On the Online
+                        // tab a playing YouTube video is right there, so it is not
+                        // repeated in the mini player.
+                        MiniPlayer(
+                          key: const ValueKey('mini_player_slot'),
+                          hideExternal: navigationShell.currentIndex == onlineBranchIndex,
+                        ),
+                        _CustomBottomNavBar(
+                          currentIndex: navigationShell.currentIndex,
+                          onTap: _onTap,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
         ),
+        child: navigationShell,
       ),
     );
   }
@@ -87,9 +114,9 @@ List<_NavItemData> get _navItems {
       inactiveIcon: Icons.video_library_outlined,
     ),
     const _NavItemData(
-      label: 'Explore',
-      activeIcon: Icons.travel_explore_rounded,
-      inactiveIcon: Icons.travel_explore_outlined,
+      label: 'Online',
+      activeIcon: Icons.smart_display_rounded,
+      inactiveIcon: Icons.smart_display_outlined,
     ),
     if (PlatformInfo.supportsDownloads)
       const _NavItemData(

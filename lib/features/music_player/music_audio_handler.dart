@@ -10,7 +10,91 @@ import '../../core/utils/play_count_tracker.dart';
 import '../../domain/models/media_item.dart' as domain;
 import '../../domain/models/playback_state.dart' as domain;
 
-class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
+/// What an external player (the Online tab's YouTube page) shows in the media
+/// notification, on the lock screen and on Bluetooth displays.
+@immutable
+class ExternalMediaSnapshot {
+  const ExternalMediaSnapshot({
+    required this.id,
+    required this.title,
+    this.artist,
+    this.artUri,
+    required this.playing,
+    this.buffering = false,
+    this.position = Duration.zero,
+    this.duration,
+    this.speed = 1.0,
+    this.canSkipNext = false,
+  });
+
+  /// Stable id of what is playing (e.g. `online:<videoId>`).
+  final String id;
+  final String title;
+
+  /// Channel name.
+  final String? artist;
+
+  /// https thumbnail.
+  final Uri? artUri;
+  final bool playing;
+  final bool buffering;
+  final Duration position;
+
+  /// Null for live streams.
+  final Duration? duration;
+  final double speed;
+
+  /// The source has a "next" (shows the Next control).
+  final bool canSkipNext;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ExternalMediaSnapshot &&
+      other.id == id &&
+      other.title == title &&
+      other.artist == artist &&
+      other.artUri == artUri &&
+      other.playing == playing &&
+      other.buffering == buffering &&
+      other.position == position &&
+      other.duration == duration &&
+      other.speed == speed &&
+      other.canSkipNext == canSkipNext;
+
+  @override
+  int get hashCode =>
+      Object.hash(id, title, artist, artUri, playing, buffering, position, duration, speed, canSkipNext);
+}
+
+/// Receives the notification / lock screen / headset commands while it is the
+/// handler's external source.
+abstract class ExternalPlaybackDelegate {
+  Future<void> externalPlay();
+  Future<void> externalPause();
+  Future<void> externalSeek(Duration position);
+  Future<void> externalSkipToNext();
+  Future<void> externalSkipToPrevious();
+
+  /// The handler went back to local music (local playback started or the
+  /// source was replaced). The delegate should stop claiming the session
+  /// until its media plays again.
+  void onExternalSourceReleased();
+}
+
+/// The part of [MusicAudioHandler] an external source talks to.
+abstract class ExternalPlaybackHost {
+  /// Makes [delegate] the source of the media session: local music pauses,
+  /// the notification shows [snapshot] and routes its buttons to [delegate].
+  void setExternalSource(ExternalPlaybackDelegate delegate, ExternalMediaSnapshot snapshot);
+
+  /// New state of the active external source (ignored for any other delegate).
+  void updateExternalMedia(ExternalPlaybackDelegate delegate, ExternalMediaSnapshot snapshot);
+
+  /// Hands the session back to local music (no-op unless [delegate] is active).
+  void clearExternalSource(ExternalPlaybackDelegate delegate);
+}
+
+class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler implements ExternalPlaybackHost {
   final AudioPlayer _player;
   final Future<void> Function(String mediaId)? onRecordPlay;
 
@@ -158,6 +242,21 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   final _domainStateController = StreamController<domain.PlaybackState>.broadcast();
   Stream<domain.PlaybackState> get domainStateStream => _domainStateController.stream;
 
+  // --- external source (the Online tab's YouTube page) ----------------------
+  ExternalPlaybackDelegate? _external;
+  ExternalMediaSnapshot? _externalMedia;
+  MediaItem? _externalItem;
+  final _externalController = StreamController<ExternalMediaSnapshot?>.broadcast();
+
+  /// True while an external source owns the media session.
+  bool get isExternalActive => _external != null;
+
+  /// What the external source last reported (null in local mode).
+  ExternalMediaSnapshot? get externalMedia => _externalMedia;
+
+  /// Emits on every external change, and null when the handler is back to local music.
+  Stream<ExternalMediaSnapshot?> get externalMediaStream => _externalController.stream;
+
   MusicAudioHandler({
     AudioPlayer? player,
     this.onRecordPlay,
@@ -188,7 +287,16 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
         DiagnosticsService.instance.logEvent('audio_focus_change', {
           'begin': event.begin,
           'type': event.type.toString(),
+          if (_external != null) 'ignored': 'external_source',
         });
+        // The WebView asks for (and reacts to) audio focus on its own. Its own
+        // request is what takes focus away from this session when a YouTube
+        // video starts, so routing these events to the page would pause the
+        // video it just started. Local music is already paused in this mode.
+        if (_external != null) {
+          _resumeOnFocusGain = false;
+          return;
+        }
 
         if (event.begin) {
           switch (event.type) {
@@ -236,7 +344,8 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
           'devicesRemoved': event.devicesRemoved.length,
         });
 
-        if (_resumeOnHeadphonesReconnect && event.devicesAdded.any(_isPersonalAudioOutput)) {
+        // Local music only: a YouTube page is resumed from the page or the notification.
+        if (_external == null && _resumeOnHeadphonesReconnect && event.devicesAdded.any(_isPersonalAudioOutput)) {
           final now = DateTime.now();
           if (_lastNoisyPauseTimestamp != null && !_userInteractedSinceNoisy) {
             final diff = now.difference(_lastNoisyPauseTimestamp!);
@@ -344,15 +453,18 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _errorController.add('Playback error on "$trackName"');
     _consecutiveErrorSkips++;
     if (_consecutiveErrorSkips < _domainQueue.length && _domainQueue.length > 1) {
-      skipToNext();
+      _skipToNextLocalImpl();
     } else {
       _consecutiveErrorSkips = 0;
-      pause(reason: 'error_loop_guard');
+      _pauseLocalImpl(reason: 'error_loop_guard');
       _errorController.add('Playback stopped: consecutive playback errors reached queue limit');
     }
   }
 
   void _broadcastAudioServiceState() {
+    // While an external source owns the session, local player events (the
+    // pause that handed over, buffering, ...) must not overwrite its state.
+    if (_external != null) return;
     final playing = _player.playing;
     final processingState = const {
       ProcessingState.idle: AudioProcessingState.idle,
@@ -527,6 +639,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   }
 
   void _syncCurrentAudioServiceMediaItem() {
+    if (_external != null) return; // the external source's item stays on show
     final currIdx = _player.currentIndex ?? -1;
     if (currIdx >= 0 && currIdx < _domainQueue.length) {
       final item = _domainQueue[currIdx];
@@ -553,16 +666,18 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   }) async {
     _userInteractedSinceNoisy = true;
     if (items.isEmpty) {
-      await stop(reason: 'empty_queue_load');
+      await _stopLocalImpl(reason: 'empty_queue_load');
       _originalQueue = [];
       _playOrderQueue = [];
       _shuffleEnabled = false;
       _syncAudioServiceQueue();
-      mediaItem.add(null);
+      if (_external == null) mediaItem.add(null);
       _broadcastAudioServiceState();
       _notifyDomainState();
       return;
     }
+    // Starting local music hands the session back from YouTube (which pauses).
+    if (autoPlay) _releaseExternal(reason: 'local_queue');
 
     _originalQueue = List.from(items);
     _shuffleEnabled = shuffle;
@@ -613,8 +728,187 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return 'in_app';
   }
 
+  // --- external source -----------------------------------------------------
+
   @override
-  Future<void> play({String? caller}) async {
+  void setExternalSource(ExternalPlaybackDelegate delegate, ExternalMediaSnapshot snapshot) {
+    final previous = _external;
+    if (previous != null && !identical(previous, delegate)) {
+      _safeDelegateCall(previous.onExternalSourceReleased);
+    }
+    _external = delegate;
+    if (previous == null) {
+      DiagnosticsService.instance.logEvent('external_source_start');
+      // Local music pauses (it stays queued and resumes from its own controls).
+      _wantPlaying = false;
+      _resumeOnFocusGain = false;
+      _debounceSkipPlayTimer?.cancel();
+      if (_player.playing) {
+        _player.pause().catchError((Object e) {
+          debugPrint('[MusicAudioHandler] pause for external source failed: $e');
+        });
+      }
+      _notifyDomainState();
+    }
+    _externalItem = null; // force the notification item out once for the new source
+    _applyExternal(snapshot, force: true);
+  }
+
+  @override
+  void updateExternalMedia(ExternalPlaybackDelegate delegate, ExternalMediaSnapshot snapshot) {
+    if (!identical(_external, delegate)) return;
+    _applyExternal(snapshot);
+  }
+
+  @override
+  void clearExternalSource(ExternalPlaybackDelegate delegate) {
+    if (!identical(_external, delegate)) return;
+    _leaveExternal();
+  }
+
+  /// Local playback is starting: YouTube pauses and the session returns to local music.
+  void _releaseExternal({required String reason}) {
+    final d = _external;
+    if (d == null) return;
+    DiagnosticsService.instance.logEvent('external_source_released', {'reason': reason});
+    _leaveExternal();
+    _safeDelegateCall(d.externalPause);
+    _safeDelegateCall(d.onExternalSourceReleased);
+  }
+
+  void _leaveExternal() {
+    if (_external == null) return;
+    _external = null;
+    _externalMedia = null;
+    _externalItem = null;
+    _externalController.add(null);
+    DiagnosticsService.instance.logEvent('external_source_end');
+    // Back to the local queue (paused), or to nothing (idle: the service stops).
+    _syncCurrentAudioServiceMediaItem();
+    _broadcastAudioServiceState();
+  }
+
+  void _safeDelegateCall(Object? Function() call) {
+    try {
+      final r = call();
+      if (r is Future) {
+        r.catchError((Object e) {
+          debugPrint('[MusicAudioHandler] external source call failed: $e');
+        });
+      }
+    } catch (e) {
+      debugPrint('[MusicAudioHandler] external source call failed: $e');
+    }
+  }
+
+  void _applyExternal(ExternalMediaSnapshot s, {bool force = false}) {
+    final previous = _externalMedia;
+    _externalMedia = s;
+
+    final item = MediaItem(
+      id: s.id,
+      title: s.title.isEmpty ? 'YouTube' : s.title,
+      artist: (s.artist == null || s.artist!.isEmpty) ? null : s.artist,
+      album: 'YouTube',
+      duration: s.duration,
+      artUri: s.artUri,
+    );
+    // The notification reloads metadata (and its artwork) on every item, so
+    // only send it when something visible changed, not on every tick.
+    final last = _externalItem;
+    if (force ||
+        last == null ||
+        last.id != item.id ||
+        last.title != item.title ||
+        last.artist != item.artist ||
+        last.artUri != item.artUri ||
+        last.duration != item.duration) {
+      _externalItem = item;
+      mediaItem.add(item);
+    }
+
+    if (force || previous == null || _externalStateChanged(previous, s)) {
+      final controls = [
+        MediaControl.skipToPrevious,
+        if (s.playing) MediaControl.pause else MediaControl.play,
+        if (s.canSkipNext) MediaControl.skipToNext,
+      ];
+      playbackState.add(PlaybackState(
+        controls: controls,
+        systemActions: {
+          MediaAction.seek,
+          MediaAction.seekForward,
+          MediaAction.seekBackward,
+          MediaAction.skipToPrevious,
+          if (s.canSkipNext) MediaAction.skipToNext,
+        },
+        // Same compact layout as local music: previous, play/pause, next.
+        androidCompactActionIndices: List<int>.generate(controls.length, (i) => i),
+        processingState: s.buffering ? AudioProcessingState.buffering : AudioProcessingState.ready,
+        playing: s.playing,
+        updatePosition: s.position,
+        bufferedPosition: s.position,
+        speed: s.speed,
+        repeatMode: AudioServiceRepeatMode.none,
+        shuffleMode: AudioServiceShuffleMode.none,
+      ));
+    }
+    _externalController.add(s);
+  }
+
+  /// True when the system's own extrapolation (position + speed x elapsed)
+  /// would show something wrong: play state, controls, speed, length, or a jump.
+  static bool _externalStateChanged(ExternalMediaSnapshot a, ExternalMediaSnapshot b) {
+    if (a.playing != b.playing ||
+        a.buffering != b.buffering ||
+        a.canSkipNext != b.canSkipNext ||
+        a.speed != b.speed ||
+        a.duration != b.duration ||
+        a.id != b.id) {
+      return true;
+    }
+    // Ticks arrive about once a second; anything else is a seek.
+    final drift = (b.position - a.position).inMilliseconds.abs();
+    return drift > 2500 || (!b.playing && drift > 0);
+  }
+
+  // --- transport: system entry points route to the external source -------
+
+  /// In-app "play" for the local queue (Music, Now Playing, local mini player).
+  Future<void> playLocal() {
+    _releaseExternal(reason: 'local_play');
+    return _playLocalImpl(caller: 'in_app');
+  }
+
+  /// In-app "pause" for the local queue.
+  Future<void> pauseLocal() => _pauseLocalImpl();
+
+  /// In-app seek in the local track.
+  Future<void> seekLocal(Duration position) => _seekLocalImpl(position);
+
+  /// In-app "next" for the local queue (starts local playback).
+  Future<void> skipToNextLocal() {
+    _releaseExternal(reason: 'local_next');
+    return _skipToNextLocalImpl();
+  }
+
+  /// In-app "previous" for the local queue (starts local playback).
+  Future<void> skipToPreviousLocal() {
+    _releaseExternal(reason: 'local_previous');
+    return _skipToPreviousLocalImpl();
+  }
+
+  @override
+  Future<void> play({String? caller}) {
+    final ext = _external;
+    if (ext != null) {
+      DiagnosticsService.instance.logEvent('play', {'caller': caller ?? 'system', 'target': 'external'});
+      return ext.externalPlay();
+    }
+    return _playLocalImpl(caller: caller);
+  }
+
+  Future<void> _playLocalImpl({String? caller}) async {
     _userInteractedSinceNoisy = true;
     _wantPlaying = true;
     final callSource = caller ?? _formatCaller();
@@ -631,7 +925,16 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   }
 
   @override
-  Future<void> pause({String? reason}) async {
+  Future<void> pause({String? reason}) {
+    final ext = _external;
+    if (ext != null) {
+      DiagnosticsService.instance.logEvent('pause', {'reason': reason ?? 'user', 'target': 'external'});
+      return ext.externalPause();
+    }
+    return _pauseLocalImpl(reason: reason);
+  }
+
+  Future<void> _pauseLocalImpl({String? reason}) async {
     _wantPlaying = false;
     final stopReason = reason ?? 'user';
     DiagnosticsService.instance.logEvent('pause', {'reason': stopReason});
@@ -642,6 +945,18 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   @override
   Future<void> stop({String? reason}) async {
+    final ext = _external;
+    if (ext != null) {
+      // Stop from the notification: YouTube pauses and the session ends.
+      DiagnosticsService.instance.logEvent('stop', {'reason': reason ?? 'user', 'target': 'external'});
+      _leaveExternal();
+      _safeDelegateCall(ext.externalPause);
+      _safeDelegateCall(ext.onExternalSourceReleased);
+    }
+    await _stopLocalImpl(reason: reason);
+  }
+
+  Future<void> _stopLocalImpl({String? reason}) async {
     _wantPlaying = false;
     final stopReason = reason ?? 'user';
     DiagnosticsService.instance.logEvent('stop', {'reason': stopReason});
@@ -652,7 +967,13 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   }
 
   @override
-  Future<void> seek(Duration position) async {
+  Future<void> seek(Duration position) {
+    final ext = _external;
+    if (ext != null) return ext.externalSeek(position);
+    return _seekLocalImpl(position);
+  }
+
+  Future<void> _seekLocalImpl(Duration position) async {
     _userInteractedSinceNoisy = true;
     DiagnosticsService.instance.logEvent('seek');
     debugPrint('[MusicAudioHandler] seek($position) called by: ${_formatCaller()}');
@@ -805,6 +1126,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   @override
   Future<void> customAction(String name, [Map<String, dynamic>? extras]) async {
+    if (_external != null) return; // shuffle / repeat are not shown for YouTube
     if (name == actionToggleShuffle) {
       toggleShuffle();
     } else if (name == actionCycleRepeat) {
@@ -822,7 +1144,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       DiagnosticsService.instance.logEvent('player_error', {'source': 'skip_to_queue_item'});
       final item = _domainQueue[index];
       _errorController.add('Unable to play "${item.title}": file missing or unsupported');
-      await skipToNext();
+      await _skipToNextLocalImpl();
       return;
     }
     _syncCurrentAudioServiceMediaItem();
@@ -847,6 +1169,12 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   @override
   Future<void> skipToNext() {
+    final ext = _external;
+    if (ext != null) return ext.externalSkipToNext();
+    return _skipToNextLocalImpl();
+  }
+
+  Future<void> _skipToNextLocalImpl() {
     _userInteractedSinceNoisy = true;
     _wantPlaying = true; // Match Spotify: skipping starts playing
     _pendingSkips++;
@@ -932,6 +1260,12 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   @override
   Future<void> skipToPrevious() {
+    final ext = _external;
+    if (ext != null) return ext.externalSkipToPrevious();
+    return _skipToPreviousLocalImpl();
+  }
+
+  Future<void> _skipToPreviousLocalImpl() {
     _userInteractedSinceNoisy = true;
     _wantPlaying = true; // Match Spotify: skipping starts playing
     _pendingSkips++;
@@ -951,7 +1285,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
         });
 
         if (_player.position > const Duration(seconds: 3)) {
-          await seek(Duration.zero);
+          await _seekLocalImpl(Duration.zero);
           return;
         }
 
@@ -963,7 +1297,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
             final lastIdx = _domainQueue.length - 1;
             await _player.seek(Duration.zero, index: lastIdx);
           } else {
-            await seek(Duration.zero);
+            await _seekLocalImpl(Duration.zero);
           }
         }
 
@@ -990,11 +1324,11 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   void _handlePlaybackCompleted() async {
     if (_repeatMode == domain.PlaybackRepeatMode.one) {
-      await seek(Duration.zero);
+      await _seekLocalImpl(Duration.zero);
       _wantPlaying = true;
       _safeStartPlayerPlay('repeat_one_completed');
     } else if (_player.hasNext) {
-      await skipToNext();
+      await _skipToNextLocalImpl();
     } else if (_repeatMode == domain.PlaybackRepeatMode.all) {
       await _player.seek(Duration.zero, index: 0);
       _wantPlaying = true;
@@ -1087,7 +1421,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       if (_domainQueue.isEmpty) {
         await _player.stop();
         _playlistSource = null;
-        mediaItem.add(null);
+        if (_external == null) mediaItem.add(null);
       } else {
         if (_playlistSource != null && _playlistSource!.length > index) {
           await _playlistSource!.removeAt(index);
@@ -1161,8 +1495,10 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   Future<void> dispose() async {
     DiagnosticsService.instance.logEvent('service_stop');
+    _external = null;
     await _player.dispose();
     await _errorController.close();
     await _domainStateController.close();
+    await _externalController.close();
   }
 }
