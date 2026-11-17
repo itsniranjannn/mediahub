@@ -6,6 +6,7 @@
 #   emulator  same app id, debug, x86_64, Explore demo data (--dart-define=MEDIAHUB_DEMO=true)
 #   family    real app id com.mediahub.app, RELEASE, arm64, signed with the family key
 #   relx64    side-by-side id, RELEASE, x86_64 (R8 smoke test on the emulator)
+#   testrel   side-by-side id, RELEASE, arm64 (real-speed test build for the phone)
 #
 # Env:
 #   BUILD_COPY        scratch copy location (default: $HOME/.mediahub/build-copy)
@@ -21,8 +22,8 @@ SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 A="${BUILD_COPY:-$HOME/.mediahub/build-copy}"
 if [ -n "${FLUTTER_BIN:-}" ]; then export PATH="$FLUTTER_BIN:$PATH"; fi
 
-case "$MODE" in test|emulator|family|relx64) ;; *) echo "unknown mode: $MODE"; exit 2 ;; esac
-if [ "$MODE" = family ] || [ "$MODE" = relx64 ]; then
+case "$MODE" in test|emulator|family|relx64|testrel) ;; *) echo "unknown mode: $MODE"; exit 2 ;; esac
+if [ "$MODE" = family ] || [ "$MODE" = relx64 ] || [ "$MODE" = testrel ]; then
   [ -f "$SRC/android/key.properties" ] || { echo "Release modes need android/key.properties (see docs/ROADMAP.md)."; exit 1; }
 fi
 
@@ -57,6 +58,7 @@ case "$MODE" in
   emulator) flutter build apk --debug --target-platform android-x64 --dart-define=MEDIAHUB_DEMO=true ;;
   family)   flutter build apk --release --target-platform android-arm64 ;;
   relx64)   flutter build apk --release --target-platform android-x64 ;;
+  testrel)  flutter build apk --release --target-platform android-arm64 ;;
 esac
 ls -la build/app/outputs/flutter-apk/ | tail -3
 echo "APKs are in $A/build/app/outputs/flutter-apk/"

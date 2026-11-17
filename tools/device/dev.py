@@ -37,6 +37,8 @@ PKG = os.environ.get('AUDIT_PKG', 'com.mediahub.app.audit')
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SHOTS = os.environ.get('SHOTS_DIR') or os.path.join(HERE, 'shots')
+if os.name == 'nt' and re.match(r'^/[a-zA-Z]/', SHOTS):  # Git Bash path like /c/Users/... -> C:/Users/...
+    SHOTS = SHOTS[1].upper() + ':' + SHOTS[2:]
 os.makedirs(SHOTS, exist_ok=True)
 
 
@@ -97,9 +99,16 @@ def cmd_shot(name, full=False):
 
 
 def dump_ui():
+    # uiautomator waits for the UI to go idle, so it can hang while a video or animation runs;
+    # a short timeout per try keeps a hang from blocking the whole run.
     last = ''
-    for _ in range(4):
-        out = sh('uiautomator dump /sdcard/_ui.xml')
+    for _ in range(3):
+        try:
+            out = sh('uiautomator dump /sdcard/_ui.xml', timeout=30)
+        except subprocess.TimeoutExpired:
+            sh('pkill -f uiautomator', timeout=10)
+            last = 'timed out (screen never went idle)'
+            continue
         if 'dumped' in out.lower():
             xml = adb('exec-out', 'cat', '/sdcard/_ui.xml', binary=True).decode('utf-8', 'replace')
             if xml.strip().startswith('<'):
@@ -146,6 +155,11 @@ def nodes(show_all=False):
     return res
 
 
+def label(n):
+    """Text and content-desc joined, without a leading space when one is empty (so ^...$ anchors work)."""
+    return ' '.join(x for x in (n['text'], n['desc']) if x)
+
+
 def fmt(i, n):
     flags = ''.join([
         ' click' if n['click'] else '',
@@ -167,7 +181,7 @@ def cmd_ui(rx=None, show_all=False):
     pat = re.compile(rx, re.I) if rx else None
     shown = 0
     for i, n in enumerate(ns):
-        if pat and not pat.search(n['text'] + ' ' + n['desc'] + ' ' + n['rid']):
+        if pat and not pat.search(label(n) + ' ' + n['rid']):
             continue
         print(fmt(i, n))
         shown += 1
@@ -177,7 +191,7 @@ def cmd_ui(rx=None, show_all=False):
 def cmd_tapn(rx, nth=0):
     ns = nodes()
     pat = re.compile(rx, re.I)
-    hits = [n for n in ns if pat.search(n['text'] + ' ' + n['desc'])]
+    hits = [n for n in ns if pat.search(label(n))]
     if len(hits) <= nth:
         print('NO MATCH for /%s/ (nth=%d). Candidates on screen:' % (rx, nth))
         for i, n in enumerate(ns[:60]):

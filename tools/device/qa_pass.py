@@ -77,10 +77,60 @@ def install(apk):
         dev.sh('pm grant %s android.permission.%s' % (PKG, p))
 
 
+def wait_for(rx, timeout=30):
+    """Poll the UI tree until a node matches rx (the emulator can be slow right after boot)."""
+    import re
+    pat = re.compile(rx, re.I)
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if any(pat.search(dev.label(x)) for x in dev.nodes()):
+                return True
+        except BaseException:  # noqa: BLE001  (dump can fail while the app is busy)
+            pass
+        time.sleep(1.5)
+    print('  (timed out waiting for %r)' % rx)
+    return False
+
+
+def dismiss_system_tips():
+    """Close Android's own one-time tips (e.g. "Viewing full screen ... Got it") that steal focus."""
+    try:
+        for x in dev.nodes():
+            if x['pkg'] == 'android' and x['text'] in ('Got it', 'GOT IT', 'OK'):
+                dev.sh('input tap %d %d' % (x['cx'], x['cy']))
+                print('  dismissed system tip')
+                time.sleep(1)
+                return
+    except BaseException:  # noqa: BLE001
+        pass
+
+
+def tap_field(nth=0):
+    """Tap the nth text field of the app (EditText nodes have no label when empty)."""
+    try:
+        fields = [x for x in dev.nodes() if x['cls'] == 'EditText' and x['pkg'] == PKG]
+        if len(fields) > nth:
+            dev.sh('input tap %d %d' % (fields[nth]['cx'], fields[nth]['cy']))
+            return True
+    except BaseException:  # noqa: BLE001
+        pass
+    print('  (no text field)')
+    return False
+
+
+def hide_keyboard():
+    """BACK only while the keyboard is up, otherwise BACK would leave the screen."""
+    if 'mInputShown=true' in dev.sh('dumpsys input_method'):
+        key('BACK')
+        wait(0.8)
+
+
 def launch():
     dev.sh('am force-stop ' + PKG)
     dev.sh('monkey -p %s -c android.intent.category.LAUNCHER 1' % PKG)
-    wait(6)
+    wait_for('Home Tab', 40)
+    wait(1.5)
 
 
 STEPS = {}
@@ -109,33 +159,36 @@ def music():
     shot('music_songs')
     nodes('Albums|Artists|Playlists|Folders|Songs')
     for t in ['Albums', 'Artists', 'Playlists']:
-        if tap('^' + t + '$'):
+        if tap('^ ?' + t + '( / Tab|$)'):
             wait(1.2)
             shot('music_' + t.lower())
-    tap('^Songs$')
+    tap('^ ?Songs( / Tab|$)')
     wait(1)
 
 
 @step
 def player():
     # play the first song row, then open Now Playing from the mini player
-    tap('Audit Tone A4|Audit_Tone_A4', required=False) or tap('Tone', required=False)
+    # labels: song rows are "Song: <title> by <artist>"; the mini player is "Mini player: <title>"
+    tap('Song: Audit.Tone.A4', required=False) or tap('Song: ', required=False)
     wait(2.5)
     shot('mini_player')
-    tap('Now playing|Open player|mini player', required=False) or dev.sh('input tap 400 2020')
+    tap('Mini player', required=False) or dev.sh('input tap 400 2070')
     wait(2)
     shot('now_playing')
-    tap('Add to favou?rites|Favou?rite', required=False)
+    nodes('favou?rite')
+    # anchored so the big Now Playing body node (whose label also mentions favourites) is skipped
+    tap('(^| )(Add to|Remove from) favou?rites$', required=False)
     wait(1.0)
     shot('now_playing_fav')
     wait(4.5)
     shot('now_playing_fav_after_snack')
-    tap('Shuffle', required=False)
+    tap('(^| )Shuffle (enabled|disabled|on|off)', required=False)
     wait(0.8)
-    tap('Repeat', required=False)
+    tap('(^| )Repeat mode', required=False)
     wait(0.8)
     shot('now_playing_shuffle_repeat')
-    tap('Queue|Up next', required=False)
+    tap('View Queue|Up next', required=False)
     wait(1.5)
     shot('queue')
     key('BACK')
@@ -149,7 +202,7 @@ def videos():
     tap('Videos Tab', required=False)
     wait(2.5)
     shot('videos')
-    tap('Mountain Sunrise', required=False)
+    tap('Timelapse|Mountain Sunrise|Family Trip|Street Food', required=False)
     wait(4)
     shot('video_player')
     dev.sh('input tap 540 600')
@@ -157,6 +210,7 @@ def videos():
     shot('video_controls')
     tap('Rotate|Landscape|Full ?screen', required=False)
     wait(3)
+    dismiss_system_tips()
     shot('video_landscape')
     # right side vertical swipe = volume, left = brightness, horizontal = seek
     swipe(1900, 700, 1900, 300, 500)
@@ -171,8 +225,14 @@ def videos():
     wait(0.3)
     shot('video_seek_hud')
     wait(1)
+    dismiss_system_tips()
+    dev.sh('input tap 1200 540')  # show the controls again
+    wait(0.8)
     tap('Rotate|Portrait', required=False)
     wait(2.5)
+    dismiss_system_tips()
+    dev.sh('input tap 540 600')
+    wait(0.8)
     tap('Picture.in.picture|PiP', required=False)
     wait(3)
     shot('video_pip')
@@ -184,17 +244,18 @@ def videos():
 
 @step
 def explore():
+    dismiss_system_tips()
     tap('Explore Tab', required=False)
     wait(2)
     shot('explore_empty')
-    tap('Search YouTube|Search', required=False)
+    tap_field()
     wait(0.8)
     dev.sh("input text 'lofi%sbeats'")
     key('ENTER')
     wait(0.3)
     shot('explore_loading')
     wait(2)
-    key('BACK')  # hide keyboard
+    hide_keyboard()
     wait(1)
     shot('explore_results')
     swipe(540, 1800, 540, 800)
@@ -207,10 +268,13 @@ def downloads():
     tap('Downloads Tab', required=False)
     wait(2)
     shot('downloads')
-    tap('Add link|Paste link|New download|Download from link|Add', required=False)
-    wait(1.5)
-    shot('downloads_add_sheet')
-    key('BACK')
+    # the link field sits at the top of the screen (no separate add sheet)
+    tap_field()
+    wait(0.8)
+    dev.sh("input text 'https://example.com/clip.mp4'")
+    wait(0.8)
+    shot('downloads_link_typed')
+    hide_keyboard()
     wait(1)
 
 
