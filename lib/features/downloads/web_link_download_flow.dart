@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../app/theme/app_colors.dart';
@@ -16,7 +17,8 @@ import 'download_providers.dart';
 import 'downloads_notifier.dart';
 
 /// "Choose a quality, then download" for web links (YouTube, Instagram ...).
-/// Shared by the Downloads screen and the Explore tab.
+/// Used by the Downloads screen, for pasted links and links sent from the
+/// Online tab.
 class WebLinkDownloadFlow {
   WebLinkDownloadFlow._();
 
@@ -115,6 +117,18 @@ class WebLinkDownloadFlow {
     return 'Could not read this link. Please try again.';
   }
 
+  /// True when a lookup failed because the yt-dlp engine itself could not run
+  /// or could not read the site any more (not because of the link: private,
+  /// live, playlist, offline ...). For a YouTube link the caller can then try
+  /// the downloader that needs no yt-dlp.
+  static bool isEngineUnavailable(Object? e) {
+    if (e is UnsupportedError || e is MissingPluginException) return true;
+    if (e is ExtractorException) {
+      return const {'INIT_FAILED', 'FEATURE_DISABLED', 'EXTRACTION_FAILED', 'EMPTY_METADATA'}.contains(e.code);
+    }
+    return false;
+  }
+
   /// Looks up the available qualities, lets the user pick one and queues it.
   ///
   /// While yt-dlp reads the link a dialog with a Cancel button is shown.
@@ -123,17 +137,74 @@ class WebLinkDownloadFlow {
   /// The lookup also gives up on its own after [infoTimeout]. If another
   /// screen was opened above the dialog meanwhile, the dialog is removed and
   /// the result is dropped (no sheet, no message).
+  ///
+  /// When the lookup fails because yt-dlp cannot run ([isEngineUnavailable])
+  /// and [onEngineUnavailable] is given, that is called instead of showing
+  /// the error (the Downloads screen then uses the YouTube path without yt-dlp).
   static Future<void> start(
     BuildContext context,
     WidgetRef ref,
     Uri uri, {
     VoidCallback? onQueued,
     VoidCallback? onNotificationDenied,
+    Future<void> Function()? onEngineUnavailable,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
     final backend = ref.read(extractorBackendProvider);
+
+    final requestId = 'info${DateTime.now().microsecondsSinceEpoch}';
+    // Abandoned lookups must not keep yt-dlp working in the background.
+    void stopLookup() => unawaited(backend.cancelInfo(requestId).catchError((_) {}));
+
+    final outcome = await lookupWithDialog<ExtractorMetadata>(
+      context,
+      uri: uri,
+      timeout: infoTimeout,
+      lookup: () => backend.getInfo(uri.toString(), requestId: requestId),
+      onAbandoned: stopLookup,
+    );
+    if (outcome == null || !context.mounted) return;
+
+    final info = outcome.value;
+    if (info == null) {
+      if (onEngineUnavailable != null && isEngineUnavailable(outcome.error)) {
+        await onEngineUnavailable();
+        return;
+      }
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(outcome.error))));
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => FormatSelectionSheet(
+        metadata: info,
+        onSelect: (choice) => _queue(context, ref, uri, info, choice, onQueued, onNotificationDenied),
+      ),
+    );
+  }
+
+  /// Runs [lookup] while the "Finding available qualities" dialog (with a
+  /// Cancel button) is shown, and closes the dialog when it ends. Shared by
+  /// the yt-dlp flow and the YouTube flow that needs no yt-dlp.
+  ///
+  /// Returns the result or the error (a [TimeoutException] after [timeout]),
+  /// or null when the lookup was abandoned: the user closed the dialog
+  /// (Cancel / back), the dialog was removed, another screen was opened above
+  /// it, or the calling screen went away. A late result or error of an
+  /// abandoned lookup is ignored. [onAbandoned] runs for an abandoned lookup
+  /// and for one that timed out, so the work behind it can be stopped.
+  static Future<LinkLookupOutcome<T>?> lookupWithDialog<T>(
+    BuildContext context, {
+    required Uri uri,
+    required Future<T> Function() lookup,
+    required Duration timeout,
+    VoidCallback? onAbandoned,
+  }) async {
     // Captured up front so the loading dialog is closed even if the calling
-    // screen goes away while yt-dlp is still working.
+    // screen goes away while the lookup is still working.
     final navigator = Navigator.of(context, rootNavigator: true);
 
     // The dialog's future completes when its route is popped. We only pop it
@@ -152,54 +223,37 @@ class WebLinkDownloadFlow {
       },
     ).then((_) {
       dialogClosed = true;
-      return const _InfoLookup.cancelled();
+      return LinkLookupOutcome<T>._cancelled();
     });
 
-    // Future.sync: a backend that throws synchronously is reported like any
+    // Future.sync: a lookup that throws synchronously is reported like any
     // other failure instead of escaping and leaving the dialog up.
-    final requestId = 'info${DateTime.now().microsecondsSinceEpoch}';
-    final lookup = Future<ExtractorMetadata>.sync(() => backend.getInfo(uri.toString(), requestId: requestId))
-        .timeout(infoTimeout)
-        .then<_InfoLookup>(_InfoLookup.found, onError: _InfoLookup.failed);
-    // Abandoned lookups must not keep yt-dlp working in the background.
-    void stopLookup() => unawaited(backend.cancelInfo(requestId).catchError((_) {}));
+    final running = Future<T>.sync(lookup).timeout(timeout).then<LinkLookupOutcome<T>>(
+          (value) => LinkLookupOutcome<T>._value(value),
+          onError: (Object e) => LinkLookupOutcome<T>._error(e),
+        );
 
     // Whichever finishes first wins; the loser is ignored (Future.any keeps
     // listening to it, so a late error is never reported as unhandled).
-    final outcome = await Future.any<_InfoLookup>([lookup, closedByUser]);
+    final outcome = await Future.any<LinkLookupOutcome<T>>([running, closedByUser]);
     final route = dialogRoute;
     // Also treat a dialog route that vanished without completing its future
     // (e.g. removed together with the screen below it) as "cancelled".
-    if (outcome.cancelled || dialogClosed || (route != null && !route.isActive)) {
-      stopLookup();
-      return;
+    if (outcome._cancelled || dialogClosed || (route != null && !route.isActive)) {
+      onAbandoned?.call();
+      return null;
     }
-    if (outcome.error is TimeoutException) stopLookup();
+    if (outcome.error is TimeoutException) onAbandoned?.call();
 
-    // Something was pushed above the dialog while yt-dlp was working (e.g. the
-    // video player opened on the root navigator). The user has moved on:
+    // Something was pushed above the dialog while the lookup was working (e.g.
+    // the video player opened on the root navigator). The user has moved on:
     // read this before the dialog is removed, then treat the lookup as
     // abandoned instead of opening the quality sheet (or an error) behind or
     // over an unrelated screen.
     final movedOn = route != null && !route.isCurrent;
     _closeLoadingDialog(navigator, route);
-    if (movedOn || !context.mounted) return;
-
-    final info = outcome.meta;
-    if (info == null) {
-      messenger.showSnackBar(SnackBar(content: Text(friendlyError(outcome.error))));
-      return;
-    }
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => FormatSelectionSheet(
-        metadata: info,
-        onSelect: (choice) => _queue(context, ref, uri, info, choice, onQueued, onNotificationDenied),
-      ),
-    );
+    if (movedOn || !context.mounted) return null;
+    return outcome;
   }
 
   /// Dismisses the "Finding available qualities" dialog after the lookup.
@@ -259,24 +313,25 @@ class WebLinkDownloadFlow {
   }
 }
 
-/// How one quality lookup ended.
-class _InfoLookup {
-  const _InfoLookup.found(ExtractorMetadata this.meta)
+/// How one lookup run by [WebLinkDownloadFlow.lookupWithDialog] ended:
+/// exactly one of [value] and [error] is set.
+class LinkLookupOutcome<T> {
+  const LinkLookupOutcome._value(T this.value)
       : error = null,
-        cancelled = false;
-  const _InfoLookup.failed(Object this.error)
-      : meta = null,
-        cancelled = false;
-  const _InfoLookup.cancelled()
-      : meta = null,
+        _cancelled = false;
+  const LinkLookupOutcome._error(Object this.error)
+      : value = null,
+        _cancelled = false;
+  const LinkLookupOutcome._cancelled()
+      : value = null,
         error = null,
-        cancelled = true;
+        _cancelled = true;
 
-  final ExtractorMetadata? meta;
+  final T? value;
   final Object? error;
 
-  /// The user closed the dialog before the lookup finished.
-  final bool cancelled;
+  /// The user closed the dialog before the lookup finished (never returned).
+  final bool _cancelled;
 }
 
 /// "Finding available qualities..." card: a spinner in a soft violet halo,

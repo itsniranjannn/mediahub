@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'thumbnail_fetcher.dart';
+import 'youtube_link.dart';
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/downloads/download_state_machine.dart';
 import '../../core/downloads/media_sniffer.dart';
@@ -17,6 +18,10 @@ import '../database/app_database.dart';
 
 typedef FreeSpaceProvider = Future<int> Function();
 
+/// Size of the byte ranges a download from [url] is fetched in, or null to
+/// fetch it in one response (resuming with a Range request after a break).
+typedef RangeChunkPolicy = int? Function(Uri url);
+
 class DownloadEngine {
   final AppDatabase _db;
   final SafeHttpClient _httpClient;
@@ -26,6 +31,7 @@ class DownloadEngine {
   /// is never written to any other place (there is no temp-dir fallback).
   final Future<Directory> _downloadDirFuture;
   final FreeSpaceProvider _freeSpaceProvider;
+  final RangeChunkPolicy _rangeChunkBytes;
 
   /// The engine's own partial-file name: `<id>.part`, where the id is the
   /// millisecond timestamp the callers use as task id. The startup orphan sweep
@@ -33,6 +39,15 @@ class DownloadEngine {
   static final RegExp _partialFileName = RegExp(r'^(\d+)\.part$');
 
   static const int maxDownloadSizeBytes = 2 * 1024 * 1024 * 1024; // 2 GB
+
+  /// Free space a download needs on top of its own size before it starts.
+  static const int freeSpaceMarginBytes = 100 * 1024 * 1024;
+
+  /// Range size for YouTube's media servers (the size yt-dlp uses too). They
+  /// slow down or cut off one long response for a whole file, but serve
+  /// back-to-back 10 MB ranges at full speed.
+  static const int youtubeRangeChunkBytes = 10 * 1024 * 1024;
+
   static const MethodChannel _platformChannel = MethodChannel('mediahub/media_store');
 
   final StreamController<DownloadProgressUpdate> _progressController =
@@ -52,12 +67,19 @@ class DownloadEngine {
     required SafeHttpClient httpClient,
     required FutureOr<Directory> downloadDir,
     FreeSpaceProvider? freeSpaceProvider,
+    RangeChunkPolicy? rangeChunkBytes,
   })  : _db = db, // ignore: prefer_initializing_formals
         _httpClient = httpClient, // ignore: prefer_initializing_formals
         _downloadDirFuture = settleDirectory(downloadDir),
-        _freeSpaceProvider = freeSpaceProvider ?? defaultFreeSpaceProvider;
+        _freeSpaceProvider = freeSpaceProvider ?? defaultFreeSpaceProvider,
+        _rangeChunkBytes = rangeChunkBytes ?? defaultRangeChunkBytes;
 
   Stream<DownloadProgressUpdate> get progressStream => _progressController.stream;
+
+  /// YouTube's media servers get [youtubeRangeChunkBytes] ranges; every other
+  /// host is fetched in one response.
+  static int? defaultRangeChunkBytes(Uri url) =>
+      YoutubeLink.isYoutubeMediaHost(url.host) ? youtubeRangeChunkBytes : null;
 
   /// Wraps a folder (or a future of one) in a future that can be awaited any
   /// number of times. If it fails before anyone awaits it, the error is not
@@ -342,7 +364,7 @@ class DownloadEngine {
       // Free disk space check
       final freeBytes = await _freeSpaceProvider();
       final requiredBytes = (task.totalBytes != null && task.totalBytes! > 0)
-          ? (task.totalBytes! - existingBytes + (100 * 1024 * 1024))
+          ? (task.totalBytes! - existingBytes + freeSpaceMarginBytes)
           : (200 * 1024 * 1024);
 
       if (freeBytes < requiredBytes) {
@@ -368,11 +390,19 @@ class DownloadEngine {
 
         try {
           final currentTask = await (_db.select(_db.downloadsTable)..where((tbl) => tbl.id.equals(id))).getSingle();
-          await _executeDownloadAttempt(
+          final moreToFetch = await _executeDownloadAttempt(
             task: currentTask,
             partFile: partFile,
             startByte: existingBytes,
           );
+          if (moreToFetch) {
+            // One byte range is saved (see [RangeChunkPolicy]): ask for the
+            // next one, with a fresh retry budget. Every range adds at least
+            // one chunk's worth of bytes, so this ends.
+            existingBytes = partFile.existsSync() ? partFile.lengthSync() : existingBytes;
+            attempts = 0;
+            continue;
+          }
           success = true;
         } catch (e) {
           if (_isPausedOrCancelled(id)) return;
@@ -486,7 +516,10 @@ class DownloadEngine {
     );
   }
 
-  Future<void> _executeDownloadAttempt({
+  /// One request. Returns true when it saved one byte range of a file that is
+  /// fetched in ranges ([RangeChunkPolicy]) and more of the file is still to
+  /// come; false when the file is complete (or the task was paused/cancelled).
+  Future<bool> _executeDownloadAttempt({
     required DownloadEntry task,
     required File partFile,
     required int startByte,
@@ -494,8 +527,20 @@ class DownloadEngine {
     final uri = Uri.parse(task.url);
     final headers = <String, String>{};
 
+    // Inclusive last byte of the range asked for; null = up to the end.
+    int? rangeEnd;
+    final chunk = _rangeChunkBytes(uri);
+    if (chunk != null && chunk > 0) {
+      final knownTotal = task.totalBytes;
+      final end = startByte + chunk - 1;
+      // The last piece of a file of known size is asked for open-ended.
+      if (knownTotal == null || knownTotal <= 0 || end < knownTotal - 1) rangeEnd = end;
+    }
+
+    if (startByte > 0 || rangeEnd != null) {
+      headers['Range'] = 'bytes=$startByte-${rangeEnd ?? ''}';
+    }
     if (startByte > 0) {
-      headers['Range'] = 'bytes=$startByte-';
       if (task.etag != null && task.etag!.isNotEmpty) {
         headers['If-Range'] = task.etag!;
       } else if (task.lastModified != null && task.lastModified!.isNotEmpty) {
@@ -516,7 +561,7 @@ class DownloadEngine {
 
     if (_isPausedOrCancelled(task.id)) {
       response.close();
-      return;
+      return false;
     }
 
     final status = response.statusCode;
@@ -531,7 +576,7 @@ class DownloadEngine {
         await (_db.update(_db.downloadsTable)..where((tbl) => tbl.id.equals(task.id))).write(
           DownloadsTableCompanion(totalBytes: Value(total), receivedBytes: Value(total)),
         );
-        return;
+        return false;
       }
     }
     if (status >= 400 && status < 500) {
@@ -551,7 +596,7 @@ class DownloadEngine {
     final contentRange = response.headers.value('content-range');
 
     // Handle Range response validation & ETag change
-    if (startByte > 0) {
+    if (startByte > 0 || rangeEnd != null) {
       if (status == 206) {
         // Validate Content-Range header matches requested startByte
         if (contentRange == null || !contentRange.toLowerCase().startsWith('bytes $startByte-')) {
@@ -563,14 +608,18 @@ class DownloadEngine {
           );
         }
       } else if (status == 200) {
-        // Server refused Range (e.g. ETag changed or Range not supported): restart from zero and truncate .part
-        startByte = 0;
-        supportsRange = false;
-        try {
-          if (partFile.existsSync()) {
-            partFile.writeAsBytesSync([], flush: true);
-          }
-        } catch (_) {}
+        if (startByte > 0) {
+          // Server refused Range (e.g. ETag changed or Range not supported): restart from zero and truncate .part
+          startByte = 0;
+          supportsRange = false;
+          try {
+            if (partFile.existsSync()) {
+              partFile.writeAsBytesSync([], flush: true);
+            }
+          } catch (_) {}
+        }
+        // A 200 carries the whole file, not one range of it.
+        rangeEnd = null;
       }
     }
 
@@ -598,6 +647,30 @@ class DownloadEngine {
         code: 'max_size_exceeded',
         host: uri.host,
       );
+    }
+
+    // For one range of a longer file: where this response must end
+    // (exclusive), and whether another range follows it.
+    int? rangeStop;
+    var moreAfterThis = false;
+    if (rangeEnd != null && status == 206) {
+      final last = _lastByteOf(contentRange);
+      final finalPiece = totalBytes != null && totalBytes > 0 && last == totalBytes - 1;
+      if (last == rangeEnd && !finalPiece) {
+        rangeStop = last! + 1;
+        moreAfterThis = true;
+      } else if (finalPiece || (last != null && last < rangeEnd && (totalBytes == null || totalBytes <= 0))) {
+        // The end of the file (a server may shorten a range that runs past it).
+        rangeStop = last! + 1;
+      } else {
+        // Anything else would make the loop ask for ever-smaller ranges.
+        response.close();
+        throw SafeHttpClientException(
+          'Content-Range mismatch on 206: asked for bytes $startByte-$rangeEnd, got $contentRange',
+          code: 'content_range_mismatch',
+          host: uri.host,
+        );
+      }
     }
 
     // Persist header metadata
@@ -722,10 +795,12 @@ class DownloadEngine {
         onDone: () {
           if (!completer.isCompleted) {
             // Check if stream closed early before expected total bytes arrived
-            if (totalBytes != null && totalBytes > 0 && receivedBytes < totalBytes) {
+            // (for one range of a longer file: before the end of that range).
+            final expectedEnd = rangeStop ?? totalBytes;
+            if (expectedEnd != null && expectedEnd > 0 && receivedBytes < expectedEnd) {
               completer.completeError(
                 SafeHttpClientException(
-                  'Stream closed early: received $receivedBytes bytes of expected $totalBytes',
+                  'Stream closed early: received $receivedBytes bytes of expected $expectedEnd',
                   code: 'incomplete_download',
                   host: uri.host,
                 ),
@@ -751,6 +826,12 @@ class DownloadEngine {
         ),
       );
 
+      if (moreAfterThis) {
+        // Only one range of the file: the next request carries on (no
+        // "finished" update, so the speed line does not blink between ranges).
+        return true;
+      }
+
       // Emit final completion progress update
       _progressController.add(DownloadProgressUpdate(
         id: task.id,
@@ -760,6 +841,7 @@ class DownloadEngine {
         speedBytesPerSec: null,
         eta: Duration.zero,
       ));
+      return false;
     } finally {
       _activeAttemptCompleters.remove(task.id);
       _activeSubscriptions.remove(task.id);
@@ -790,6 +872,24 @@ class DownloadEngine {
     }
   }
 
+  /// The last byte position in a `Content-Range: bytes <first>-<last>/<total>`
+  /// header, or null when the header has another shape.
+  static int? _lastByteOf(String? contentRange) {
+    if (contentRange == null) return null;
+    final match = RegExp(r'^bytes\s+\d+-(\d+)/(\d+|\*)$', caseSensitive: false).firstMatch(contentRange.trim());
+    return match == null ? null : int.tryParse(match.group(1)!);
+  }
+
+  /// MP4 and WebM hold audio as well as video. YouTube's audio-only M4A
+  /// starts with a "dash" brand that [MediaSniffer] reports as video/mp4, so a
+  /// row queued as audio keeps that kind (file type, extension and library tab).
+  static String? applyKindHint(String? sniffedMime, String? queuedKind) {
+    if (sniffedMime == null || queuedKind != 'audio') return sniffedMime;
+    if (sniffedMime == 'video/mp4') return 'audio/mp4';
+    if (sniffedMime == 'video/webm') return 'audio/webm';
+    return sniffedMime;
+  }
+
   Future<void> _finalizeDownload(String id, DownloadEntry task, File partFile, Directory downloadDir) async {
     final updatedTask = await (_db.select(_db.downloadsTable)..where((tbl) => tbl.id.equals(id))).getSingle();
     final fileSize = partFile.existsSync() ? partFile.lengthSync() : 0;
@@ -812,7 +912,7 @@ class DownloadEngine {
       raf.closeSync();
     }
 
-    final detectedMime = MediaSniffer.sniff(sniffBytes);
+    final detectedMime = applyKindHint(MediaSniffer.sniff(sniffBytes), updatedTask.kind);
     if (detectedMime == null) {
       // Anything else (HTML, JSON, text) fails with "not_media" and .part is deleted
       if (partFile.existsSync()) {

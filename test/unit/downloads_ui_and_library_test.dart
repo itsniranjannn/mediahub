@@ -231,6 +231,12 @@ void main() {
 
       expect(find.text('Download added to queue'), findsOneWidget);
 
+      // The floating snackbar sits over the bottom of the 800x600 test
+      // screen, where the next Download button lands: clear it first so the
+      // tap below really reaches the button.
+      ScaffoldMessenger.of(tester.element(find.byType(DownloadsScreen))).removeCurrentSnackBar();
+      await tester.pumpAndSettle();
+
       // Next download -> Dialog is NOT shown again
       await tester.enterText(find.byType(TextField).first, 'https://example.com/track.mp3');
       await tester.pumpAndSettle();
@@ -240,6 +246,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Download Notice'), findsNothing);
+      expect(find.text('Download added to queue'), findsOneWidget, reason: 'queued straight away');
     });
 
     testWidgets('4. Download row states and delete confirmation removes file and DB row', (tester) async {

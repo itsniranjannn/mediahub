@@ -13,7 +13,10 @@ import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/personal/personal_tools_notifier.dart';
 
 const _androidHelper = 'Paste a YouTube, Instagram or direct https link';
-const _directOnlyHelper = 'Enter a direct https link to audio or video';
+// Without yt-dlp YouTube still works (the files YouTube serves directly), so
+// the helper says so (it used to read "Enter a direct https link to audio or video").
+const _directOnlyHelper = 'Paste a YouTube link, or a direct https link to audio or video';
+const _youtubeHelper = 'YouTube link: supported. Tap Choose quality to save the video or just its audio';
 
 /// "Enable web link downloader" fixed on or off, without the settings file or
 /// the extractor start-up the real notifier runs.
@@ -74,9 +77,16 @@ void main() {
     expect(find.text('Only secure HTTPS links are allowed.'), findsOneWidget);
     expect(find.text(_androidHelper), findsNothing);
 
+    // A YouTube link in the field: the helper and the button say it is supported.
     await tester.enterText(find.byType(TextField).first, 'https://youtu.be/bIQkviE_JJo');
     await tester.pumpAndSettle();
+    expect(find.text(_youtubeHelper), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Choose quality'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).first, 'https://example.com/clip.mp4');
+    await tester.pumpAndSettle();
     expect(find.text(_androidHelper), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Inspect'), findsOneWidget);
   });
 
   testWidgets('Android with "Enable web link downloader" off: helper asks for a direct link', (tester) async {
@@ -102,7 +112,7 @@ void main() {
     expect(find.text(_directOnlyHelper), findsNothing);
   });
 
-  testWidgets('iOS (no extractor): helper keeps asking for a direct link', (tester) async {
+  testWidgets('iOS (no extractor): helper asks for a YouTube or direct link', (tester) async {
     PlatformInfo.debugIsAndroid = false;
     PlatformInfo.debugIsIOS = true;
     await pumpScreen(tester);
@@ -110,6 +120,26 @@ void main() {
     expect(find.text(_directOnlyHelper), findsOneWidget);
     expect(find.text(_androidHelper), findsNothing);
     expect(linkDecoration(tester).hintText, 'https://...');
+
+    // Every YouTube link shape is recognised, including the canonical one
+    // the Online tab copies.
+    for (final link in [
+      'https://youtu.be/bIQkviE_JJo',
+      'https://youtube.com/shorts/bIQkviE_JJo',
+      'https://music.youtube.com/watch?v=bIQkviE_JJo',
+      'https://m.youtube.com/watch?v=bIQkviE_JJo&pp=x',
+    ]) {
+      await tester.enterText(find.byType(TextField).first, link);
+      await tester.pumpAndSettle();
+      expect(find.text(_youtubeHelper), findsOneWidget, reason: link);
+      expect(find.widgetWithText(FilledButton, 'Choose quality'), findsOneWidget, reason: link);
+    }
+
+    // A playlist is not one video: plain Inspect.
+    await tester.enterText(find.byType(TextField).first, 'https://www.youtube.com/playlist?list=PL123');
+    await tester.pumpAndSettle();
+    expect(find.text(_directOnlyHelper), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Inspect'), findsOneWidget);
   });
 
   testWidgets('file-style download titles wrap between words; semantics keep the real name', (tester) async {

@@ -8,15 +8,24 @@ import '../shared/widgets/ui_kit.dart';
 import 'extractor_backend.dart';
 import 'format_options.dart';
 
-/// Bottom sheet listing every quality yt-dlp reported for a link.
+/// Bottom sheet listing every quality yt-dlp reported for a link, or (with
+/// [choices]) a ready-made list such as the files YouTube serves directly.
 class FormatSelectionSheet extends StatelessWidget {
   final ExtractorMetadata metadata;
   final void Function(FormatChoice choice) onSelect;
+
+  /// The options to list. Null = built from [metadata]'s yt-dlp formats.
+  final List<FormatChoice>? choices;
+
+  /// Optional short note under the list (e.g. why only some qualities show).
+  final String? footnote;
 
   const FormatSelectionSheet({
     super.key,
     required this.metadata,
     required this.onSelect,
+    this.choices,
+    this.footnote,
   });
 
   static List<FormatChoice> getPresets(ExtractorMetadata meta) => FormatOptions.build(meta);
@@ -34,7 +43,7 @@ class FormatSelectionSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final choices = getPresets(metadata);
+    final choices = this.choices ?? getPresets(metadata);
     final videoChoices = choices.where((c) => !c.isAudio).toList();
     final audioChoices = choices.where((c) => c.isAudio).toList();
     final maxHeight = MediaQuery.sizeOf(context).height * 0.85;
@@ -72,8 +81,15 @@ class FormatSelectionSheet extends StatelessWidget {
                       const _SectionLabel('Video (with sound)'),
                       ...videoChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
                     ],
-                    const _SectionLabel('Audio only'),
-                    ...audioChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
+                    if (audioChoices.isNotEmpty) ...[
+                      const _SectionLabel('Audio only'),
+                      ...audioChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
+                    ],
+                    if (footnote != null && footnote!.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: AppSpacing.sm8),
+                        child: Text(footnote!, style: AppTypography.metadata),
+                      ),
                   ],
                 ),
               ),
@@ -157,8 +173,8 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final duration = metadata.durationSec > 0 ? Duration(seconds: metadata.durationSec) : null;
-    // Same seed (the video id) and glyph as the Explore card this sheet
-    // opens from, so its cover matches the card the user just tapped.
+    // Seeded by the video id, so the same video always gets the same
+    // placeholder cover wherever it shows.
     final placeholder = ArtworkPlaceholder(
       seed: metadata.id.isNotEmpty ? metadata.id : metadata.title,
       icon: Icons.play_circle_outline_rounded,

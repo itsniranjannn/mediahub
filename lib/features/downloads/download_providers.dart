@@ -33,6 +33,11 @@ final downloadDirectoryProvider = FutureProvider<Directory>((ref) async {
 // rebuild when the future completes, only if the folder provider itself is
 // recomputed, so one engine lives for the whole session. Queueing never waits
 // for the folder; only the download itself does.
+/// Free bytes where downloads are saved (overridden in tests). The engine
+/// checks it before every download; the YouTube flow also checks it before
+/// queueing, so a too-large file is refused at once instead of failing later.
+final downloadFreeSpaceProvider = Provider<FreeSpaceProvider>((ref) => DownloadEngine.defaultFreeSpaceProvider);
+
 final downloadEngineProvider = Provider<DownloadEngine>((ref) {
   final db = ref.watch(appDatabaseProvider);
   final client = SafeHttpClient();
@@ -41,6 +46,7 @@ final downloadEngineProvider = Provider<DownloadEngine>((ref) {
     db: db,
     httpClient: client,
     downloadDir: ref.watch(downloadDirectoryProvider.future),
+    freeSpaceProvider: ref.watch(downloadFreeSpaceProvider),
   );
 
   ref.onDispose(() {

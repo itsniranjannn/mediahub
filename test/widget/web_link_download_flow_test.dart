@@ -95,6 +95,7 @@ void main() {
     ValueNotifier<bool>? showCaller,
     GlobalKey<NavigatorState>? navigatorKey,
     bool noticeAgreed = false,
+    Future<void> Function()? onEngineUnavailable,
   }) async {
     usePhone(tester);
     final caller = Consumer(
@@ -106,6 +107,7 @@ void main() {
               ref,
               _videoUri,
               onQueued: () => queuedCallbacks++,
+              onEngineUnavailable: onEngineUnavailable,
             ).then((_) => flowDone = true),
           ),
           child: const Text('Download'),
@@ -268,6 +270,36 @@ void main() {
       expect(find.text(message), findsOneWidget);
       expect(find.byType(FormatSelectionSheet), findsNothing);
       expect(runner.enqueued, isEmpty);
+    });
+  }
+
+  for (final error in <Object>[
+    const ExtractorException('INIT_FAILED', 'no python'),
+    const ExtractorException('EXTRACTION_FAILED', 'site changed'),
+    UnsupportedError('no extractor'),
+  ]) {
+    testWidgets('yt-dlp unable to run ($error) hands over to the fallback instead of an error', (tester) async {
+      backend.onGetInfo = (_) async => throw error;
+      var fallbacks = 0;
+      await pumpHost(tester, onEngineUnavailable: () async => fallbacks++);
+      await tapDownload(tester);
+
+      expect(fallbacks, 1);
+      expect(find.text(_dialogText), findsNothing);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(flowDone, isTrue);
+    });
+  }
+
+  for (final code in ['NETWORK_ERROR', 'PRIVATE_CONTENT', 'LIVE_NOT_SUPPORTED', 'INFO_TIMEOUT']) {
+    testWidgets('$code is about the link, not the engine: the error shows and no fallback runs', (tester) async {
+      backend.onGetInfo = (_) async => throw ExtractorException(code, 'native message');
+      var fallbacks = 0;
+      await pumpHost(tester, onEngineUnavailable: () async => fallbacks++);
+      await tapDownload(tester);
+
+      expect(fallbacks, 0);
+      expect(find.byType(SnackBar), findsOneWidget);
     });
   }
 

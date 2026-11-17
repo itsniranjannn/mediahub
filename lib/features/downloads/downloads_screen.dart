@@ -8,12 +8,14 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
+import '../../core/downloads/known_platform_checker.dart';
 import '../../core/platform_info.dart';
 import '../../core/security/safe_filename.dart';
 import '../../core/security/url_policy.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/database/app_database.dart';
+import '../../data/downloads/youtube_link.dart';
 import '../../domain/models/download_state.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/repositories/platform_resolver.dart';
@@ -21,9 +23,11 @@ import '../../shared/widgets/ui_kit.dart';
 import '../music_player/playback_notifier.dart';
 import '../../personal/extractor_backend.dart';
 import '../../personal/personal_tools_notifier.dart';
+import 'download_link_inbox.dart';
 import 'download_providers.dart';
 import 'downloads_notifier.dart';
 import 'web_link_download_flow.dart';
+import 'youtube_direct_flow.dart';
 
 class DownloadsScreen extends ConsumerStatefulWidget {
   const DownloadsScreen({super.key});
@@ -42,6 +46,14 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   /// null = everything, 'video' or 'audio'
   String? _kindFilter;
 
+  /// A quality lookup / quality sheet / queueing step is running.
+  bool _linkFlowBusy = false;
+
+  /// The link another tab (Online) handed over, noted above the field while
+  /// the field still holds it.
+  _HandedLink? _handedLink;
+  bool _inboxCheckScheduled = false;
+
   @override
   void dispose() {
     _urlController.dispose();
@@ -57,44 +69,167 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     }
   }
 
-  /// The web link downloader action shown next to "Open link" (null when the
-  /// downloader is not available on this device).
-  Widget? _fetchFormatsAction(Uri uri) {
-    if (!PlatformInfo.supportsWebLinkDownloader || !kPersonalToolsEnabled) {
-      return null;
+  void _onNotificationDenied() {
+    if (mounted) setState(() => _notificationPermissionDenied = true);
+  }
+
+  // --- links handed over by other tabs (downloadLinkInboxProvider) ---------
+
+  /// Takes the waiting link after this frame (providers must not change while
+  /// the tree builds), and only while this tab is on screen: a link sent while
+  /// Downloads is in the background waits in the inbox until the tab is shown.
+  void _scheduleInboxCheck() {
+    if (_inboxCheckScheduled) return;
+    _inboxCheckScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _inboxCheckScheduled = false;
+      if (!mounted) return;
+      if (!TickerMode.getValuesNotifier(context).value.enabled) return;
+      final link = ref.read(downloadLinkInboxProvider.notifier).take();
+      if (link != null) _acceptHandedLink(link);
+    });
+  }
+
+  /// Puts [link] in the field and, when asked, starts the same lookup the
+  /// user gets by pasting it and tapping Choose quality / Inspect. While
+  /// another lookup or quality choice is running the link only waits in the
+  /// field (nothing is lost, nothing starts on top of the running one).
+  void _acceptHandedLink(PendingDownloadLink link) {
+    final text = link.url.trim();
+    if (text.isEmpty) return;
+    final busy = _linkFlowBusy || ref.read(inspectionProvider).isInspecting;
+    _urlController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    if (!busy) _filenameController.clear();
+    setState(() => _handedLink = _HandedLink(url: text, title: link.title, waiting: busy));
+    if (busy || !link.inspect) return;
+    // An invalid link stays in the field, which says what is wrong with it.
+    if (!UrlPolicy.validate(text).isValid) return;
+    final uri = Uri.parse(text);
+    if (_opensQualityChoice(uri)) {
+      _openQualityChoice(uri, titleHint: link.title);
+    } else {
+      ref.read(inspectionProvider.notifier).inspect(uri);
     }
-    final enabled = ref.watch(personalToolsProvider).isEnabled;
-    if (!enabled) {
-      return TextButton.icon(
-        icon: const Icon(Icons.settings_outlined),
-        label: const Text('Enable downloader'),
-        onPressed: () => context.push('/settings'),
-      );
+  }
+
+  // --- choosing a quality (yt-dlp, or YouTube without yt-dlp) --------------
+
+  /// True when [uri] goes straight to the quality choice: a YouTube video
+  /// (with or without yt-dlp), or any site yt-dlp handles while it is on.
+  bool _opensQualityChoice(Uri uri) {
+    if (YoutubeLink.parse(uri) != null) return true;
+    return WebLinkDownloadFlow.isAvailable(ref) && KnownPlatformChecker.matchPlatformName(uri) != null;
+  }
+
+  /// Shows the link's card (Open link / Choose quality, so the choice can be
+  /// reopened after the sheet is closed) and opens the quality choice.
+  void _openQualityChoice(Uri uri, {String? titleHint}) {
+    ref.read(inspectionProvider.notifier).inspect(uri);
+    _chooseQuality(uri, titleHint: titleHint);
+  }
+
+  /// The quality choice for [uri]: yt-dlp (every quality) when it is on,
+  /// otherwise, for YouTube, the files YouTube serves directly. On Android a
+  /// YouTube link also falls back to that path when yt-dlp cannot run.
+  Future<void> _chooseQuality(Uri uri, {String? titleHint}) async {
+    if (_linkFlowBusy) return;
+    final youtube = YoutubeLink.parse(uri);
+    final ytdlp = WebLinkDownloadFlow.isAvailable(ref);
+    if (!ytdlp && youtube == null) return;
+
+    final fieldAtStart = _urlController.text.trim();
+    void queued() => _afterQueued(fieldAtStart);
+    final handed = _handedLink;
+    setState(() {
+      _linkFlowBusy = true;
+      if (handed != null && handed.waiting && handed.url == fieldAtStart) {
+        _handedLink = _HandedLink(url: handed.url, title: handed.title);
+      }
+    });
+    try {
+      if (ytdlp) {
+        await WebLinkDownloadFlow.start(
+          context,
+          ref,
+          uri,
+          onQueued: queued,
+          onNotificationDenied: _onNotificationDenied,
+          onEngineUnavailable: youtube == null
+              ? null
+              : () => _startYoutubeDirect(youtube, titleHint: titleHint, onQueued: queued),
+        );
+      } else {
+        await _startYoutubeDirect(youtube!, titleHint: titleHint, onQueued: queued);
+      }
+    } finally {
+      if (mounted) setState(() => _linkFlowBusy = false);
     }
-    return FilledButton.icon(
-      icon: const Icon(Icons.video_library_rounded),
-      label: const Text('Choose quality'),
-      onPressed: () => _fetchFormats(uri),
+  }
+
+  Future<void> _startYoutubeDirect(YoutubeLink link, {String? titleHint, required VoidCallback onQueued}) async {
+    if (!mounted) return;
+    await YoutubeDirectDownloadFlow.start(
+      context,
+      ref,
+      link,
+      titleHint: titleHint ?? _titleHintFor(link),
+      onQueued: onQueued,
+      onNotificationDenied: _onNotificationDenied,
     );
   }
 
-  Future<void> _fetchFormats(Uri uri) {
-    return WebLinkDownloadFlow.start(
-      context,
-      ref,
-      uri,
-      onQueued: () {
-        _urlController.clear();
-        _filenameController.clear();
-        ref.read(inspectionProvider.notifier).clear();
-      },
-      onNotificationDenied: () {
-        if (mounted) setState(() => _notificationPermissionDenied = true);
-      },
-    );
+  /// The title the Online tab sent with [link], if that is the link in hand.
+  String? _titleHintFor(YoutubeLink link) {
+    final handed = _handedLink;
+    if (handed == null) return null;
+    return YoutubeLink.tryParse(handed.url)?.videoId == link.videoId ? handed.title : null;
+  }
+
+  /// After a download was queued: clears the field and the link card, unless
+  /// the field changed meanwhile (e.g. another link arrived from Online while
+  /// the quality sheet was open), so that link is never lost.
+  void _afterQueued(String fieldAtStart) {
+    if (!mounted) return;
+    final current = _urlController.text.trim();
+    if (current == fieldAtStart) {
+      _urlController.clear();
+      _filenameController.clear();
+      ref.read(inspectionProvider.notifier).clear();
+      return;
+    }
+    final inspected = ref.read(inspectionProvider).result?.uri;
+    if (inspected != null && inspected != Uri.tryParse(current)) {
+      ref.read(inspectionProvider.notifier).clear();
+    }
+  }
+
+  /// "Choose quality" (and on Android with yt-dlp off, "Enable downloader")
+  /// shown next to "Open link". Empty when nothing can download [uri].
+  List<Widget> _qualityActions(Uri uri) {
+    final ytdlpSupported = PlatformInfo.supportsWebLinkDownloader && kPersonalToolsEnabled;
+    final ytdlpOn = ytdlpSupported && ref.watch(personalToolsProvider).isEnabled;
+    final youtube = YoutubeLink.parse(uri) != null;
+    return [
+      if (ytdlpOn || youtube)
+        FilledButton.icon(
+          icon: const Icon(Icons.video_library_rounded),
+          label: const Text('Choose quality'),
+          onPressed: _linkFlowBusy ? null : () => _chooseQuality(uri),
+        ),
+      if (ytdlpSupported && !ytdlpOn)
+        TextButton.icon(
+          icon: const Icon(Icons.settings_outlined),
+          label: const Text('Enable downloader'),
+          onPressed: () => context.push('/settings'),
+        ),
+    ];
   }
 
   Future<void> _startDownload(SourceInfo info) async {
+    final fieldAtStart = _urlController.text.trim();
     await _ensureNotificationPermission();
 
     if (!mounted) return;
@@ -119,9 +254,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       // Trigger queue processing
       ref.read(downloadQueueCoordinatorProvider.notifier).trigger();
 
-      _urlController.clear();
-      _filenameController.clear();
-      ref.read(inspectionProvider.notifier).clear();
+      _afterQueued(fieldAtStart);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -137,6 +270,19 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final downloadsAsync = ref.watch(downloadsStreamProvider);
     final storageAsync = ref.watch(storageInfoProvider);
 
+    // A link handed over by another tab: taken on the first build and
+    // whenever a new one arrives, once this tab is on screen (an inactive
+    // shell branch has tickers off, and turning them on rebuilds this).
+    final linkWaiting = ref.watch(downloadLinkInboxProvider.select((link) => link != null));
+    if (linkWaiting && TickerMode.valuesOf(context).enabled) _scheduleInboxCheck();
+    // A waiting handed-over link stops "waiting" once the user inspects it.
+    ref.listen(inspectionProvider.select((s) => s.isInspecting), (_, inspecting) {
+      final handed = _handedLink;
+      if (inspecting && handed != null && handed.waiting && _urlController.text.trim() == handed.url) {
+        setState(() => _handedLink = _HandedLink(url: handed.url, title: handed.title));
+      }
+    });
+
     return Scaffold(
       body: SafeArea(
         bottom: false,
@@ -148,7 +294,12 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               sliver: SliverList.list(
                 children: [
                   const _Header(),
-                  _UrlCard(controller: _urlController),
+                  _UrlCard(
+                    controller: _urlController,
+                    handedLink: _handedLink,
+                    busy: _linkFlowBusy,
+                    onChooseQuality: (uri) => _openQualityChoice(uri),
+                  ),
                   if (inspection.errorMessage != null && !inspection.isInspecting) ...[
                     const SizedBox(height: AppSpacing.md12),
                     _Callout(
@@ -220,15 +371,32 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   }
 
   Widget _linkActions(Uri uri) {
-    final fetchAction = _fetchFormatsAction(uri);
     return Wrap(
       spacing: AppSpacing.sm8,
       runSpacing: AppSpacing.sm8,
       children: [
         _openLinkButton(uri),
-        ?fetchAction,
+        ..._qualityActions(uri),
       ],
     );
+  }
+
+  /// The note on a known platform's card: what can be done with the link here.
+  String _platformNote(String platform, Uri uri, {required bool ytdlpOn}) {
+    if (ytdlpOn) {
+      return '$platform link detected. Tap "Choose quality" to download the public video or audio. Only save content you have the right to download.';
+    }
+    final youtube = YoutubeLink.check(uri);
+    if (youtube.link != null) {
+      final more = PlatformInfo.supportsWebLinkDownloader && kPersonalToolsEnabled
+          ? ' For every quality up to 4K, turn on "Enable web link downloader" in Settings.'
+          : '';
+      return '$platform link detected. Tap "Choose quality" to save the video or just its audio. Only save content you have the right to download.$more';
+    }
+    if (youtube.isCollection) {
+      return "Playlists and channels can't be downloaded. Open a single video and copy its link.";
+    }
+    return '$platform pages are not direct media files. Turn on "Enable web link downloader" in Settings to download public videos, or open the link in the $platform app.';
   }
 
   Widget _buildInspectionResultCard(SourceInfo info) {
@@ -239,24 +407,23 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
         ref.watch(personalToolsProvider).isEnabled;
 
     if (knownPlatform != null) {
+      final canDownload = downloaderEnabled || YoutubeLink.parse(info.uri) != null;
       return SurfaceCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _CardHeader(
               icon: Icons.public_rounded,
-              color: downloaderEnabled ? AppColors.primary : AppColors.warning,
+              color: canDownload ? AppColors.primary : AppColors.warning,
               title: 'Platform Link',
               subtitle: 'Host: ${info.uri.host}',
               trailing: PillTag(text: knownPlatform),
             ),
             const SizedBox(height: AppSpacing.lg16),
             _Callout(
-              icon: downloaderEnabled ? Icons.info_outline_rounded : Icons.warning_amber_rounded,
-              color: downloaderEnabled ? AppColors.primary : AppColors.warning,
-              text: downloaderEnabled
-                  ? '$knownPlatform link detected. Tap "Choose quality" to download the public video or audio. Only save content you have the right to download.'
-                  : '$knownPlatform pages are not direct media files. Turn on "Enable web link downloader" in Settings to download public videos, or open the link in the $knownPlatform app.',
+              icon: canDownload ? Icons.info_outline_rounded : Icons.warning_amber_rounded,
+              color: canDownload ? AppColors.primary : AppColors.warning,
+              text: _platformNote(knownPlatform, info.uri, ytdlpOn: downloaderEnabled),
             ),
             const SizedBox(height: AppSpacing.md12),
             _linkActions(info.uri),
@@ -481,34 +648,30 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   }
 
   Widget _buildKindFilter(Map<String?, int> counts) {
+    final palette = context.palette;
+    // Fill, label, edge and check come from the chip theme (DESIGN.md 7.3):
+    // selected is the Volt sticker with an ink label and ink check.
     Widget chip(String label, String? value, IconData icon) {
       final selected = _kindFilter == value;
       return ChoiceChip(
-        avatar: Icon(
-          icon,
-          size: 16,
-          color: selected ? AppColors.primary : AppColors.textSecondary,
-        ),
+        key: ValueKey('downloads_kind_${value ?? 'all'}'),
+        // Selected shows only the ink check; the kind glyph would sit muddy
+        // under it on the Volt fill.
+        avatar: selected ? null : Icon(icon, size: 16, color: palette.textSecondary),
         label: Text.rich(
           TextSpan(
             children: [
               TextSpan(text: label),
               TextSpan(
                 text: '  ${counts[value] ?? 0}',
+                // Selected: the label's own ink (from the chip theme).
                 style: TextStyle(
-                  color: selected ? AppColors.primary : AppColors.textMuted,
+                  color: selected ? null : palette.textMuted,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],
           ),
-        ),
-        labelStyle: AppTypography.metadata.copyWith(
-          color: selected ? AppColors.textPrimary : AppColors.textSecondary,
-          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-        ),
-        side: BorderSide(
-          color: selected ? AppColors.primary.withValues(alpha: 0.5) : AppColors.divider,
         ),
         selected: selected,
         onSelected: (_) => setState(() => _kindFilter = value),
@@ -826,7 +989,13 @@ String _formatStateText(String state, [DownloadEntry? task]) {
   }
 }
 
-String _formatPlainErrorMessage(String errorCode) {
+/// Plain words for a failed download's [errorCode]. [host] is the server the
+/// file came from (YouTube's links to its files stop working after some hours).
+@visibleForTesting
+String formatPlainErrorMessage(String errorCode, {String host = ''}) {
+  if ((errorCode == 'http_403' || errorCode == 'http_410') && YoutubeLink.isYoutubeMediaHost(host)) {
+    return "YouTube's link to this file has expired. Paste the video link again to download it.";
+  }
   switch (errorCode) {
     case 'insufficient_disk_space':
       return 'Not enough free storage space available. Your other files are safe.';
@@ -874,6 +1043,18 @@ String _formatPlainErrorMessage(String errorCode) {
   }
 }
 
+/// A link another tab handed to Downloads (see [DownloadLinkInbox]).
+class _HandedLink {
+  const _HandedLink({required this.url, this.title, this.waiting = false});
+
+  final String url;
+  final String? title;
+
+  /// It arrived while another lookup or quality choice was running, so it
+  /// waits in the field until the user starts it.
+  final bool waiting;
+}
+
 // ---------------------------------------------------------------------------
 // Private widgets
 // ---------------------------------------------------------------------------
@@ -908,7 +1089,21 @@ class _Header extends StatelessWidget {
 class _UrlCard extends ConsumerStatefulWidget {
   final TextEditingController controller;
 
-  const _UrlCard({required this.controller});
+  /// The link another tab handed over (noted while the field still holds it).
+  final _HandedLink? handedLink;
+
+  /// A quality lookup or choice is running: the main button waits.
+  final bool busy;
+
+  /// "Choose quality" for a YouTube link in the field.
+  final void Function(Uri uri) onChooseQuality;
+
+  const _UrlCard({
+    required this.controller,
+    required this.onChooseQuality,
+    this.handedLink,
+    this.busy = false,
+  });
 
   @override
   ConsumerState<_UrlCard> createState() => _UrlCardState();
@@ -918,18 +1113,28 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
   String? _inlineUrlError;
   bool _hasText = false;
 
+  /// The field holds a valid link to one YouTube video.
+  bool _isYoutubeVideo = false;
+
+  /// The field still holds the link from [_UrlCard.handedLink].
+  bool _holdsHandedLink = false;
+
   /// Android bundles yt-dlp, so YouTube, Instagram and other supported sites
   /// can be downloaded there while "Enable web link downloader" is on (the
-  /// same rule as the inspection card); otherwise (iOS, or the setting off)
-  /// only direct media links work. Called from [build]: it watches only the
-  /// on / off flag, so a keystroke still rebuilds nothing else.
+  /// same rule as the inspection card). YouTube videos work everywhere: without
+  /// yt-dlp (iOS, or the setting off) through the files YouTube serves
+  /// directly. Called from [build]: it watches only the on / off flag, so a
+  /// keystroke still rebuilds nothing else.
   String get _linkHelperText {
+    if (_isYoutubeVideo) {
+      return 'YouTube link: supported. Tap Choose quality to save the video or just its audio';
+    }
     final downloaderEnabled = PlatformInfo.supportsWebLinkDownloader &&
         kPersonalToolsEnabled &&
         ref.watch(personalToolsProvider.select((s) => s.isEnabled));
     return downloaderEnabled
         ? 'Paste a YouTube, Instagram or direct https link'
-        : 'Enter a direct https link to audio or video';
+        : 'Paste a YouTube link, or a direct https link to audio or video';
   }
 
   @override
@@ -945,8 +1150,8 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_onUrlChanged);
       widget.controller.addListener(_onUrlChanged);
-      _syncFromText();
     }
+    _syncFromText();
   }
 
   @override
@@ -961,9 +1166,18 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
     final text = widget.controller.text.trim();
     final error = _urlErrorText(text);
     final hasText = text.isNotEmpty;
-    if (error == _inlineUrlError && hasText == _hasText) return false;
+    final isYoutube = error == null && hasText && YoutubeLink.tryParse(text) != null;
+    final holdsHanded = hasText && widget.handedLink?.url == text;
+    if (error == _inlineUrlError &&
+        hasText == _hasText &&
+        isYoutube == _isYoutubeVideo &&
+        holdsHanded == _holdsHandedLink) {
+      return false;
+    }
     _inlineUrlError = error;
     _hasText = hasText;
+    _isYoutubeVideo = isYoutube;
+    _holdsHandedLink = holdsHanded;
     return true;
   }
 
@@ -992,11 +1206,35 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
     }
   }
 
+  /// The main button / Done key: Choose quality for a YouTube video, else Inspect.
+  void _triggerMainAction() {
+    _onUrlChanged();
+    if (!_isYoutubeVideo) {
+      _triggerInspect();
+      return;
+    }
+    if (widget.busy || ref.read(inspectionProvider).isInspecting) return;
+    final uri = Uri.tryParse(widget.controller.text.trim());
+    if (uri != null) widget.onChooseQuality(uri);
+  }
+
+  /// "Link from Online", or how to go on when it arrived during another choice.
+  String _handedLinkNote(_HandedLink link) {
+    final title = link.title?.trim() ?? '';
+    if (link.waiting) {
+      final action = _isYoutubeVideo ? 'Choose quality' : 'Inspect';
+      return 'Link from Online is ready${title.isEmpty ? '' : ': $title'}. '
+          'When the current download choice is done, tap $action.';
+    }
+    return title.isEmpty ? 'Link from Online' : 'Link from Online: $title';
+  }
+
   @override
   Widget build(BuildContext context) {
     final isInspecting = ref.watch(inspectionProvider.select((s) => s.isInspecting));
     final canInspect = _inlineUrlError == null && _hasText;
     final linkHelperText = _linkHelperText;
+    final handed = _holdsHandedLink ? widget.handedLink : null;
 
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.sm8),
@@ -1010,7 +1248,7 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
               autocorrect: false,
               enableSuggestions: false,
               textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _triggerInspect(),
+              onSubmitted: (_) => _triggerMainAction(),
               style: AppTypography.body,
               decoration: InputDecoration(
                 labelText: 'Download link',
@@ -1027,6 +1265,19 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
                 ),
               ),
             ),
+            if (handed != null) ...[
+              const SizedBox(height: AppSpacing.md12),
+              Semantics(
+                liveRegion: true,
+                child: _Callout(
+                  icon: handed.waiting ? Icons.schedule_rounded : Icons.input_rounded,
+                  color: AppColors.accent,
+                  tinted: false,
+                  dense: true,
+                  text: _handedLinkNote(handed),
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.md12),
             if (isInspecting)
               SizedBox(
@@ -1059,13 +1310,16 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
               )
             else
               FilledButton(
-                onPressed: canInspect ? _triggerInspect : null,
-                child: const Row(
+                onPressed: canInspect && !(_isYoutubeVideo && widget.busy) ? _triggerMainAction : null,
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.manage_search_rounded, size: 20),
-                    SizedBox(width: AppSpacing.sm8),
-                    Flexible(child: Text('Inspect')),
+                    Icon(
+                      _isYoutubeVideo ? Icons.video_library_rounded : Icons.manage_search_rounded,
+                      size: 20,
+                    ),
+                    const SizedBox(width: AppSpacing.sm8),
+                    Flexible(child: Text(_isYoutubeVideo ? 'Choose quality' : 'Inspect')),
                   ],
                 ),
               ),
@@ -1535,7 +1789,7 @@ class _DownloadCard extends ConsumerWidget {
                     if (failedWithCode) ...[
                       const SizedBox(height: AppSpacing.xs4),
                       Text(
-                        _formatPlainErrorMessage(task.errorCode!),
+                        formatPlainErrorMessage(task.errorCode!, host: task.host),
                         style: AppTypography.metadata.copyWith(color: AppColors.error),
                       ),
                       if (task.errorDetail != null && task.errorDetail!.isNotEmpty)

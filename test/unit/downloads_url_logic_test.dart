@@ -31,7 +31,10 @@ void main() {
       await db.close();
     });
 
-    testWidgets('Item 1: Pasting YouTube link validates and enables Inspect button', (tester) async {
+    // YouTube links work without yt-dlp too, so a pasted one gets "Choose
+    // quality" and a helper that says it is supported (this used to expect
+    // "Inspect" and the direct-link-only helper).
+    testWidgets('Item 1: Pasting YouTube link validates and enables Choose quality', (tester) async {
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
         (MethodCall methodCall) async {
@@ -60,15 +63,18 @@ void main() {
       await tester.tap(find.byTooltip('Paste from clipboard'));
       await tester.pumpAndSettle();
 
-      // Verify Inspect button is enabled
+      // Verify the main button is enabled and says what it will do
       final inspectBtn = tester.widget<FilledButton>(
         find.ancestor(
-          of: find.text('Inspect'),
+          of: find.text('Choose quality'),
           matching: find.byType(FilledButton),
         ),
       );
       expect(inspectBtn.onPressed, isNotNull);
-      expect(find.text('Enter a direct https link to audio or video'), findsOneWidget);
+      expect(
+        find.text('YouTube link: supported. Tap Choose quality to save the video or just its audio'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('Item 2: Helper text when valid, error when invalid, Done key inspects, cancel works', (tester) async {
@@ -100,12 +106,12 @@ void main() {
       await tester.enterText(textField, 'http://example.com/audio.mp3');
       await tester.pumpAndSettle();
       expect(find.text('Only secure HTTPS links are allowed.'), findsOneWidget);
-      expect(find.text('Enter a direct https link to audio or video'), findsNothing);
+      expect(find.text('Paste a YouTube link, or a direct https link to audio or video'), findsNothing);
 
       // Type valid URL
       await tester.enterText(textField, 'https://example.com/audio.mp3');
       await tester.pumpAndSettle();
-      expect(find.text('Enter a direct https link to audio or video'), findsOneWidget);
+      expect(find.text('Paste a YouTube link, or a direct https link to audio or video'), findsOneWidget);
 
       // Trigger Done on keyboard
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -146,19 +152,33 @@ void main() {
 
       final textField = find.byType(TextField).first;
 
-      // 1. YouTube
+      // 1. YouTube: downloadable without yt-dlp now (the files YouTube serves
+      // directly), so its card offers "Choose quality" instead of the old
+      // "not direct media files" note. The card is opened through the
+      // inspection itself: the button would start a real YouTube lookup.
       await tester.enterText(textField, 'https://youtu.be/bIQkviE_JJo?si=0Jabc');
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Inspect'));
+      expect(find.widgetWithText(FilledButton, 'Choose quality'), findsOneWidget);
+      final container = ProviderScope.containerOf(tester.element(find.byType(DownloadsScreen)));
+      await container.read(inspectionProvider.notifier).inspect(Uri.parse('https://youtu.be/bIQkviE_JJo?si=0Jabc'));
       await tester.pumpAndSettle();
 
       expect(find.text('Platform Link'), findsOneWidget);
       expect(
-        find.text('YouTube pages are not direct media files. Turn on "Enable web link downloader" in Settings to download public videos, or open the link in the YouTube app.'),
+        find.text('YouTube link detected. Tap "Choose quality" to save the video or just its audio. Only save content you have the right to download.'),
         findsOneWidget,
       );
       expect(find.text('Open link'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Choose quality'), findsNWidgets(2), reason: 'field button and card');
       expect(find.text('Download'), findsNothing);
+
+      // A YouTube playlist is not one video: it explains that instead.
+      await container.read(inspectionProvider.notifier).inspect(Uri.parse('https://www.youtube.com/playlist?list=PL123'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text("Playlists and channels can't be downloaded. Open a single video and copy its link."),
+        findsOneWidget,
+      );
 
       // 2. Spotify
       await tester.enterText(textField, 'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT');
@@ -177,7 +197,7 @@ void main() {
       // Re-inspect with lookalike
       await tester.enterText(textField, 'https://notyoutube.com.evil.example/audio.mp3');
       await tester.pumpAndSettle();
-      expect(find.text('Enter a direct https link to audio or video'), findsOneWidget);
+      expect(find.text('Paste a YouTube link, or a direct https link to audio or video'), findsOneWidget);
     });
   });
 }
