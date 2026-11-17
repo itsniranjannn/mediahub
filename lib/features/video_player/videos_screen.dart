@@ -8,6 +8,7 @@ import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/app_config.dart';
 import '../../core/permissions/media_permission_service.dart';
+import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/video_progress.dart';
@@ -193,7 +194,14 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
             title: 'No Videos Found',
             message: state.searchQuery.isNotEmpty
                 ? 'No videos matching "${state.searchQuery}".'
-                : 'Tap the scan button in the top right to scan your device for video files.',
+                : 'Find the videos saved on this phone.',
+            action: state.searchQuery.isNotEmpty
+                ? null
+                : FilledButton.tonalIcon(
+                    onPressed: state.isScanning ? null : () => notifier.scanDevice(),
+                    icon: const Icon(Icons.refresh_rounded, size: 20),
+                    label: const Text('Scan device'),
+                  ),
           ),
         )
       else ...[
@@ -627,19 +635,8 @@ class _ResumeCard extends StatelessWidget {
                           borderRadius: 0,
                           placeholderIcon: Icons.movie_outlined,
                         ),
-                        DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              stops: const [0.5, 1.0],
-                              colors: [
-                                AppColors.overlay.withValues(alpha: 0),
-                                AppColors.overlay.withValues(alpha: 0.45),
-                              ],
-                            ),
-                          ),
-                        ),
+                        // No scrim: the resume bar has its own dark track, so
+                        // bright frames keep their colours.
                         Positioned(
                           left: 0,
                           right: 0,
@@ -647,7 +644,7 @@ class _ResumeCard extends StatelessWidget {
                           child: LinearProgressIndicator(
                             value: ratio,
                             minHeight: 3,
-                            backgroundColor: AppColors.onOverlay.withValues(alpha: 0.22),
+                            backgroundColor: AppColors.overlay,
                             valueColor: const AlwaysStoppedAnimation<Color>(AppColors.accent),
                           ),
                         ),
@@ -657,7 +654,8 @@ class _ResumeCard extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSpacing.sm8),
                 Text(
-                  title,
+                  breakableTitle(title),
+                  semanticsLabel: title,
                   style: titleStyle,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,

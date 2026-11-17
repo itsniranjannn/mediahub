@@ -42,12 +42,22 @@ class AlbumGroup {
   final int totalDurationMs;
   final List<MediaItem> songs;
 
+  /// Uri of the song whose cover stands for the album (the same song on its
+  /// tile and on its detail screen); null when unknown.
+  final String? coverUri;
+
+  /// Saved thumbnail of that same song (downloads keep their cover as a
+  /// separate file, not embedded in the audio); null when it has none.
+  final String? coverArtworkPath;
+
   const AlbumGroup({
     required this.album,
     required this.artist,
     required this.songCount,
     required this.totalDurationMs,
     this.songs = const [],
+    this.coverUri,
+    this.coverArtworkPath,
   });
 }
 

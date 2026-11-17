@@ -10,8 +10,9 @@ import '../../app/theme/app_colors.dart';
 /// Fills its constraints with one of [AppColors.artworkGradients], picked
 /// from [seed] (use the item's uri) with a stable hash, so an item wears the
 /// same colours in every list, card and player. A soft highlight lifts the
-/// top-left corner, faint rings echo the bottom-right, and [icon] sits in the
-/// centre at about 40 % of the shortest side (a little less on wide stills).
+/// top-left corner, faint rings echo the bottom-right on covers of
+/// [ringMinSide] and up, and [icon] sits in the centre at about 40 % of the
+/// shortest side (a little less on wide stills).
 class ArtworkPlaceholder extends StatelessWidget {
   /// Picks the gradient. The same seed always gets the same colours.
   final String seed;
@@ -36,6 +37,10 @@ class ArtworkPlaceholder extends StatelessWidget {
 
   /// White glyphs at this opacity stay readable on both gradient stops.
   static const double glyphOpacity = 0.85;
+
+  /// Shortest side from which the rings are drawn. On list-sized covers
+  /// they would only be hairline arcs, so small covers stay plain.
+  static const double ringMinSide = 96;
 
   /// Size used when the parent gives no bounds at all.
   static const double _fallbackSize = 48;
@@ -134,8 +139,9 @@ class _CentredGlyphLayout extends SingleChildLayoutDelegate {
   bool shouldRelayout(_CentredGlyphLayout oldDelegate) => false;
 }
 
-/// Diagonal gradient, a radial highlight from the top-left corner and two
-/// faint rings around the bottom-right corner.
+/// Diagonal gradient, a radial highlight from the top-left corner and, on
+/// covers of at least [ArtworkPlaceholder.ringMinSide], two faint rings
+/// around the bottom-right corner.
 class _CoverPainter extends CustomPainter {
   final LinearGradient gradient;
   final BorderRadius? borderRadius;
@@ -164,12 +170,14 @@ class _CoverPainter extends CustomPainter {
       ..drawRect(rect, Paint()..shader = _highlight.createShader(rect));
 
     final shortest = size.shortestSide;
-    final ring = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = (shortest * 0.025).clamp(1.0, 3.0)
-      ..color = _ringColor;
-    for (final r in _ringRadii) {
-      canvas.drawCircle(rect.bottomRight, shortest * r, ring);
+    if (shortest >= ArtworkPlaceholder.ringMinSide) {
+      final ring = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = (shortest * 0.025).clamp(1.0, 3.0)
+        ..color = _ringColor;
+      for (final r in _ringRadii) {
+        canvas.drawCircle(rect.bottomRight, shortest * r, ring);
+      }
     }
     canvas.restore();
   }
@@ -191,11 +199,13 @@ abstract class ArtworkTint {
   /// Deep (bottom-right) stop of [seed]'s cover gradient.
   static Color deep(String seed) => ArtworkPlaceholder.gradientFor(seed).colors.last;
 
-  /// Opacity of the light glow behind the Now Playing cover.
-  static const double backdropLightAlpha = 0.5;
+  /// Opacity of the light glow around the Now Playing cover. Strong, because
+  /// the scrim over it lets only the band around the cover show colour; text
+  /// never sits over its peak.
+  static const double backdropLightAlpha = 0.9;
 
   /// Opacity of the deep glow on the right of the Now Playing cover.
-  static const double backdropDeepAlpha = 0.75;
+  static const double backdropDeepAlpha = 0.6;
 
   /// [AppColors.heroGradient] re-coloured with [seed]'s deep stop, for cards
   /// and headers that carry text.

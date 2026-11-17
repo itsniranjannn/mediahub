@@ -10,6 +10,7 @@ import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/app_config.dart';
 import '../../core/platform_info.dart';
+import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
@@ -287,7 +288,9 @@ class _SectionHeading extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = actionLabel;
     return Padding(
-      padding: padding,
+      // With an action, its label (not the button's box) ends on the 16 dp
+      // gutter, like SectionHeader.
+      padding: label == null ? padding : SectionHeader.paddingWithAction(padding, Directionality.of(context)),
       child: Row(
         children: [
           Expanded(
@@ -303,6 +306,7 @@ class _SectionHeading extends StatelessWidget {
           ),
           if (label != null)
             TextButton(
+              style: SectionHeader.actionStyle,
               onPressed: onAction,
               child: Text(label, semanticsLabel: actionSemanticLabel),
             ),
@@ -522,6 +526,11 @@ class _ContinueListeningCard extends ConsumerWidget {
   const _ContinueListeningCard();
 
   static const double _artworkSize = 80;
+  static const double _artworkRadius = AppSpacing.md12;
+
+  /// Platform lookup size ArtworkThumbnail uses for an 80 dp cover (and the
+  /// mini player's); the tint check shares that lookup.
+  static const int _artworkLookupSize = 256;
   static const double _eyebrowIconSize = 16;
   static const double _artworkShadowAlpha = 0.35;
   static const double _artworkShadowBlur = 18;
@@ -549,15 +558,23 @@ class _ContinueListeningCard extends ConsumerWidget {
         container: true,
         label: 'Continue listening: ${item.title} by $artist, '
             '${isPlaying ? 'playing' : 'paused'}',
-        child: SurfaceCard(
-          // The card wears the song's cover colours, like Now Playing.
-          gradient: ArtworkTint.surfaceGradient(item.uri),
-          padding: const EdgeInsets.all(AppSpacing.lg16),
-          onTap: () {
-            if (!isPlaying) {
-              ref.read(playbackNotifierProvider.notifier).play();
-            }
-          },
+        child: ArtworkPresenceBuilder(
+          item: item,
+          lookupSize: _artworkLookupSize,
+          builder: (context, hasArtwork, content) => SurfaceCard(
+            // The card wears the song's placeholder colours, like Now Playing,
+            // or the neutral violet when the song shows its own cover (a red
+            // cover never sits on a teal card). It starts neutral while the
+            // cover lookup runs, and SurfaceCard fades any change.
+            gradient: hasArtwork ? AppColors.heroGradient : ArtworkTint.surfaceGradient(item.uri),
+            padding: const EdgeInsets.all(AppSpacing.lg16),
+            onTap: () {
+              if (!isPlaying) {
+                ref.read(playbackNotifierProvider.notifier).play();
+              }
+            },
+            child: content!,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -599,7 +616,7 @@ class _ContinueListeningCard extends ConsumerWidget {
                         children: [
                           DecoratedBox(
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(AppSpacing.lg16),
+                              borderRadius: BorderRadius.circular(_artworkRadius),
                               boxShadow: [
                                 BoxShadow(
                                   color: Colors.black.withValues(alpha: _artworkShadowAlpha),
@@ -612,7 +629,7 @@ class _ContinueListeningCard extends ConsumerWidget {
                               uri: item.uri,
                               artworkPath: item.artworkPath,
                               size: _artworkSize,
-                              borderRadius: AppSpacing.lg16,
+                              borderRadius: _artworkRadius,
                             ),
                           ),
                           const SizedBox(width: AppSpacing.lg16),
@@ -622,7 +639,8 @@ class _ContinueListeningCard extends ConsumerWidget {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  item.title,
+                                  breakableTitle(item.title),
+                                  semanticsLabel: item.title,
                                   style: AppTypography.sectionTitle,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
@@ -966,19 +984,8 @@ class _VideoCard extends StatelessWidget {
                           borderRadius: 0,
                           placeholderIcon: Icons.movie_outlined,
                         ),
-                        DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              stops: const [0.5, 1.0],
-                              colors: [
-                                AppColors.overlay.withValues(alpha: 0),
-                                AppColors.overlay.withValues(alpha: 0.4),
-                              ],
-                            ),
-                          ),
-                        ),
+                        // No scrim: the badge has its own dark chip, so
+                        // bright frames keep their colours.
                         if (duration > Duration.zero)
                           Positioned(
                             right: AppSpacing.sm8,
@@ -991,7 +998,8 @@ class _VideoCard extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSpacing.sm8),
                 Text(
-                  cleanTitle,
+                  breakableTitle(cleanTitle),
+                  semanticsLabel: cleanTitle,
                   style: titleStyle,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,

@@ -9,6 +9,7 @@ import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
+import '../../core/services/artwork_presence.dart';
 import '../../core/services/artwork_service.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
@@ -20,8 +21,10 @@ import '../library/media_context_menu.dart';
 import 'playback_notifier.dart';
 import 'queue_sheet.dart';
 
-/// Largest edge of the cover art on Now Playing.
-const double _kArtworkMaxSize = 300;
+/// Largest edge of the cover art on Now Playing. Phones are narrower than
+/// this, so the cover takes the full content width and lines up with the
+/// 16 dp edges of the title and seek bar (328 dp on a 360 dp screen).
+const double _kArtworkMaxSize = 400;
 const double _kArtworkRadius = 24;
 
 /// Top corners of the sheet (matches the global bottom sheet shape).
@@ -43,6 +46,10 @@ const double _kArtworkGap = AppSpacing.xxl24;
 const double _kSectionGap = AppSpacing.md12;
 const double _kPlayButtonSize = 72;
 
+/// How far the elapsed / total labels are drawn above their layout slot, so
+/// they sit about 14 dp under the seek track and 24 dp above the controls.
+const double _kSeekLabelLift = AppSpacing.md12;
+
 /// Snackbar distance from the bottom while the body scrolls (the default of
 /// FavoriteFeedbackButton): the title row has no fixed place there.
 const double _kScrollingSnackMargin = 76;
@@ -55,21 +62,54 @@ const double _kCloseFlingVelocity = 250;
 const int _kBackdropSwatchSize = 64;
 const double _kBackdropBlurSigma = 3;
 
+/// Brightest the backdrop swatch may be on average (Rec. 709 luma of its
+/// sRGB values, 0 to 1). A brighter cover (mostly white, a pale photo) is
+/// darkened to this level, so the screen stays a deep tone of the cover
+/// instead of a flat charcoal with a grey halo; colourful covers are below
+/// it and keep their colours as they are.
+const double _kBackdropMaxLuma = 0.40;
+
 const List<double> _kSpeeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
-/// Dark veil over the blurred cover: light at the top so the colour of the
-/// song shows through, solid canvas at the bottom where text and controls sit.
+/// Dark veil over the blurred cover and the glow. The header band stays dark
+/// (82 %) so the title and queue position read over any cover, even a white
+/// one; it opens up (60 %) only in the band around the artwork, where the
+/// colour of the song shows, and closes again towards the title and the
+/// controls. Contrast where the text sits is checked in
+/// test/widget/now_playing_backdrop_test.dart.
 final LinearGradient _kBackdropScrim = LinearGradient(
   begin: Alignment.topCenter,
   end: Alignment.bottomCenter,
   colors: [
-    AppColors.background.withValues(alpha: 0.5),
-    AppColors.background.withValues(alpha: 0.62),
+    AppColors.background.withValues(alpha: 0.82),
+    AppColors.background.withValues(alpha: 0.82),
+    AppColors.background.withValues(alpha: 0.6),
     AppColors.background.withValues(alpha: 0.9),
     AppColors.background,
   ],
-  stops: const [0.0, 0.42, 0.72, 1.0],
+  stops: const [0.0, 0.16, 0.26, 0.72, 1.0],
 );
+
+/// The veil while the body scrolls (landscape, split screen): text can then
+/// pass over every band, so it never opens up below the header's 82 %.
+final LinearGradient _kScrollingBackdropScrim = LinearGradient(
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
+  colors: [
+    AppColors.background.withValues(alpha: 0.82),
+    AppColors.background.withValues(alpha: 0.9),
+    AppColors.background,
+  ],
+  stops: const [0.0, 0.72, 1.0],
+);
+
+/// Whether the player body scrolls instead of shrinking the artwork any
+/// further. [bodyHeight] is the height inside the safe area.
+bool _bodyScrolls(BuildContext context, double bodyHeight) {
+  final textScale = MediaQuery.textScalerOf(context).scale(100) / 100;
+  final compactBelow = _kCompactBodyHeight + (textScale - 1).clamp(0.0, 2.0) * 140;
+  return bodyHeight < compactBelow;
+}
 
 class NowPlayingSheet extends ConsumerWidget {
   const NowPlayingSheet({super.key});
@@ -144,6 +184,10 @@ class NowPlayingSheet extends ConsumerWidget {
             _ArtworkBackdrop(item: currentItem),
             GestureDetector(
               behavior: HitTestBehavior.translucent,
+              // A shortcut: screen readers close with "Collapse Now Playing".
+              // In the tree, the detector made one sheet-sized node that
+              // merged the title, artist, heart and times into one label.
+              excludeFromSemantics: true,
               onVerticalDragEnd: (details) {
                 if (details.primaryVelocity != null &&
                     details.primaryVelocity! > _kCloseFlingVelocity) {
@@ -263,41 +307,154 @@ class _Grabber extends StatelessWidget {
   }
 }
 
-/// A glow in the colours of the song's cover palette, then a soft blurred
-/// copy of the cover (only when the track really has one), then a dark
-/// scrim, so the screen takes on the colour of the song.
-class _ArtworkBackdrop extends StatelessWidget {
+/// A glow, then a soft blurred copy of the cover (only when the track really
+/// has one), then a dark scrim, so the screen takes on the colour of the song.
+///
+/// A song without art glows in its placeholder's palette. A song with a real
+/// cover glows in the neutral brand violet, so a hash colour that has nothing
+/// to do with the cover never shows around it. While a new track's cover is
+/// still being looked up the glow keeps its current colours, so no random
+/// hue flashes before the blurred cover arrives.
+class _ArtworkBackdrop extends StatefulWidget {
   final MediaItem? item;
 
   const _ArtworkBackdrop({required this.item});
 
   @override
+  State<_ArtworkBackdrop> createState() => _ArtworkBackdropState();
+}
+
+class _ArtworkBackdropState extends State<_ArtworkBackdrop> {
+  /// The blurred swatch on screen; null when the track has no art.
+  ui.Image? _image;
+
+  /// The swatch that is fading out; released on the next change.
+  ui.Image? _previous;
+
+  /// Only the newest request may set the image (fast skipping).
+  int _request = 0;
+
+  /// Palette seed of the glow; null is the neutral violet.
+  String? _glowSeed;
+
+  @override
+  void initState() {
+    super.initState();
+    final item = widget.item;
+    // Nothing on screen yet that a change could flash from.
+    _glowSeed = hasRealArtwork(item) ? null : item?.uri;
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_ArtworkBackdrop oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final item = widget.item;
+    if (oldWidget.item?.uri != item?.uri || oldWidget.item?.artworkPath != item?.artworkPath) {
+      // Known to have art: go neutral now. Otherwise wait for the lookup.
+      if (hasRealArtwork(item)) _glowSeed = null;
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _request++;
+    _image?.dispose();
+    _previous?.dispose();
+    super.dispose();
+  }
+
+  void _load() {
+    final request = ++_request;
+    final item = widget.item;
+    if (item == null) {
+      // build always follows initState / didUpdateWidget
+      _replace(null);
+      _glowSeed = null;
+      return;
+    }
+    final uri = item.uri;
+    _loadBlurredCover(uri, item.artworkPath).then((image) {
+      if (!mounted || request != _request) {
+        image?.dispose();
+        return;
+      }
+      // Neutral under a swatch, and also when the cover is known from a
+      // saved thumbnail or the art cache but no swatch could be made.
+      final seed = image != null || hasRealArtwork(widget.item) ? null : uri;
+      if (image == null && _image == null && seed == _glowSeed) return;
+      setState(() {
+        _replace(image);
+        _glowSeed = seed;
+      });
+    });
+  }
+
+  void _replace(ui.Image? image) {
+    _previous?.dispose();
+    _previous = _image;
+    _image = image;
+  }
+
+  static Widget _fill(Widget? current, List<Widget> previous) {
+    return Stack(fit: StackFit.expand, children: [...previous, ?current]);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final item = this.item;
+    final image = _image;
     return RepaintBoundary(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          _PaletteGlow(seed: item?.uri),
-          _BlurredCover(uri: item?.uri, artworkPath: item?.artworkPath),
-          DecoratedBox(decoration: BoxDecoration(gradient: _kBackdropScrim)),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final padding = MediaQuery.paddingOf(context);
+          final scrolls = _bodyScrolls(context, constraints.maxHeight - padding.vertical);
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              _PaletteGlow(seed: _glowSeed),
+              // While the next swatch is being made the current one stays,
+              // then the two cross-fade.
+              AnimatedSwitcher(
+                duration: MotionTokens.duration(context, MotionTokens.page),
+                switchInCurve: MotionTokens.easeOut,
+                switchOutCurve: MotionTokens.easeIn,
+                layoutBuilder: _fill,
+                child: image == null
+                    ? const SizedBox.shrink(key: ValueKey('no_cover'))
+                    : RawImage(
+                        key: ObjectKey(image),
+                        image: image,
+                        fit: BoxFit.cover,
+                        filterQuality: FilterQuality.low,
+                      ),
+              ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: scrolls ? _kScrollingBackdropScrim : _kBackdropScrim,
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 }
 
-/// Two soft radial glows on the canvas: the light stop of the song's cover
-/// palette behind the artwork and its deep stop to the right. The seed is the
-/// song's uri, the same one its placeholder cover uses, so a song without art
-/// glows in its cover's colours. The colours drift to the next song's on a
-/// track change (instantly with reduced motion).
+/// Two soft radial glows on the canvas: the light stop of a cover palette
+/// around the artwork and its deep stop to the right. [seed] is the song's
+/// uri, the same one its placeholder cover uses; null gives the neutral
+/// violet. The colours drift on a change (instantly with reduced motion).
 class _PaletteGlow extends StatelessWidget {
   final String? seed;
 
   const _PaletteGlow({required this.seed});
 
-  static const Alignment _lightCenter = Alignment(-0.35, -0.72);
+  /// Centred on the artwork, so the colour rings the cover and stays away
+  /// from the header and the title.
+  static const Alignment _lightCenter = Alignment(0, -0.30);
+  static const double _lightRadius = 0.9;
   static const Alignment _deepCenter = Alignment(0.9, -0.15);
 
   @override
@@ -328,101 +485,9 @@ class _PaletteGlow extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           glow(_deepCenter, 1.1, deep, ArtworkTint.backdropDeepAlpha),
-          glow(_lightCenter, 1.05, light, ArtworkTint.backdropLightAlpha),
+          glow(_lightCenter, _lightRadius, light, ArtworkTint.backdropLightAlpha),
         ],
       ),
-    );
-  }
-}
-
-/// Draws the pre-blurred cover swatch. While the next track's swatch is being
-/// made the current one stays, then the two cross-fade. Tracks without art
-/// draw nothing, so the gradient underneath shows.
-class _BlurredCover extends StatefulWidget {
-  final String? uri;
-  final String? artworkPath;
-
-  const _BlurredCover({required this.uri, required this.artworkPath});
-
-  @override
-  State<_BlurredCover> createState() => _BlurredCoverState();
-}
-
-class _BlurredCoverState extends State<_BlurredCover> {
-  ui.Image? _image;
-
-  /// The swatch that is fading out; released on the next change.
-  ui.Image? _previous;
-
-  /// Only the newest request may set the image (fast skipping).
-  int _request = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(_BlurredCover oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.uri != widget.uri || oldWidget.artworkPath != widget.artworkPath) {
-      _load();
-    }
-  }
-
-  @override
-  void dispose() {
-    _request++;
-    _image?.dispose();
-    _previous?.dispose();
-    super.dispose();
-  }
-
-  void _load() {
-    final request = ++_request;
-    final uri = widget.uri;
-    if (uri == null) {
-      // build always follows initState / didUpdateWidget
-      _replace(null);
-      return;
-    }
-    _loadBlurredCover(uri, widget.artworkPath).then((image) {
-      if (!mounted || request != _request) {
-        image?.dispose();
-        return;
-      }
-      if (image == null && _image == null) return;
-      setState(() => _replace(image));
-    });
-  }
-
-  void _replace(ui.Image? image) {
-    _previous?.dispose();
-    _previous = _image;
-    _image = image;
-  }
-
-  static Widget _fill(Widget? current, List<Widget> previous) {
-    return Stack(fit: StackFit.expand, children: [...previous, ?current]);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final image = _image;
-    return AnimatedSwitcher(
-      duration: MotionTokens.duration(context, MotionTokens.page),
-      switchInCurve: MotionTokens.easeOut,
-      switchOutCurve: MotionTokens.easeIn,
-      layoutBuilder: _fill,
-      child: image == null
-          ? const SizedBox.shrink(key: ValueKey('no_cover'))
-          : RawImage(
-              key: ObjectKey(image),
-              image: image,
-              fit: BoxFit.cover,
-              filterQuality: FilterQuality.low,
-            ),
     );
   }
 }
@@ -467,17 +532,71 @@ Future<ui.Image?> _loadBlurredCover(String uri, String? artworkPath) async {
         ..drawImageRect(source, from, to, Paint()..filterQuality = FilterQuality.medium)
         ..restore();
       final picture = recorder.endRecording();
+      final ui.Image blurred;
       try {
-        return await picture.toImage(_kBackdropSwatchSize, _kBackdropSwatchSize);
+        blurred = await picture.toImage(_kBackdropSwatchSize, _kBackdropSwatchSize);
       } finally {
         picture.dispose();
       }
+      return await _capLuma(blurred);
     } finally {
       source.dispose();
     }
   } catch (_) {
     return null;
   }
+}
+
+/// [swatch] itself when its mean luma is at most [_kBackdropMaxLuma];
+/// otherwise a copy scaled down to that level (and [swatch] is disposed).
+Future<ui.Image> _capLuma(ui.Image swatch) async {
+  final ByteData? pixels;
+  try {
+    pixels = await swatch.toByteData(format: ui.ImageByteFormat.rawRgba);
+  } catch (_) {
+    return swatch;
+  }
+  if (pixels == null) return swatch;
+  final mean = meanLumaOfRgba(pixels);
+  if (mean <= _kBackdropMaxLuma) return swatch;
+
+  final k = _kBackdropMaxLuma / mean;
+  final bounds = Rect.fromLTWH(0, 0, swatch.width.toDouble(), swatch.height.toDouble());
+  final recorder = ui.PictureRecorder();
+  Canvas(recorder, bounds).drawImage(
+    swatch,
+    Offset.zero,
+    Paint()
+      ..colorFilter = ColorFilter.matrix(<double>[
+        k, 0, 0, 0, 0, //
+        0, k, 0, 0, 0, //
+        0, 0, k, 0, 0, //
+        0, 0, 0, 1, 0, //
+      ]),
+  );
+  final picture = recorder.endRecording();
+  try {
+    final darker = await picture.toImage(swatch.width, swatch.height);
+    swatch.dispose();
+    return darker;
+  } catch (_) {
+    return swatch;
+  } finally {
+    picture.dispose();
+  }
+}
+
+/// Mean Rec. 709 luma (0 to 1) of raw RGBA pixels, computed on the sRGB
+/// values as they are (no linearising), the way the eye judges "bright".
+@visibleForTesting
+double meanLumaOfRgba(ByteData rgba) {
+  final count = rgba.lengthInBytes ~/ 4;
+  if (count == 0) return 0;
+  var sum = 0.0;
+  for (var i = 0; i < count * 4; i += 4) {
+    sum += 0.2126 * rgba.getUint8(i) + 0.7152 * rgba.getUint8(i + 1) + 0.0722 * rgba.getUint8(i + 2);
+  }
+  return sum / (count * 255);
 }
 
 /// Same sources, in the same order, as [ArtworkThumbnail].
@@ -498,8 +617,8 @@ Future<Uint8List?> _coverBytes(String uri, String? artworkPath) async {
 }
 
 /// Lays out artwork, track info, seek bar and controls. On tall screens the
-/// artwork takes whatever height is left (up to 300 dp); on short ones the
-/// content scrolls so nothing overflows.
+/// artwork takes whatever height is left (up to [_kArtworkMaxSize]); on short
+/// ones the content scrolls so nothing overflows.
 class _NowPlayingBody extends StatelessWidget {
   final MediaItem? item;
   final VoidCallback? onMore;
@@ -517,11 +636,12 @@ class _NowPlayingBody extends StatelessWidget {
 
   /// Distance from the bottom of the body to just above the title row in the
   /// regular layout, so the favourite confirmation never covers the heart.
+  /// Sized for the tallest row: a two-line title over the artist.
   static double _snackMarginAboveInfo(TextScaler scaler) {
     double line(TextStyle style) => scaler.scale(style.fontSize!) * (style.height ?? 1);
     final infoHeight = math.max(
       AppSpacing.minTouchTarget,
-      line(AppTypography.playerTitle) + AppSpacing.xs4 + line(AppTypography.metadata),
+      2 * line(AppTypography.playerTitle) + AppSpacing.xs4 + line(AppTypography.body),
     );
     final seekBarHeight = AppSpacing.minTouchTarget + line(AppTypography.tabularFigures);
     return _kBodyBottomPadding +
@@ -536,8 +656,6 @@ class _NowPlayingBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textScaler = MediaQuery.textScalerOf(context);
-    final textScale = textScaler.scale(100) / 100;
-    final compactBelow = _kCompactBodyHeight + (textScale - 1).clamp(0.0, 2.0) * 140;
     // Never higher than half the screen: the root messenger also lays the
     // snackbar out in the app shell behind this sheet.
     final snackMargin = math.min(
@@ -553,7 +671,7 @@ class _NowPlayingBody extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxHeight < compactBelow) {
+        if (_bodyScrolls(context, constraints.maxHeight)) {
           final artSize = math.min(
             220.0,
             math.max(0.0, constraints.maxWidth - 2 * AppSpacing.lg16),
@@ -750,41 +868,51 @@ class _TrackInfo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final item = this.item;
+    final title = item?.title ?? 'No track playing';
+    final shownTitle = breakableTitle(title);
     return Row(
       children: [
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                item?.title ?? 'No track playing',
-                style: AppTypography.playerTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: AppSpacing.xs4),
-              Text(
-                item?.artist ?? 'Unknown Artist',
-                style: AppTypography.metadata,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+          // Title and artist are one stop for a screen reader.
+          child: MergeSemantics(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // The one screen built to show the full name: two lines,
+                // broken after "_" in file-style names rather than mid-word.
+                Text(
+                  shownTitle,
+                  semanticsLabel: shownTitle == title ? null : title,
+                  style: AppTypography.playerTitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: AppSpacing.xs4),
+                Text(
+                  item?.artist ?? 'Unknown Artist',
+                  style: AppTypography.body.copyWith(color: AppColors.textSecondary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.sm8),
         if (item != null)
-          FavoriteFeedbackButton(
-            key: ValueKey('fav_${item.id}'),
-            itemId: item.id,
-            isFavorite: item.isFavorite,
-            size: 26,
-            constraints: const BoxConstraints(
-              minWidth: AppSpacing.minTouchTarget,
-              minHeight: AppSpacing.minTouchTarget,
+          _SingleNodeHeart(
+            child: FavoriteFeedbackButton(
+              key: ValueKey('fav_${item.id}'),
+              itemId: item.id,
+              isFavorite: item.isFavorite,
+              size: 26,
+              constraints: const BoxConstraints(
+                minWidth: AppSpacing.minTouchTarget,
+                minHeight: AppSpacing.minTouchTarget,
+              ),
+              snackBottomMargin: snackBottomMargin,
             ),
-            snackBottomMargin: snackBottomMargin,
           )
         else
           const SizedBox(width: AppSpacing.minTouchTarget, height: AppSpacing.minTouchTarget),
@@ -795,6 +923,28 @@ class _TrackInfo extends StatelessWidget {
           onPressed: onMore,
         ),
       ],
+    );
+  }
+}
+
+/// [FavoriteFeedbackButton] names itself twice: a Semantics label around an
+/// IconButton whose tooltip says the same thing. That label is not a node of
+/// its own, so it merged into whatever held the button (here the sheet-sized
+/// node read "title / artist / Add to favorites / 1:46 / 5:00"). Merged into
+/// the button's node here, with the tooltip kept out of semantics (it still
+/// shows on long-press), the heart is one button that is read once.
+class _SingleNodeHeart extends StatelessWidget {
+  final Widget child;
+
+  const _SingleNodeHeart({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return MergeSemantics(
+      child: TooltipTheme(
+        data: TooltipTheme.of(context).copyWith(excludeFromSemantics: true),
+        child: child,
+      ),
     );
   }
 }
@@ -842,42 +992,66 @@ class _SeekBarState extends ConsumerState<_SeekBar> {
           ),
           child: SizedBox(
             height: AppSpacing.minTouchTarget,
-            child: Slider(
-              // track spans the full content width, aligned with the title
-              padding: EdgeInsets.zero,
-              min: 0.0,
-              max: maxDurationMs,
-              value: sliderValue,
-              semanticFormatterCallback: (value) =>
-                  formatDuration(Duration(milliseconds: value.toInt())),
-              onChanged: (val) {
-                setState(() {
-                  _dragValue = val;
-                });
-              },
-              onChangeEnd: (val) {
-                ref.read(playbackNotifierProvider.notifier).seek(Duration(milliseconds: val.toInt()));
-                setState(() {
-                  _dragValue = null;
-                });
-              },
+            // One node: "Playback position, 1:46 of 5:00, slider". Without
+            // the name a screen reader read only the value.
+            child: MergeSemantics(
+              child: Semantics(
+                label: 'Playback position',
+                child: Slider(
+                  // track spans the full content width, aligned with the title
+                  padding: EdgeInsets.zero,
+                  min: 0.0,
+                  max: maxDurationMs,
+                  value: sliderValue,
+                  // "1:46 of 5:00": the slider says both times, so the labels
+                  // under it are left out and the position is read once.
+                  semanticFormatterCallback: (value) {
+                    final at = formatClock(Duration(milliseconds: value.toInt()));
+                    return duration.inMilliseconds > 0 ? '$at of ${formatClock(duration)}' : at;
+                  },
+                  onChanged: (val) {
+                    setState(() {
+                      _dragValue = val;
+                    });
+                  },
+                  onChangeEnd: (val) {
+                    ref.read(playbackNotifierProvider.notifier).seek(Duration(milliseconds: val.toInt()));
+                    setState(() {
+                      _dragValue = null;
+                    });
+                  },
+                ),
+              ),
             ),
           ),
         ),
-        Row(
-          children: [
-            Text(
-              formatDuration(Duration(milliseconds: sliderValue.toInt())),
-              style: AppTypography.tabularFigures.copyWith(
-                color: isDragging ? AppColors.textPrimary : AppColors.textSecondary,
+        // The slider's 48 dp box centres its track, which left the labels
+        // closer to the play controls than to the bar they describe. Moved
+        // up by paint only: layout, the slider's touch target and the
+        // snackbar margin stay the same, and the labels let touches through
+        // to the slider they now overlap.
+        Transform.translate(
+          offset: const Offset(0, -_kSeekLabelLift),
+          child: IgnorePointer(
+            // The slider's value already reads "elapsed of total".
+            child: ExcludeSemantics(
+              child: Row(
+                children: [
+                  Text(
+                    formatClock(Duration(milliseconds: sliderValue.toInt())),
+                    style: AppTypography.tabularFigures.copyWith(
+                      color: isDragging ? AppColors.textPrimary : AppColors.textSecondary,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    formatClock(duration),
+                    style: AppTypography.tabularFigures,
+                  ),
+                ],
               ),
             ),
-            const Spacer(),
-            Text(
-              formatDuration(duration),
-              style: AppTypography.tabularFigures,
-            ),
-          ],
+          ),
         ),
       ],
     );

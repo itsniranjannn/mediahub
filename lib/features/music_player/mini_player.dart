@@ -135,22 +135,33 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
     }
 
     final screenWidth = MediaQuery.sizeOf(context).width;
+    final artist = currentItem.artist ?? 'Unknown Artist';
 
-    return Semantics(
-      label: 'Mini player: ${currentItem.title}',
-      hint: 'Opens Now Playing',
-      child: Padding(
-        // floats above the navigation bar as its own card; the 8 dp side
-        // inset plus the card's 8 dp padding puts the cover on the 16 dp gutter
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.sm8,
-          AppSpacing.sm8,
-          AppSpacing.sm8,
-          AppSpacing.xs4,
-        ),
+    return Padding(
+      // floats above the navigation bar as its own card; the 8 dp side
+      // inset plus the card's 8 dp padding puts the cover on the 16 dp gutter
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.sm8,
+        AppSpacing.sm8,
+        AppSpacing.sm8,
+        AppSpacing.xs4,
+      ),
+      // One node for the card, read once: what is playing and a tap that
+      // opens Now Playing. The cover, texts and progress line are left out
+      // (the line used to put its percentage in front of the label and the
+      // title was read twice); Previous / Play / Next stay their own buttons.
+      // The swipes are shortcuts for those buttons, so the detector itself
+      // adds nothing to the tree.
+      child: Semantics(
+        container: true,
+        button: true,
+        label: 'Mini player: ${currentItem.title} by $artist',
+        hint: 'Opens Now Playing',
+        onTap: () => _openNowPlaying(context),
         child: GestureDetector(
           key: const ValueKey('mini_player_gesture_detector'),
           behavior: HitTestBehavior.opaque,
+          excludeFromSemantics: true,
           onTap: () => _openNowPlaying(context),
           onHorizontalDragUpdate: (details) => _handleHorizontalDragUpdate(details, screenWidth),
           onHorizontalDragEnd: (details) => _handleHorizontalDragEnd(details, screenWidth),
@@ -187,36 +198,40 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
                         child: Row(
                           children: [
                             // Artwork thumbnail with Hero
-                            Hero(
-                              tag: 'now_playing_artwork',
-                              child: ArtworkThumbnail(
-                                uri: currentItem.uri,
-                                artworkPath: currentItem.artworkPath,
-                                size: _kArtworkSize,
-                                borderRadius: AppSpacing.md12,
+                            ExcludeSemantics(
+                              child: Hero(
+                                tag: 'now_playing_artwork',
+                                child: ArtworkThumbnail(
+                                  uri: currentItem.uri,
+                                  artworkPath: currentItem.artworkPath,
+                                  size: _kArtworkSize,
+                                  borderRadius: AppSpacing.sm8,
+                                ),
                               ),
                             ),
                             const SizedBox(width: AppSpacing.md12),
 
-                            // Title & Artist
+                            // Title & Artist (the card's label says both)
                             Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    currentItem.title,
-                                    style: AppTypography.bodyStrong,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  Text(
-                                    currentItem.artist ?? 'Unknown Artist',
-                                    style: AppTypography.metadata,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
+                              child: ExcludeSemantics(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      currentItem.title,
+                                      style: AppTypography.bodyStrong,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    Text(
+                                      artist,
+                                      style: AppTypography.metadata,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                             const SizedBox(width: AppSpacing.xs4),
@@ -224,7 +239,9 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
                             // Controls: Skip previous, Play/Pause, Skip next
                             IconButton(
                               icon: const Icon(Icons.skip_previous_rounded, size: 26),
-                              color: AppColors.textSecondary,
+                              // Same as skip-next: an enabled button never
+                              // reads as disabled.
+                              color: AppColors.textPrimary,
                               tooltip: 'Previous',
                               onPressed: () => notifier.skipToPrevious(),
                             ),
@@ -259,7 +276,10 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    child: _MiniProgressLine(durationMs: currentItem.durationMs),
+                    // Decoration here; Now Playing's seek bar reads the time.
+                    child: ExcludeSemantics(
+                      child: _MiniProgressLine(durationMs: currentItem.durationMs),
+                    ),
                   ),
                 ],
               ),

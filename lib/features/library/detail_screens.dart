@@ -5,6 +5,7 @@ import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
+import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
@@ -18,8 +19,13 @@ import '../music_player/playback_notifier.dart';
 /// Size of the cover in the hero header of every detail screen.
 const double _kHeroArtSize = 168;
 
-/// Corner radius of a square hero cover.
-const double _kHeroArtRadius = AppSpacing.xxl24;
+/// Corner radius of a square hero cover (about 10 % of its side, so it reads
+/// as album art rather than an app icon).
+const double _kHeroArtRadius = AppSpacing.lg16;
+
+/// Platform lookup size of the hero cover (ArtworkThumbnail asks for 512 px
+/// art for boxes up to 300 dp); the tint check shares that lookup.
+const int _kHeroLookupSize = 512;
 
 /// Scroll distance after which the hero title is under the app bar, so the
 /// app bar shows the title instead.
@@ -29,11 +35,13 @@ const double _kCollapseOffset = _kHeroArtSize + 48;
 String _albumSeed(AlbumGroup album) => ArtworkPlaceholder.albumSeed(album.album);
 String _artistSeed(ArtistGroup artist) => ArtworkPlaceholder.artistSeed(artist.artist);
 
-/// Violet "tonal" button used next to the filled Play button.
-final ButtonStyle _tonalStyle = FilledButton.styleFrom(
-  backgroundColor: AppColors.primary.withValues(alpha: 0.16),
-  foregroundColor: AppColors.primary,
-);
+/// The song whose cover stands for [album]: the one its tile in Music >
+/// Albums shows, or the first song when the tile has none.
+MediaItem _albumCoverSong(AlbumGroup album, List<MediaItem> songs) {
+  final coverUri = album.coverUri;
+  if (coverUri == null) return songs.first;
+  return songs.firstWhere((song) => song.uri == coverUri, orElse: () => songs.first);
+}
 
 class AlbumDetailScreen extends ConsumerWidget {
   final AlbumGroup album;
@@ -70,34 +78,41 @@ class AlbumDetailScreen extends ConsumerWidget {
               message: 'Songs from this album are no longer in your library.',
             );
           }
+          final cover = _albumCoverSong(album, songs);
           return CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
-                child: _HeroHeader(
-                  tint: ArtworkTint.surfaceGradient(_albumSeed(album)),
-                  artwork: _HeroArtwork(
-                    glowColor: ArtworkTint.glow(_albumSeed(album)),
-                    child: ArtworkThumbnail(
-                      uri: songs.first.uri,
-                      artworkPath: songs.first.artworkPath,
-                      size: _kHeroArtSize,
-                      borderRadius: _kHeroArtRadius,
-                      placeholderIcon: Icons.album_rounded,
-                      // Same colours as the album's tile in Music > Albums.
-                      placeholderSeed: _albumSeed(album),
+                // A real cover gets the neutral violet glow: the placeholder's
+                // palette would clash with the cover's own colours.
+                child: ArtworkPresenceBuilder(
+                  item: cover,
+                  lookupSize: _kHeroLookupSize,
+                  builder: (context, hasArtwork, _) => _HeroHeader(
+                    tint: hasArtwork ? AppColors.heroGradient : ArtworkTint.surfaceGradient(_albumSeed(album)),
+                    artwork: _HeroArtwork(
+                      glowColor: hasArtwork ? null : ArtworkTint.glow(_albumSeed(album)),
+                      child: ArtworkThumbnail(
+                        uri: cover.uri,
+                        artworkPath: cover.artworkPath,
+                        size: _kHeroArtSize,
+                        borderRadius: _kHeroArtRadius,
+                        placeholderIcon: Icons.album_rounded,
+                        // Same colours as the album's tile in Music > Albums.
+                        placeholderSeed: _albumSeed(album),
+                      ),
                     ),
+                    eyebrow: 'Album',
+                    title: album.album,
+                    subtitle: album.artist,
+                    meta: _songsMeta(songs),
+                    onPlay: () {
+                      ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
+                    },
+                    onShuffle: () {
+                      final shuffled = List<MediaItem>.from(songs)..shuffle();
+                      ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
+                    },
                   ),
-                  eyebrow: 'Album',
-                  title: album.album,
-                  subtitle: album.artist,
-                  meta: _songsMeta(songs),
-                  onPlay: () {
-                    ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
-                  },
-                  onShuffle: () {
-                    final shuffled = List<MediaItem>.from(songs)..shuffle();
-                    ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
-                  },
                 ),
               ),
               SliverList.builder(
@@ -153,30 +168,35 @@ class ArtistDetailScreen extends ConsumerWidget {
           return CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
-                child: _HeroHeader(
-                  tint: ArtworkTint.surfaceGradient(_artistSeed(artist)),
-                  artwork: _HeroArtwork(
-                    circle: true,
-                    glowColor: ArtworkTint.glow(_artistSeed(artist)),
-                    child: ArtworkThumbnail(
-                      uri: songs.first.uri,
-                      artworkPath: songs.first.artworkPath,
-                      size: _kHeroArtSize,
-                      borderRadius: _kHeroArtSize / 2, // Circular for artist
-                      placeholderIcon: Icons.person_rounded,
-                      placeholderSeed: _artistSeed(artist),
+                // A real cover gets the neutral violet glow (see the album).
+                child: ArtworkPresenceBuilder(
+                  item: songs.first,
+                  lookupSize: _kHeroLookupSize,
+                  builder: (context, hasArtwork, _) => _HeroHeader(
+                    tint: hasArtwork ? AppColors.heroGradient : ArtworkTint.surfaceGradient(_artistSeed(artist)),
+                    artwork: _HeroArtwork(
+                      circle: true,
+                      glowColor: hasArtwork ? null : ArtworkTint.glow(_artistSeed(artist)),
+                      child: ArtworkThumbnail(
+                        uri: songs.first.uri,
+                        artworkPath: songs.first.artworkPath,
+                        size: _kHeroArtSize,
+                        borderRadius: _kHeroArtSize / 2, // Circular for artist
+                        placeholderIcon: Icons.person_rounded,
+                        placeholderSeed: _artistSeed(artist),
+                      ),
                     ),
+                    eyebrow: 'Artist',
+                    title: artist.artist,
+                    meta: _songsMeta(songs),
+                    onPlay: () {
+                      ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
+                    },
+                    onShuffle: () {
+                      final shuffled = List<MediaItem>.from(songs)..shuffle();
+                      ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
+                    },
                   ),
-                  eyebrow: 'Artist',
-                  title: artist.artist,
-                  meta: _songsMeta(songs),
-                  onPlay: () {
-                    ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
-                  },
-                  onShuffle: () {
-                    final shuffled = List<MediaItem>.from(songs)..shuffle();
-                    ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
-                  },
                 ),
               ),
               SliverList.builder(
@@ -286,18 +306,35 @@ class PlaylistDetailScreen extends ConsumerWidget {
             },
             itemBuilder: (context, index) {
               final song = songs[index];
+              void remove() {
+                ref.read(libraryRepositoryProvider).removeSongFromPlaylist(playlist.id, song.id, index);
+              }
+
+              // Under TalkBack / VoiceOver the swipe would become unlabelled
+              // scroll actions on the row, and "scroll forward" would take the
+              // song out of the playlist. So the swipe is off and the row gets
+              // a real "Remove from playlist" button, like the queue's. (A
+              // custom action cannot be used: it conflicts with the list's own
+              // "Move up / down" actions and splits the row into two nodes.)
+              final screenReader = MediaQuery.accessibleNavigationOf(context);
               return Dismissible(
                 key: ValueKey('${song.id}_$index'),
-                direction: DismissDirection.endToStart,
+                direction: screenReader ? DismissDirection.none : DismissDirection.endToStart,
                 background: const _RemoveBackground(),
-                onDismissed: (_) {
-                  ref.read(libraryRepositoryProvider).removeSongFromPlaylist(playlist.id, song.id, index);
-                },
+                onDismissed: (_) => remove(),
                 child: _RowDragListener(
                   index: index,
                   child: MediaSongRow(
                     item: song,
-                    trailing: _DragHandle(index: index),
+                    trailing: screenReader
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _RemoveFromPlaylistButton(onPressed: remove),
+                              _DragHandle(index: index),
+                            ],
+                          )
+                        : _DragHandle(index: index),
                     onTap: () {
                       ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
                     },
@@ -392,7 +429,7 @@ class PlaylistDetailScreen extends ConsumerWidget {
   }
 }
 
-/// "12 songs • 48 min"
+/// "12 songs · 48 min"
 String _songsMeta(List<MediaItem> songs) {
   final count = songs.length;
   final countText = count == 1 ? '1 song' : '$count songs';
@@ -412,7 +449,7 @@ String _songsMeta(List<MediaItem> songs) {
   } else {
     durationText = '${total.inSeconds} sec';
   }
-  return '$countText • $durationText';
+  return '$countText · $durationText';
 }
 
 /// Scaffold for the detail screens: a transparent app bar over the hero glow
@@ -536,7 +573,8 @@ class _HeroHeader extends StatelessWidget {
   final VoidCallback? onShuffle;
 
   /// Glow behind the header; the violet hero gradient unless the cover's
-  /// own colours are passed.
+  /// own colours are passed. A change (the real cover finishing loading)
+  /// cross-fades instead of snapping.
   final Gradient tint;
 
   const _HeroHeader({
@@ -555,7 +593,9 @@ class _HeroHeader extends StatelessWidget {
     // The body sits behind the transparent app bar; this is its height.
     final topInset = MediaQuery.paddingOf(context).top;
 
-    return DecoratedBox(
+    return AnimatedContainer(
+      duration: MotionTokens.duration(context, MotionTokens.page),
+      curve: MotionTokens.easeOut,
       decoration: BoxDecoration(gradient: tint),
       child: DecoratedBox(
         decoration: BoxDecoration(
@@ -589,7 +629,8 @@ class _HeroHeader extends StatelessWidget {
               Semantics(
                 header: true,
                 child: Text(
-                  title,
+                  breakableTitle(title),
+                  semanticsLabel: title,
                   style: AppTypography.screenTitle,
                   textAlign: TextAlign.center,
                   maxLines: 2,
@@ -628,7 +669,6 @@ class _HeroHeader extends StatelessWidget {
                       const SizedBox(width: AppSpacing.md12),
                       Expanded(
                         child: FilledButton.tonalIcon(
-                          style: _tonalStyle,
                           onPressed: onShuffle,
                           icon: const Icon(Icons.shuffle_rounded, size: 20),
                           label: const Text('Shuffle'),
@@ -646,7 +686,8 @@ class _HeroHeader extends StatelessWidget {
   }
 }
 
-/// Cover with a soft glow underneath (violet, or the cover's own colour).
+/// Cover with a soft glow underneath: neutral violet, or the placeholder's
+/// own colour when there is no real cover. A change cross-fades.
 class _HeroArtwork extends StatelessWidget {
   final Widget child;
   final bool circle;
@@ -656,7 +697,9 @@ class _HeroArtwork extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    return AnimatedContainer(
+      duration: MotionTokens.duration(context, MotionTokens.page),
+      curve: MotionTokens.easeOut,
       decoration: BoxDecoration(
         shape: circle ? BoxShape.circle : BoxShape.rectangle,
         borderRadius: circle ? null : BorderRadius.circular(_kHeroArtRadius),
@@ -752,23 +795,52 @@ class _DragHandle extends StatelessWidget {
   }
 }
 
-/// Shown behind a playlist row while it is swiped away.
+/// Removes a song from the playlist. Shown only while a screen reader runs,
+/// when the swipe is off; styled like the queue's remove button.
+class _RemoveFromPlaylistButton extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _RemoveFromPlaylistButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: const Icon(Icons.remove_circle_outline_rounded, size: 22),
+      color: AppColors.textMuted,
+      tooltip: 'Remove from playlist',
+      constraints: const BoxConstraints(
+        minWidth: AppSpacing.minTouchTarget,
+        minHeight: AppSpacing.minTouchTarget,
+      ),
+      onPressed: onPressed,
+    );
+  }
+}
+
+/// Shown behind a playlist row while it is swiped away: the same inset pill
+/// as the row (and as the queue's swipe-to-remove).
 class _RemoveBackground extends StatelessWidget {
   const _RemoveBackground();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: AppColors.error.withValues(alpha: 0.16),
-      alignment: Alignment.centerRight,
-      padding: const EdgeInsets.only(right: AppSpacing.xxl24),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('Remove', style: AppTypography.button.copyWith(color: AppColors.error)),
-          const SizedBox(width: AppSpacing.sm8),
-          const Icon(Icons.delete_rounded, color: AppColors.error),
-        ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm8, vertical: 1),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.error.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
+        ),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: AppSpacing.lg16),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Remove', style: AppTypography.button.copyWith(color: AppColors.error)),
+            const SizedBox(width: AppSpacing.sm8),
+            const Icon(Icons.delete_rounded, color: AppColors.error),
+          ],
+        ),
       ),
     );
   }

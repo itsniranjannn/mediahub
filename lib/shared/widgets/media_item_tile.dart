@@ -128,31 +128,18 @@ class _VideoCard extends StatelessWidget {
                               borderRadius: 0,
                               placeholderIcon: Icons.movie_outlined,
                             ),
-                            // Soft scrim so the badges stay readable on bright frames.
-                            DecoratedBox(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  // Eased (three stops) so no band shows where
-                                  // it starts on smooth placeholder gradients.
-                                  stops: const [0.45, 0.75, 1.0],
-                                  colors: [
-                                    AppColors.overlay.withValues(alpha: 0),
-                                    AppColors.overlay.withValues(alpha: 0.16),
-                                    AppColors.overlay.withValues(alpha: 0.54),
-                                  ],
-                                ),
-                              ),
-                            ),
+                            // No scrim over the frame: every badge has its own
+                            // dark chip and the resume bar its own dark track,
+                            // so bright family videos keep their colours.
+                            // Same dark chip as the duration, so it reads on
+                            // the light corner of any cover.
                             if (isDownloaded)
                               const Positioned(
                                 left: AppSpacing.md12,
                                 top: AppSpacing.md12,
-                                child: PillTag(
-                                  text: 'Downloaded',
+                                child: MediaBadge(
                                   icon: Icons.download_done_rounded,
-                                  filled: true,
+                                  text: 'Downloaded',
                                 ),
                               ),
                             if (hasDuration)
@@ -169,7 +156,9 @@ class _VideoCard extends StatelessWidget {
                                 child: LinearProgressIndicator(
                                   value: ratio.clamp(0.0, 1.0),
                                   minHeight: 3,
-                                  backgroundColor: AppColors.onOverlay.withValues(alpha: 0.22),
+                                  // Teal on the dark track is >= 5.7:1 over
+                                  // any frame, white included.
+                                  backgroundColor: AppColors.overlay,
                                   valueColor: const AlwaysStoppedAnimation<Color>(AppColors.accent),
                                 ),
                               ),
@@ -187,7 +176,8 @@ class _VideoCard extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              title,
+                              breakableTitle(title),
+                              semanticsLabel: title,
                               style: AppTypography.bodyStrong,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
@@ -330,7 +320,8 @@ class _AudioRow extends StatelessWidget {
                     uri: item.uri,
                     artworkPath: item.artworkPath,
                     size: 52,
-                    borderRadius: AppSpacing.md12,
+                    // same corners as MediaSongRow's cover
+                    borderRadius: AppSpacing.sm8,
                     placeholderIcon: Icons.music_note_rounded,
                   ),
                   const SizedBox(width: AppSpacing.md12),
@@ -350,11 +341,14 @@ class _AudioRow extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(width: AppSpacing.sm8),
-                  Text(
-                    item.durationMs > 0 ? formatDuration(Duration(milliseconds: item.durationMs)) : '--:--',
-                    style: AppTypography.tabularFigures,
-                  ),
+                  // An unknown length shows no clock, as in MediaSongRow.
+                  if (item.durationMs > 0) ...[
+                    const SizedBox(width: AppSpacing.sm8),
+                    Text(
+                      formatClock(Duration(milliseconds: item.durationMs)),
+                      style: AppTypography.tabularFigures,
+                    ),
+                  ],
                   if (hasMenu)
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert_rounded, color: AppColors.textMuted),

@@ -1,6 +1,8 @@
 // Preview renders for design reviews (not part of the test suite).
-// Real Inter + MaterialIcons, 360x800 dp at 3x, no artwork files so every
-// cover shows its placeholder.
+// Real Inter + MaterialIcons, 360x800 dp at 3x. Most scenes have no artwork
+// so every cover shows its placeholder; the *_art and *_bright scenes give
+// some items a real cover (generated PNGs: a file for artworkPath, or bytes
+// from a mocked device-art channel) to check tints and contrast over art.
 //
 // Run from the repo root:
 //   flutter test tools/design_previews/preview_test.dart
@@ -19,6 +21,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/permissions/media_permission_service.dart';
 import 'package:mediahub/core/platform_info.dart';
+import 'package:mediahub/core/services/artwork_service.dart';
 import 'package:mediahub/core/storage/settings_store.dart';
 import 'package:mediahub/data/database/app_database.dart';
 import 'package:mediahub/data/repositories/library_repository_impl.dart';
@@ -172,6 +175,85 @@ Future<void> shot(WidgetTester tester, String name) async {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Generated covers
+
+/// A mostly white sleeve (paper white, a pale sun, light grey type bars):
+/// the worst case for light text drawn near a blurred copy of the cover.
+Future<Uint8List> brightCoverPng() => _coverPng((canvas, s) {
+      canvas.drawRect(Offset.zero & s, Paint()..color = const Color(0xFFFBFAF6));
+      canvas.drawCircle(
+        Offset(s.width * 0.5, s.height * 0.42),
+        s.width * 0.2,
+        Paint()..color = const Color(0xFFFFEDB8),
+      );
+      final bar = Paint()..color = const Color(0xFFE4E2DC);
+      canvas
+        ..drawRect(Rect.fromLTWH(s.width * 0.18, s.height * 0.74, s.width * 0.64, s.height * 0.035), bar)
+        ..drawRect(Rect.fromLTWH(s.width * 0.3, s.height * 0.8, s.width * 0.4, s.height * 0.025), bar);
+    });
+
+/// A saturated warm cover (red field, orange disc, dark lower band): a
+/// typical embedded album cover whose colour has nothing to do with the
+/// item's hash palette.
+Future<Uint8List> warmCoverPng() => _coverPng((canvas, s) {
+      final rect = Offset.zero & s;
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..shader = const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFFD8452E), Color(0xFF8E1B2A)],
+          ).createShader(rect),
+      );
+      canvas.drawCircle(
+        Offset(s.width * 0.62, s.height * 0.38),
+        s.width * 0.22,
+        Paint()..color = const Color(0xFFFFA23A),
+      );
+      canvas.drawRect(
+        Rect.fromLTWH(0, s.height * 0.72, s.width, s.height * 0.28),
+        Paint()..color = const Color(0xFF2A0E16),
+      );
+    });
+
+Future<Uint8List> _coverPng(void Function(Canvas canvas, Size size) paint) async {
+  const side = 512;
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  paint(canvas, const Size(512, 512));
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(side, side);
+  final data = await image.toByteData(format: ui.ImageByteFormat.png);
+  picture.dispose();
+  image.dispose();
+  return data!.buffer.asUint8List();
+}
+
+late Uint8List brightCover;
+late Uint8List warmCover;
+late String brightCoverPath;
+
+const _artChannel = MethodChannel('mediahub/media_store');
+
+/// The device has embedded art for the uris in [art] (any lookup size).
+void mockDeviceArt(Map<String, Uint8List> art) {
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(_artChannel, (call) async {
+    if (call.method != 'getArtwork') return null;
+    final bytes = art[(call.arguments as Map)['uri']];
+    return bytes?.toList();
+  });
+}
+
+void clearDeviceArt() {
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(_artChannel, null);
+  ArtworkService.instance.clearCache();
+}
+
+// ---------------------------------------------------------------------------
+// Data
+
 const _songData = [
   ('Resham Firiri (Folk Medley)', 'Himal Sessions', 'Songs of the Hills', 245000),
   ('Sunrise Over Phewa Lake', 'Bipana Gurung', 'Pokhara Mornings', 213000),
@@ -224,15 +306,29 @@ final videos = [
     ),
 ];
 
-domain.PlaybackState playing(int index, {bool isPlaying = true}) => domain.PlaybackState(
-      currentItemId: songs[index].id,
-      queue: songs,
+domain.PlaybackState playing(int index, {bool isPlaying = true}) => playingFrom(songs, index, isPlaying: isPlaying);
+
+domain.PlaybackState playingFrom(List<MediaItem> queue, int index, {bool isPlaying = true}) => domain.PlaybackState(
+      currentItemId: queue[index].id,
+      queue: queue,
       queueIndex: index,
       position: const Duration(seconds: 74),
-      duration: Duration(milliseconds: songs[index].durationMs),
+      duration: Duration(milliseconds: queue[index].durationMs),
       isPlaying: isPlaying,
       updatedAt: DateTime(2026),
     );
+
+/// Index of the first song whose placeholder palette is one of [wanted]
+/// (in order of preference) and differs from song [other]'s.
+int songWithPalette(List<int> wanted, {required int other}) {
+  final avoid = ArtworkPlaceholder.paletteIndexFor(songs[other].uri);
+  for (final p in wanted) {
+    if (p == avoid) continue;
+    final i = songs.indexWhere((s) => ArtworkPlaceholder.paletteIndexFor(s.uri) == p);
+    if (i >= 0) return i;
+  }
+  return songs.indexWhere((s) => ArtworkPlaceholder.paletteIndexFor(s.uri) != avoid);
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -256,13 +352,28 @@ void main() {
     registerFallbackValue(FakePlaybackState());
     await loadFonts();
     Directory(outDir).createSync(recursive: true);
+    brightCover = await brightCoverPng();
+    warmCover = await warmCoverPng();
+    final artDir = Directory.systemTemp.createTempSync('mediahub_preview_art');
+    brightCoverPath = '${artDir.path}/bright_cover.png'.replaceAll(r'\', '/');
+    File(brightCoverPath).writeAsBytesSync(brightCover);
+    File('$outDir/_bright_cover_source.png').writeAsBytesSync(brightCover);
+    File('$outDir/_warm_cover_source.png').writeAsBytesSync(warmCover);
     // ignore: avoid_print
     print('song palettes: ${songs.map((s) => ArtworkPlaceholder.paletteIndexFor(s.uri)).toList()}');
     // ignore: avoid_print
     print('video palettes: ${videos.map((s) => ArtworkPlaceholder.paletteIndexFor(s.uri)).toList()}');
+    // ignore: avoid_print
+    print('album palettes: ${albums.map((a) => ArtworkPlaceholder.paletteIndexFor(ArtworkPlaceholder.albumSeed(a.album))).toList()}');
   });
 
   setUp(() {
+    clearDeviceArt();
+    // Like a phone, a device-art lookup answers (with nothing) at once, so
+    // tinted surfaces settle on their placeholder palette. Without a handler
+    // the call would wait on the real event loop and never answer in a
+    // scene's fake time.
+    mockDeviceArt(const {});
     db = AppDatabase(NativeDatabase.memory());
     repo = MockRepo();
     perm = MockPerm();
@@ -271,6 +382,7 @@ void main() {
     when(() => playbackRepo.savePlaybackState(any())).thenAnswer((_) async {});
     when(() => perm.checkAudioPermission()).thenAnswer((_) async => MediaPermissionState.granted);
     when(() => perm.checkVideoPermission()).thenAnswer((_) async => MediaPermissionState.granted);
+    when(() => repo.scanDeviceMedia()).thenAnswer((_) async {});
     when(() => repo.watchMediaItems(
           mediaType: MediaType.audio,
           searchQuery: any(named: 'searchQuery'),
@@ -286,13 +398,18 @@ void main() {
   });
 
   tearDown(() async {
+    clearDeviceArt();
     await db.close();
   });
 
-  void phone(WidgetTester tester) {
-    tester.view.physicalSize = const Size(360 * 3, 800 * 3);
+  void phone(WidgetTester tester, {double width = 360, double height = 800, double textScale = 1}) {
+    tester.view.physicalSize = Size(width * 3, height * 3);
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
+    if (textScale != 1) {
+      tester.platformDispatcher.textScaleFactorTestValue = textScale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    }
   }
 
   Widget app(Widget home, {domain.PlaybackState? state, List overrides = const [], LibraryRepository? library}) => ProviderScope(
@@ -323,6 +440,28 @@ void main() {
     }
   }
 
+  /// Lets real covers load: file reads, platform-channel bytes, image
+  /// decoding and the Now Playing swatch all need the real event loop, so
+  /// real time and fake frames alternate, then every Image on screen is
+  /// precached and the fade-ins run to the end.
+  Future<void> settleArt(WidgetTester tester) async {
+    for (var i = 0; i < 10; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 60)));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    await tester.runAsync(() async {
+      for (final element in find.byType(Image).evaluate()) {
+        final image = element.widget as Image;
+        await precacheImage(image.image, element);
+      }
+    });
+    for (var i = 0; i < 10; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 60)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await settle(tester);
+  }
+
   Future<void> unmount(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 4));
@@ -333,6 +472,50 @@ void main() {
     await tester.pumpWidget(app(const MusicScreen(), state: playing(2)));
     await settle(tester);
     await shot(tester, 'music_list');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('music_list_320', (tester) async {
+    phone(tester, width: 320);
+    await tester.pumpWidget(app(const MusicScreen(), state: playing(2)));
+    await settle(tester);
+    await shot(tester, 'music_list_320');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('music_list_text13', (tester) async {
+    phone(tester, textScale: 1.3);
+    await tester.pumpWidget(app(const MusicScreen(), state: playing(2)));
+    await settle(tester);
+    await shot(tester, 'music_list_text13');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('music_list_art', (tester) async {
+    // Two songs with embedded covers among placeholders.
+    phone(tester);
+    mockDeviceArt({songs[0].uri: warmCover, songs[3].uri: brightCover});
+    await tester.pumpWidget(app(const MusicScreen(), state: playing(2)));
+    await settleArt(tester);
+    await shot(tester, 'music_list_art');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('music_empty', (tester) async {
+    phone(tester);
+    when(() => repo.watchMediaItems(
+          mediaType: MediaType.audio,
+          searchQuery: any(named: 'searchQuery'),
+          sortBy: any(named: 'sortBy'),
+          ascending: any(named: 'ascending'),
+        )).thenAnswer((_) => Stream.value(const []));
+    await tester.pumpWidget(app(const MusicScreen()));
+    await settle(tester);
+    await shot(tester, 'music_empty');
     expect(tester.takeException(), isNull);
     await unmount(tester);
   });
@@ -352,8 +535,18 @@ void main() {
     await unmount(tester);
   });
 
-  for (final (name, index) in [('now_playing_a', 0), ('now_playing_b', 2)]) {
+  // a: cyan (song 0). b: a song on another palette, rose or violet if any
+  // song lands there. dusk: the new palette entry.
+  final npB = songWithPalette([2, 0, 6, 4], other: 0);
+  final npDusk = songs.indexWhere((s) => ArtworkPlaceholder.paletteIndexFor(s.uri) == 7);
+  for (final (name, index) in [
+    ('now_playing_a', 0),
+    ('now_playing_b', npB),
+    if (npDusk >= 0) ('now_playing_dusk', npDusk),
+  ]) {
     testWidgets(name, (tester) async {
+      // ignore: avoid_print
+      print('$name: song $index, palette ${ArtworkPlaceholder.paletteIndexFor(songs[index].uri)}');
       phone(tester);
       await tester.pumpWidget(app(const NowPlayingSheet(), state: playing(index)));
       await settle(tester);
@@ -362,6 +555,42 @@ void main() {
       await unmount(tester);
     });
   }
+
+  testWidgets('now_playing_bright', (tester) async {
+    // A real, mostly white cover from a saved file: header and caption
+    // contrast over the blurred cover.
+    phone(tester);
+    final queue = [
+      for (var i = 0; i < songs.length; i++)
+        i == 3 ? songs[i].copyWith(artworkPath: brightCoverPath) : songs[i],
+    ];
+    await tester.pumpWidget(app(const NowPlayingSheet(), state: playingFrom(queue, 3)));
+    await settleArt(tester);
+    await shot(tester, 'now_playing_bright');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('now_playing_warm_art', (tester) async {
+    // Embedded (device) art, warm red: the glow should go neutral.
+    phone(tester);
+    mockDeviceArt({songs[4].uri: warmCover});
+    await tester.pumpWidget(app(const NowPlayingSheet(), state: playing(4)));
+    await settleArt(tester);
+    await shot(tester, 'now_playing_warm_art');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('now_playing_text13', (tester) async {
+    // Longest title at 1.3x text.
+    phone(tester, textScale: 1.3);
+    await tester.pumpWidget(app(const NowPlayingSheet(), state: playing(6)));
+    await settle(tester);
+    await shot(tester, 'now_playing_text13');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
 
   testWidgets('queue', (tester) async {
     phone(tester);
@@ -405,6 +634,23 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('home_real_art', (tester) async {
+    // The "Continue listening" song has an embedded warm cover: the card
+    // should switch to the neutral hero gradient.
+    phone(tester);
+    tester.view.physicalSize = const Size(360 * 3, 800 * 3);
+    mockDeviceArt({songs[1].uri: warmCover, songs[0].uri: brightCover});
+    await tester.pumpWidget(app(
+      const HomeScreen(),
+      state: playing(1, isPlaying: false),
+      library: HomeRepo(songs, videos),
+    ));
+    await settleArt(tester);
+    await shot(tester, 'home_real_art');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
   testWidgets('videos', (tester) async {
     phone(tester);
     tester.view.physicalSize = const Size(360 * 3, 1300 * 3);
@@ -425,6 +671,33 @@ void main() {
     ));
     await settle(tester);
     await shot(tester, 'videos');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('videos_downloaded_bright', (tester) async {
+    // A downloaded video whose saved thumbnail is nearly white, first in
+    // the list: the "Downloaded" and duration badges over a bright frame.
+    phone(tester);
+    final items = [
+      videos[2].copyWith(artworkPath: brightCoverPath),
+      videos[0],
+      videos[1],
+    ];
+    final state = LibraryState(
+      permissionState: MediaPermissionState.granted,
+      status: LibraryStatus.success,
+      items: items,
+    );
+    await tester.pumpWidget(app(
+      const VideosScreen(),
+      overrides: [
+        videoLibraryProvider.overrideWith(() => FakeVideoNotifier(state)),
+        allVideoProgressStreamProvider.overrideWith((ref) => Stream.value(const [])),
+      ],
+    ));
+    await settleArt(tester);
+    await shot(tester, 'videos_downloaded_bright');
     expect(tester.takeException(), isNull);
     await unmount(tester);
   });
@@ -492,6 +765,58 @@ void main() {
     await tester.tap(find.text('Albums'));
     await settle(tester);
     await shot(tester, 'albums_grid');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  // The same album, with a real embedded cover, on its grid tile and on its
+  // detail page: both should show the same cover, and the header should
+  // drop the hash tint for the neutral one.
+  final artAlbums = [
+    AlbumGroup(
+      album: albums[0].album,
+      artist: albums[0].artist,
+      songCount: 6,
+      totalDurationMs: 1,
+      coverUri: songs[0].uri,
+    ),
+    ...albums.skip(1),
+  ];
+
+  testWidgets('albums_grid_art', (tester) async {
+    phone(tester);
+    mockDeviceArt({songs[0].uri: warmCover});
+    // Plus downloads (no album tag): their tile shows the cover song's
+    // saved thumbnail file, as their album page does. Second, so it is in
+    // the shot (the real list sorts it last).
+    final withDownloads = [
+      artAlbums.first,
+      AlbumGroup(
+        album: 'Unknown Album',
+        artist: 'Mountain Bridges',
+        songCount: 3,
+        totalDurationMs: 1,
+        coverUri: 'file:///storage/emulated/0/Music/MediaHub/folk_session.m4a',
+        coverArtworkPath: brightCoverPath,
+      ),
+      ...artAlbums.skip(1),
+    ];
+    when(() => repo.watchAlbums(searchQuery: any(named: 'searchQuery'))).thenAnswer((_) => Stream.value(withDownloads));
+    await tester.pumpWidget(app(const MusicScreen(), state: playing(2)));
+    await settle(tester);
+    await tester.tap(find.text('Albums'));
+    await settleArt(tester);
+    await shot(tester, 'albums_grid_art');
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('album_detail_art', (tester) async {
+    phone(tester);
+    mockDeviceArt({songs[0].uri: warmCover});
+    await tester.pumpWidget(app(AlbumDetailScreen(album: artAlbums.first), state: playing(3)));
+    await settleArt(tester);
+    await shot(tester, 'album_detail_art');
     expect(tester.takeException(), isNull);
     await unmount(tester);
   });

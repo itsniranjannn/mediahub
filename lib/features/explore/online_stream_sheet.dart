@@ -31,7 +31,13 @@ class OnlineStreamSheet extends StatelessWidget {
           shrinkWrap: true,
           padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.xxl24),
           children: [
-            Text(video.title, style: AppTypography.sectionTitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+            Text(
+              breakableTitle(video.title),
+              semanticsLabel: video.title,
+              style: AppTypography.sectionTitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             const SizedBox(height: 2),
             Text(video.author, style: AppTypography.metadata),
             if (videos.isNotEmpty) ...[

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
+import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
@@ -303,13 +304,14 @@ class _SongHeader extends StatelessWidget {
   const _SongHeader({required this.item});
 
   static const double _artSize = 60;
+  static const double _artRadius = AppSpacing.sm8;
   static const double _titleGap = 2;
 
   @override
   Widget build(BuildContext context) {
     final artist = item.artist ?? 'Unknown Artist';
     final album = item.album;
-    final subtitle = (album != null && album.isNotEmpty) ? '$artist • $album' : artist;
+    final subtitle = (album != null && album.isNotEmpty) ? '$artist · $album' : artist;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.lg16),
@@ -320,14 +322,14 @@ class _SongHeader extends StatelessWidget {
           DecoratedBox(
             position: DecorationPosition.foreground,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(AppSpacing.md12),
+              borderRadius: BorderRadius.circular(_artRadius),
               border: Border.all(color: AppColors.divider),
             ),
             child: ArtworkThumbnail(
               uri: item.uri,
               artworkPath: item.artworkPath,
               size: _artSize,
-              borderRadius: AppSpacing.md12,
+              borderRadius: _artRadius,
             ),
           ),
           const SizedBox(width: AppSpacing.md12),
@@ -337,7 +339,8 @@ class _SongHeader extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  item.title,
+                  breakableTitle(item.title),
+                  semanticsLabel: item.title,
                   style: AppTypography.bodyStrong,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,

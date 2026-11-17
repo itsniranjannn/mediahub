@@ -60,10 +60,11 @@ abstract class AppColors {
   // Artwork identity
   /// Cover gradients for songs and videos without embedded art. One is
   /// picked per item from a stable hash of its uri (see ArtworkPlaceholder),
-  /// so an item keeps its colours everywhere it appears. Each runs from a
+  /// so an item keeps its colours everywhere it appears. Eight hues: violet,
+  /// teal, rose, indigo, amber, cyan, magenta and dusk. Each runs from a
   /// light-ish top-left stop to a deep bottom-right stop that melts into the
-  /// canvas; white glyphs at 85 % reach >= 3:1 on the top stop and >= 5:1 in
-  /// the middle (checked in test/unit/artwork_placeholder_test.dart).
+  /// canvas; white glyphs at 85 % reach >= 3:1 on the top stop and >= 4.5:1
+  /// in the middle (checked in test/unit/artwork_placeholder_test.dart).
   static const List<LinearGradient> artworkGradients = [
     // violet
     LinearGradient(
@@ -107,11 +108,13 @@ abstract class AppColors {
       end: Alignment.bottomRight,
       colors: [Color(0xFFC25BE0), Color(0xFF461663)],
     ),
-    // emerald
+    // dusk: a calm, greyed violet. It sits apart from the violet above by
+    // lightness and chroma, and keeps green out of the palette (green is
+    // the success colour; teal is the only cool green-blue).
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF239866), Color(0xFF0A3632)],
+      colors: [Color(0xFF7A6CC0), Color(0xFF221B4A)],
     ),
   ];
 }

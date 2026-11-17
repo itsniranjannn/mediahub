@@ -8,6 +8,7 @@ import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/app_config.dart';
 import '../../core/permissions/media_permission_service.dart';
+import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/playlist_and_groups.dart';
@@ -20,13 +21,8 @@ import '../library/media_context_menu.dart';
 import '../library/media_song_row.dart';
 import 'playback_notifier.dart';
 
-/// Violet "tonal" button used next to a filled primary action.
-final ButtonStyle _tonalStyle = FilledButton.styleFrom(
-  backgroundColor: AppColors.primary.withValues(alpha: 0.16),
-  foregroundColor: AppColors.primary,
-);
-
 /// Compact toolbar buttons (40 dp tall, 48 dp touch target via padding).
+/// Sizes only: the theme colours FilledButton and FilledButton.tonal.
 final ButtonStyle _compactStyle = FilledButton.styleFrom(
   minimumSize: const Size(0, AppSpacing.giant40),
   padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md12),
@@ -213,7 +209,8 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
         textInputAction: TextInputAction.search,
         style: AppTypography.body,
         decoration: InputDecoration(
-          hintText: 'Search songs, albums, artists',
+          // Short enough to stay whole at 320 dp and at large text.
+          hintText: 'Search your music',
           prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textSecondary),
           suffixIcon: _searchController.text.isNotEmpty
               ? IconButton(
@@ -322,7 +319,16 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
               title: 'No Music Found',
               message: state.searchQuery.isNotEmpty
                   ? 'No songs matching "${state.searchQuery}".'
-                  : 'Tap the scan button in the top right to scan your device for audio files.',
+                  : 'Find the songs saved on this phone.',
+              action: state.searchQuery.isNotEmpty
+                  ? null
+                  : FilledButton.tonalIcon(
+                      onPressed: state.isScanning
+                          ? null
+                          : () => ref.read(musicLibraryProvider.notifier).scanDevice(),
+                      icon: const Icon(Icons.refresh_rounded, size: 20),
+                      label: const Text('Scan device'),
+                    ),
             ),
           ),
         ],
@@ -474,7 +480,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
   static String _artistSubtitle(ArtistGroup artist) {
     final songs = _count(artist.songCount, 'song', 'songs');
     if (artist.albumCount <= 0) return songs;
-    return '$songs • ${_count(artist.albumCount, 'album', 'albums')}';
+    return '$songs · ${_count(artist.albumCount, 'album', 'albums')}';
   }
 
   Widget _buildPlaylistsTab(LibraryRepository repo) {
@@ -580,7 +586,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                     },
                   ),
                   FilledButton.tonalIcon(
-                    style: _compactStyle.merge(_tonalStyle),
+                    style: _compactStyle,
                     icon: const Icon(Icons.shuffle_rounded, size: 18),
                     label: const Text('Shuffle'),
                     onPressed: () {
@@ -868,6 +874,9 @@ class _AlbumCard extends StatelessWidget {
       );
     }
 
+    final coverUri = album.coverUri;
+    final seed = ArtworkPlaceholder.albumSeed(album.album);
+
     // excludeSemantics drops the InkWell's tap action, so the node carries
     // its own: TalkBack / Switch Access can open the album.
     return Semantics(
@@ -886,11 +895,20 @@ class _AlbumCard extends StatelessWidget {
               child: SizedBox(
                 width: double.infinity,
                 height: artSize,
-                // Same colours as the album's cover on its detail screen.
-                child: ArtworkPlaceholder(
-                  seed: ArtworkPlaceholder.albumSeed(album.album),
-                  icon: Icons.album_rounded,
-                ),
+                // The same song's cover (and the same placeholder colours)
+                // as the album's detail screen, so the tile and its page match.
+                child: coverUri == null || coverUri.isEmpty
+                    ? ArtworkPlaceholder(seed: seed, icon: Icons.album_rounded)
+                    : ArtworkThumbnail(
+                        uri: coverUri,
+                        // A download's cover is its saved thumbnail.
+                        artworkPath: album.coverArtworkPath,
+                        width: artSize,
+                        height: artSize,
+                        borderRadius: 0,
+                        placeholderIcon: Icons.album_rounded,
+                        placeholderSeed: seed,
+                      ),
               ),
             ),
             Expanded(

@@ -23,6 +23,11 @@ abstract class AppTheme {
       onPrimaryContainer: AppColors.textPrimary,
       secondary: AppColors.accent,
       onSecondary: AppColors.background,
+      // Tonal buttons (FilledButton.tonal): violet ink on a muted violet-grey
+      // fill (4.99:1), so they sit one step below the solid primary button.
+      // Without these the scheme falls back to the teal secondary.
+      secondaryContainer: Color(0xFF25253F),
+      onSecondaryContainer: AppColors.primary,
       error: AppColors.error,
       onError: AppColors.background,
       errorContainer: Color(0xFF2C151B),
@@ -104,10 +109,11 @@ abstract class AppTheme {
           shape: shape14,
         ),
       ),
+      // No colours here: one theme styles both FilledButton (primary /
+      // onPrimary) and FilledButton.tonal (secondaryContainer /
+      // onSecondaryContainer), and the scheme already gives each its own.
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: AppColors.primary,
-          foregroundColor: AppColors.onPrimary,
           textStyle: AppTypography.button,
           minimumSize: const Size(AppSpacing.minTouchTarget, AppSpacing.minTouchTarget),
           padding: const EdgeInsets.symmetric(horizontal: 20),

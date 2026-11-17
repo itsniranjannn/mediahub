@@ -23,6 +23,22 @@ class ArtworkService {
   /// frame instead of flashing its placeholder.
   Uint8List? peek(String uri, {int size = 256}) => _cache['$uri@$size'];
 
+  /// Whether a real cover for [uri] is already in memory at any size.
+  bool hasCached(String uri) {
+    final prefix = '$uri@';
+    for (final key in _cache.keys) {
+      // Only "<uri>@<size>": a longer uri that contains "@" is another song.
+      if (key.startsWith(prefix) && int.tryParse(key.substring(prefix.length)) != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Whether a lookup for [uri] at [size] already found no artwork, so the
+  /// answer is known without waiting for [getArtwork].
+  bool isKnownMissing(String uri, {int size = 256}) => _negativeCache.contains('$uri@$size');
+
   Future<Uint8List?> getArtwork(String uri, {int size = 256}) async {
     final cacheKey = '$uri@$size';
 

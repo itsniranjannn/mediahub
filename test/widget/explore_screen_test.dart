@@ -273,7 +273,7 @@ void main() {
     expect(find.text('Mountain Bridges'), findsOneWidget);
     expect(find.text('Engineering Stories'), findsOneWidget);
     expect(inCard('Midnight Drive Mix', find.text('58:12')), findsOneWidget);
-    expect(inCard('Folk Fusion Session', find.text('01:02:03')), findsOneWidget);
+    expect(inCard('Folk Fusion Session', find.text('1:02:03')), findsOneWidget);
     expect(inCard('Mountain Bridges', find.textContaining(':')), findsNothing,
         reason: 'no badge without a duration');
     expect(find.text('LIVE'), findsNothing);
@@ -363,8 +363,13 @@ void main() {
 
     expect(inCard('Lofi Radio 24/7', find.text('LIVE')), findsOneWidget);
     expect(inCard('Midnight Drive Mix', find.text('LIVE')), findsNothing);
-    expect(inCard('Lofi Radio 24/7', find.text('00:00')), findsNothing,
+    // Matched by widget, not by text, so the check does not depend on the
+    // clock format.
+    expect(inCard('Lofi Radio 24/7', find.byWidgetPredicate((w) => w is DurationBadge && !w.isLive)), findsNothing,
         reason: 'a live stream has no duration badge');
+    expect(inCard('Lofi Radio 24/7', find.text('0:00')), findsNothing);
+    expect(inCard('Midnight Drive Mix', find.byWidgetPredicate((w) => w is DurationBadge && !w.isLive)),
+        findsOneWidget, reason: 'the predicate does find a normal badge');
 
     final liveDownload = inCard('Lofi Radio 24/7', find.byType(IconButton));
     final normalDownload = inCard('Midnight Drive Mix', find.byType(IconButton));
@@ -378,6 +383,35 @@ void main() {
 
     // Listening to a live stream is still allowed.
     expect(inCard('Lofi Radio 24/7', find.text('Listen')), findsOneWidget);
+
+    await unmount(tester);
+  });
+
+  testWidgets('a result card keeps one 16 dp gutter, 48 dp actions and a badge on the 8-pt grid',
+      (tester) async {
+    usePhone(tester);
+    source.results = const [_midnight];
+    await pumpExplore(tester);
+    await submitSearch(tester, 'midnight');
+
+    // Inside SurfaceCard's 1 dp border (Ink pads its child by the border).
+    final cardRect = tester.getRect(card('Midnight Drive Mix')).deflate(1);
+    final title = tester.getRect(find.text('Midnight Drive Mix'));
+    final listen = tester.getRect(inCard('Midnight Drive Mix', find.byWidgetPredicate((w) => w is FilledButton)).first);
+    final download = tester.getRect(inCard('Midnight Drive Mix', find.byType(IconButton)));
+
+    expect(title.left - cardRect.left, 16);
+    expect(listen.left, title.left, reason: 'Listen starts under the title');
+    expect(cardRect.right - download.right, 16);
+    expect(download.height, 48, reason: 'as tall as the Listen and Watch pills');
+    expect(download.width, 48);
+    expect(listen.height, 48);
+
+    // The 16:9 thumbnail is the card's full width, so its corner is the card's.
+    final badge = tester.getRect(inCard('Midnight Drive Mix', find.byType(DurationBadge)));
+    final thumbBottom = cardRect.top + cardRect.width * 9 / 16;
+    expect(cardRect.right - badge.right, closeTo(12, 0.5));
+    expect(thumbBottom - badge.bottom, closeTo(12, 0.5));
 
     await unmount(tester);
   });

@@ -611,6 +611,13 @@ class LibraryRepositoryImpl implements LibraryRepository {
   Stream<List<AlbumGroup>> watchAlbums({String? searchQuery}) {
     final countCol = _db.mediaItemsTable.id.count();
     final durationCol = _db.mediaItemsTable.durationMs.sum();
+    // One stable song per album whose cover stands for it (on the tile and
+    // the detail header alike).
+    final coverCol = _db.mediaItemsTable.uri.min();
+    // A bare column next to the query's only min()/max() aggregate: SQLite
+    // takes its value from the row min() picked, so this is the cover song's
+    // own saved thumbnail (downloads keep their cover there, not embedded).
+    final coverArtworkCol = _db.mediaItemsTable.artworkPath;
 
     final query = _db.selectOnly(_db.mediaItemsTable)
       ..addColumns([
@@ -618,6 +625,8 @@ class LibraryRepositoryImpl implements LibraryRepository {
         _db.mediaItemsTable.artist,
         countCol,
         durationCol,
+        coverCol,
+        coverArtworkCol,
       ])
       ..where(_db.mediaItemsTable.mediaType.equals(MediaType.audio.name))
       ..groupBy([_db.mediaItemsTable.album, _db.mediaItemsTable.artist]);
@@ -643,6 +652,8 @@ class LibraryRepositoryImpl implements LibraryRepository {
           artist: (rawArtist != null && rawArtist.isNotEmpty) ? rawArtist : 'Unknown Artist',
           songCount: songCount,
           totalDurationMs: totalDuration,
+          coverUri: r.read(coverCol),
+          coverArtworkPath: r.read(coverArtworkCol),
         );
       }).toList();
     });

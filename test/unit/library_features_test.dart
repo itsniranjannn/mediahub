@@ -173,11 +173,94 @@ void main() {
     expect(albums.first.album, equals('A Night at the Opera'));
     expect(albums.first.songCount, equals(2));
     expect(albums.first.totalDurationMs, equals(500000));
+    expect(albums.first.coverUri, equals('file:///t1.mp3'));
 
     final artists = await repo.watchArtists().first;
     expect(artists.length, equals(1));
     expect(artists.first.artist, equals('Queen'));
     expect(artists.first.songCount, equals(2));
+  });
+
+  test('watchAlbums picks one stable cover song per album, from that album only', () async {
+    final now = DateTime.now();
+    Future<void> insert(String id, String uri, String? album, {String artist = 'Himal Sessions', String type = 'audio'}) {
+      return db.into(db.mediaItemsTable).insert(
+            MediaItemsTableCompanion.insert(
+              id: id,
+              uri: uri,
+              mediaType: type,
+              title: 'Track $id',
+              artist: Value(artist),
+              album: Value(album),
+              durationMs: 1000,
+              sizeBytes: 1,
+              dateAdded: now,
+            ),
+          );
+    }
+
+    // Inserted out of uri order; the smallest uri of each album wins.
+    await insert('h3', 'content://media/external/audio/media/30', 'Songs of the Hills');
+    await insert('h1', 'content://media/external/audio/media/12', 'Songs of the Hills');
+    await insert('h2', 'content://media/external/audio/media/21', 'Songs of the Hills');
+    await insert('a1', 'content://media/external/audio/media/05', 'After Hours', artist: 'Neon Atlas');
+    // A video with the album tag never stands in for the album cover.
+    await insert('v1', 'content://media/external/video/media/01', 'Songs of the Hills', type: 'video');
+
+    final albums = await repo.watchAlbums().first;
+    final byName = {for (final a in albums) a.album: a};
+    expect(byName.keys, containsAll(['Songs of the Hills', 'After Hours']));
+    expect(byName['Songs of the Hills']!.coverUri, 'content://media/external/audio/media/12');
+    expect(byName['Songs of the Hills']!.songCount, 3);
+    expect(byName['After Hours']!.coverUri, 'content://media/external/audio/media/05');
+
+    // The cover song is one of the album's own songs (the detail header picks it from these).
+    final hillSongs = await repo.watchAlbumSongs('Songs of the Hills').first;
+    expect(hillSongs.map((s) => s.uri), contains(byName['Songs of the Hills']!.coverUri));
+
+    // Still stable after a search and after another song joins with a larger uri.
+    await insert('h4', 'content://media/external/audio/media/99', 'Songs of the Hills');
+    final searched = await repo.watchAlbums(searchQuery: 'Hills').first;
+    expect(searched.single.coverUri, 'content://media/external/audio/media/12');
+    expect(searched.single.coverArtworkPath, equals(null), reason: 'device songs carry their art embedded');
+  });
+
+  test('watchAlbums carries the cover song\'s saved thumbnail, for downloads', () async {
+    final now = DateTime.now();
+    Future<void> insert(String id, String uri, {String? artworkPath}) {
+      return db.into(db.mediaItemsTable).insert(
+            MediaItemsTableCompanion.insert(
+              id: id,
+              uri: uri,
+              mediaType: 'audio',
+              title: 'Track $id',
+              artist: const Value('Mountain Bridges'),
+              // Downloads are saved without an album tag.
+              album: const Value(null),
+              durationMs: 1000,
+              sizeBytes: 1,
+              dateAdded: now,
+              source: const Value('download'),
+              artworkPath: Value(artworkPath),
+            ),
+          );
+    }
+
+    // The thumbnail must come from the min(uri) row, not from whichever row
+    // SQLite met first or last.
+    await insert('d2', 'file:///music/b.m4a', artworkPath: '/thumbs/b.jpg');
+    await insert('d1', 'file:///music/a.m4a', artworkPath: '/thumbs/a.jpg');
+    await insert('d3', 'file:///music/c.m4a', artworkPath: '/thumbs/c.jpg');
+
+    final unknown = (await repo.watchAlbums().first).single;
+    expect(unknown.album, 'Unknown Album');
+    expect(unknown.coverUri, 'file:///music/a.m4a');
+    expect(unknown.coverArtworkPath, '/thumbs/a.jpg');
+
+    // The album page finds that same song, with that same thumbnail.
+    final songs = await repo.watchAlbumSongs('Unknown Album').first;
+    final cover = songs.singleWhere((s) => s.uri == unknown.coverUri);
+    expect(cover.artworkPath, unknown.coverArtworkPath);
   });
 
   test('Playlist remove sequential items: add A,B,C; remove A; remove B; C remains', () async {

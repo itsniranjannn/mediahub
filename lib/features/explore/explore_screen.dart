@@ -6,6 +6,7 @@ import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
+import '../../core/utils/formatters.dart';
 import '../../domain/models/media_item.dart';
 import '../../shared/widgets/artwork_placeholder.dart';
 import '../../shared/widgets/ui_kit.dart';
@@ -380,22 +381,12 @@ class _ResultCard extends StatelessWidget {
                   fit: StackFit.expand,
                   children: [
                     _Thumbnail(url: video.thumbnailUrl, seed: video.id),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          stops: const [0.5, 1.0],
-                          colors: [
-                            AppColors.overlay.withValues(alpha: 0),
-                            AppColors.overlay.withValues(alpha: 0.4),
-                          ],
-                        ),
-                      ),
-                    ),
+                    // No scrim: the badge has its own dark chip, so bright
+                    // frames keep their colours. Same corner as the video
+                    // cards' badge.
                     Positioned(
-                      right: 10,
-                      bottom: 10,
+                      right: AppSpacing.md12,
+                      bottom: AppSpacing.md12,
                       child: video.isLive
                           ? const DurationBadge.live()
                           : (duration != null && duration > Duration.zero)
@@ -411,17 +402,25 @@ class _ResultCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(video.title, style: AppTypography.bodyStrong, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  Text(
+                    breakableTitle(video.title),
+                    semanticsLabel: video.title,
+                    style: AppTypography.bodyStrong,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   const SizedBox(height: 2),
                   Text(video.author, style: AppTypography.metadata, maxLines: 1, overflow: TextOverflow.ellipsis),
                 ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.md12, AppSpacing.sm8, AppSpacing.md12, AppSpacing.md12),
+              // On the same 16 dp gutter as the title and the author.
+              padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, AppSpacing.lg16),
               child: busy
                   ? const SizedBox(
-                      height: 44,
+                      // As tall as the buttons it stands in for.
+                      height: AppSpacing.minTouchTarget,
                       child: Center(
                         child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
                       ),
@@ -445,6 +444,8 @@ class _ResultCard extends StatelessWidget {
                         ),
                         const SizedBox(width: AppSpacing.sm8),
                         IconButton.outlined(
+                          // As tall as the Listen / Watch pills beside it.
+                          style: IconButton.styleFrom(fixedSize: const Size.square(AppSpacing.minTouchTarget)),
                           tooltip: 'Download',
                           onPressed: video.isLive ? null : onDownload,
                           icon: const Icon(Icons.download_rounded),

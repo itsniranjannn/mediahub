@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../app/theme/app_colors.dart';
 import '../app/theme/app_spacing.dart';
 import '../app/theme/app_typography.dart';
+import '../core/utils/formatters.dart';
 import '../shared/widgets/artwork_placeholder.dart';
 import '../shared/widgets/ui_kit.dart';
 import 'extractor_backend.dart';
@@ -156,9 +157,11 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final duration = metadata.durationSec > 0 ? Duration(seconds: metadata.durationSec) : null;
+    // Same seed (the video id) and glyph as the Explore card this sheet
+    // opens from, so its cover matches the card the user just tapped.
     final placeholder = ArtworkPlaceholder(
       seed: metadata.id.isNotEmpty ? metadata.id : metadata.title,
-      icon: Icons.video_library_rounded,
+      icon: Icons.play_circle_outline_rounded,
     );
 
     return Column(
@@ -206,7 +209,8 @@ class _Header extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    metadata.title,
+                    breakableTitle(metadata.title),
+                    semanticsLabel: metadata.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: AppTypography.bodyStrong,

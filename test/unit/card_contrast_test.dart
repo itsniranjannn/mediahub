@@ -54,5 +54,35 @@ void main() {
       expect(ratio, greaterThanOrEqualTo(4.5),
           reason: 'onErrorContainer ($text) against errorContainer ($bg) should satisfy WCAG AA ratio ($ratio)');
     });
+
+    test('4. Tonal buttons: violet label on secondaryContainer is >= 4.5:1, not the teal fallback', () {
+      final scheme = AppTheme.darkTheme.colorScheme;
+      expect(scheme.secondaryContainer, const Color(0xFF25253F));
+      expect(scheme.onSecondaryContainer, AppColors.primary);
+      final ratio = contrastRatio(scheme.onSecondaryContainer, scheme.secondaryContainer);
+      expect(ratio, greaterThanOrEqualTo(4.5), reason: 'tonal label contrast $ratio');
+    });
+
+    test('5. The filled button theme leaves colours to the scheme, so tonal and filled differ', () {
+      final style = AppTheme.darkTheme.filledButtonTheme.style!;
+      expect(style.backgroundColor, isNull);
+      expect(style.foregroundColor, isNull);
+      // Filled: primary / onPrimary from the scheme.
+      final scheme = AppTheme.darkTheme.colorScheme;
+      expect(contrastRatio(scheme.onPrimary, scheme.primary), greaterThanOrEqualTo(4.5));
+    });
+
+    test('6. The now-playing row pill (12% violet on the canvas) keeps every row text >= 4.5:1', () {
+      final pill = Color.alphaBlend(AppColors.primary.withValues(alpha: 0.12), AppColors.background);
+      for (final text in [AppColors.primary, AppColors.textPrimary, AppColors.textSecondary, AppColors.textMuted]) {
+        expect(contrastRatio(text, pill), greaterThanOrEqualTo(4.5), reason: '$text on the pill');
+      }
+    });
+
+    test('7. MediaBadge: teal glyph >= 3:1 and white text >= 4.5:1 on the overlay over a white frame', () {
+      final chip = Color.alphaBlend(AppColors.overlay, const Color(0xFFFFFFFF));
+      expect(contrastRatio(AppColors.accent, chip), greaterThanOrEqualTo(3.0));
+      expect(contrastRatio(AppColors.onOverlay, chip), greaterThanOrEqualTo(4.5));
+    });
   });
 }

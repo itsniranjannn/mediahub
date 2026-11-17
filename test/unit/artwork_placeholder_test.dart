@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/app/theme/app_colors.dart';
+import 'package:mediahub/core/services/artwork_service.dart';
 import 'package:mediahub/core/widgets/artwork_thumbnail.dart';
 import 'package:mediahub/shared/widgets/artwork_placeholder.dart';
 
@@ -82,29 +85,56 @@ void main() {
             reason: 'glyph on the middle of $gradient');
       }
     });
+
+    test('the eighth palette is dusk, and no cover passes for the success green', () {
+      expect(AppColors.artworkGradients.last.colors,
+          const [Color(0xFF7A6CC0), Color(0xFF221B4A)]);
+      final successHue = HSVColor.fromColor(AppColors.success).hue;
+      for (final gradient in AppColors.artworkGradients) {
+        final hue = HSVColor.fromColor(gradient.colors.first).hue;
+        final distance = (hue - successHue).abs();
+        expect(min(distance, 360 - distance), greaterThan(15),
+            reason: '${gradient.colors.first} looks like the success green');
+      }
+    });
   });
 
   group('ArtworkTint contrast', () {
-    test('Now Playing glow keeps text >= 4.5:1 under the lightest scrim', () {
-      // The backdrop scrim is the canvas at 50 % at the very top (app bar).
-      const scrimAlpha = 0.5;
-      for (final gradient in AppColors.artworkGradients) {
-        final light = gradient.colors.first;
-        final deep = gradient.colors.last;
-        final candidates = [
-          _over(light, ArtworkTint.backdropLightAlpha, AppColors.background),
-          _over(deep, ArtworkTint.backdropDeepAlpha, AppColors.background),
-          _over(light, ArtworkTint.backdropLightAlpha,
-              _over(deep, ArtworkTint.backdropDeepAlpha, AppColors.background)),
+    // The Now Playing veil (now_playing_sheet.dart) is the canvas at 82 % over
+    // the header band and opens up to 60 % only in the band around the cover.
+    // test/widget/now_playing_backdrop_test.dart measures where each text
+    // really sits on several screens; this checks the tint constants alone.
+    const headerScrim = 0.82;
+    const mostOpenScrim = 0.6;
+
+    List<Color> glowPeaks() => [
+          for (final gradient in AppColors.artworkGradients) ...[
+            _over(gradient.colors.first, ArtworkTint.backdropLightAlpha, AppColors.background),
+            _over(gradient.colors.last, ArtworkTint.backdropDeepAlpha, AppColors.background),
+            _over(gradient.colors.first, ArtworkTint.backdropLightAlpha,
+                _over(gradient.colors.last, ArtworkTint.backdropDeepAlpha, AppColors.background)),
+          ],
         ];
-        for (final glow in candidates) {
-          final behindText = _over(AppColors.background, scrimAlpha, glow);
+
+    test('the glow peak keeps text >= 4.5:1 even where the veil opens most', () {
+      for (final scrim in [headerScrim, mostOpenScrim]) {
+        for (final glow in glowPeaks()) {
+          final behindText = _over(AppColors.background, scrim, glow);
           for (final text in [AppColors.textPrimary, AppColors.textSecondary]) {
             expect(_contrast(text, behindText), greaterThanOrEqualTo(4.5),
-                reason: '$text on $behindText');
+                reason: '$text on $behindText (veil $scrim)');
           }
+          expect(_contrast(AppColors.primary, behindText), greaterThanOrEqualTo(3.0),
+              reason: 'violet controls on $behindText (veil $scrim)');
         }
       }
+    });
+
+    test('a white cover under the header veil keeps the header text readable', () {
+      final behindHeader = _over(AppColors.background, headerScrim, Colors.white);
+      expect(_contrast(AppColors.textPrimary, behindHeader), greaterThanOrEqualTo(4.5));
+      expect(_contrast(AppColors.textSecondary, behindHeader), greaterThanOrEqualTo(4.5));
+      expect(_contrast(AppColors.primary, behindHeader), greaterThanOrEqualTo(3.0));
     });
 
     test('tinted hero surfaces keep label, title and metadata text >= 4.5:1', () {
@@ -153,6 +183,35 @@ void main() {
       expect(tester.getSize(find.byType(ArtworkPlaceholder)), const Size(400, 400));
     });
 
+    testWidgets('rings are drawn only on covers of 96 dp and up', (tester) async {
+      Future<RenderObject> cover(Size size) async {
+        await tester.pumpWidget(
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: Center(
+              child: SizedBox.fromSize(
+                size: size,
+                child: const ArtworkPlaceholder(seed: 'x'),
+              ),
+            ),
+          ),
+        );
+        return tester.renderObject(find.byType(CustomPaint).first);
+      }
+
+      expect(ArtworkPlaceholder.ringMinSide, 96);
+      for (final side in [44.0, 52.0, 60.0, 80.0, 95.5]) {
+        expect(await cover(Size.square(side)), paintsExactlyCountTimes(#drawCircle, 0),
+            reason: '$side dp cover');
+      }
+      // A 16:9 still is judged by its short side.
+      expect(await cover(const Size(160, 90)), paintsExactlyCountTimes(#drawCircle, 0));
+      for (final side in [96.0, 168.0, 328.0]) {
+        expect(await cover(Size.square(side)), paintsExactlyCountTimes(#drawCircle, 2),
+            reason: '$side dp cover');
+      }
+    });
+
     testWidgets('ArtworkThumbnail without art shows the placeholder at its own shape',
         (tester) async {
       await tester.pumpWidget(
@@ -174,6 +233,59 @@ void main() {
       expect(find.byIcon(Icons.movie_outlined), findsOneWidget);
       final placeholder = tester.widget<ArtworkPlaceholder>(find.byType(ArtworkPlaceholder));
       expect(placeholder.seed, 'content://media/external/video/media/7');
+    });
+  });
+
+  group('ArtworkThumbnail fade-in', () {
+    const channel = MethodChannel('mediahub/media_store');
+    // A valid 1x1 PNG, returned as the device's art for every uri.
+    final png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    );
+
+    setUp(ArtworkService.instance.clearCache);
+    tearDown(ArtworkService.instance.clearCache);
+
+    Future<void> pumpThumbnail(WidgetTester tester, String uri, {bool reduceMotion = false}) async {
+      tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async => png.toList());
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+      await tester.pumpWidget(
+        MediaQuery(
+          data: MediaQueryData(disableAnimations: reduceMotion),
+          child: Directionality(
+            textDirection: TextDirection.ltr,
+            child: Center(child: ArtworkThumbnail(uri: uri, size: 56)),
+          ),
+        ),
+      );
+      // The lookup answers; the bytes are then decoded off the fake clock.
+      await tester.pump();
+      expect(find.byType(ArtworkPlaceholder), findsOneWidget, reason: 'shown while decoding');
+      for (var i = 0; i < 40; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+        await tester.pump();
+        final raw = find.byType(RawImage);
+        if (raw.evaluate().isNotEmpty && tester.widget<RawImage>(raw).image != null) return;
+      }
+      fail('the cover never decoded');
+    }
+
+    testWidgets('the placeholder stops painting once the cover has faded in', (tester) async {
+      await pumpThumbnail(tester, 'content://media/external/audio/media/fade');
+      // Mid-fade the placeholder still shows through.
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(ArtworkPlaceholder), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(find.byType(ArtworkPlaceholder), findsNothing);
+      expect(find.byType(RawImage), findsOneWidget);
+    });
+
+    testWidgets('with reduced motion the placeholder goes as soon as the cover is there',
+        (tester) async {
+      await pumpThumbnail(tester, 'content://media/external/audio/media/still', reduceMotion: true);
+      expect(find.byType(ArtworkPlaceholder), findsNothing);
+      expect(find.byType(RawImage), findsOneWidget);
     });
   });
 }

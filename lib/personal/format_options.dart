@@ -8,7 +8,7 @@ class FormatChoice {
   /// Short headline, e.g. "1080p" or "MP3".
   final String label;
 
-  /// Secondary line, e.g. "MP4 • ~85 MB".
+  /// Secondary line, e.g. "MP4 · ~85 MB".
   final String subtitle;
   final bool isAudio;
 
@@ -109,7 +109,7 @@ class FormatOptions {
       video.add(FormatChoice(
         id: 'v$h',
         label: label,
-        subtitle: 'MP4 • ${_approx(total)}',
+        subtitle: 'MP4 · ${_approx(total)}',
         isAudio: false,
         selector: 'bestvideo[height<=$h]+bestaudio/best[height<=$h]',
         qualityLabel: label,
@@ -154,7 +154,7 @@ class FormatOptions {
     out.add(FormatChoice(
       id: 'audio_best',
       label: audioLabel,
-      subtitle: 'No conversion • ${_approx(audioSize)}',
+      subtitle: 'No conversion · ${_approx(audioSize)}',
       isAudio: true,
       selector: 'bestaudio/best',
       qualityLabel: audio != null && audio.abr > 0
@@ -168,7 +168,7 @@ class FormatOptions {
     out.add(FormatChoice(
       id: 'audio_mp3',
       label: 'MP3 (converted)',
-      subtitle: 'Plays everywhere • ${_approx(mp3Bytes)}',
+      subtitle: 'Plays everywhere · ${_approx(mp3Bytes)}',
       isAudio: true,
       selector: 'bestaudio/best',
       audioFormat: 'mp3',

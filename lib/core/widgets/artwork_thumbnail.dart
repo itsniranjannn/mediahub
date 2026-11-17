@@ -130,19 +130,71 @@ class ArtworkThumbnail extends StatelessWidget {
 ImageFrameBuilder _fadeInOver(Widget placeholder) {
   return (context, child, frame, wasSynchronouslyLoaded) {
     if (wasSynchronouslyLoaded) return child;
+    return _FadeInOver(placeholder: placeholder, loaded: frame != null, child: child);
+  };
+}
+
+/// [child] fading in over [placeholder]. Once the cover is fully opaque the
+/// placeholder leaves the tree, so long lists do not paint two layers per
+/// cover; with reduced motion it goes as soon as the first frame is there.
+/// It comes back while a new image loads (the image source changed).
+class _FadeInOver extends StatefulWidget {
+  final Widget placeholder;
+
+  /// Whether the image has its first frame.
+  final bool loaded;
+  final Widget child;
+
+  const _FadeInOver({required this.placeholder, required this.loaded, required this.child});
+
+  @override
+  State<_FadeInOver> createState() => _FadeInOverState();
+}
+
+class _FadeInOverState extends State<_FadeInOver> {
+  /// The cover is fully opaque; only it is painted.
+  bool _covered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Built with a frame already there: the cover starts opaque, no fade.
+    _covered = widget.loaded;
+  }
+
+  @override
+  void didUpdateWidget(covariant _FadeInOver oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.loaded) _covered = false;
+  }
+
+  /// Called by the ticker when a fade ends (never during a build).
+  void _onFadeEnd() {
+    if (mounted && widget.loaded && !_covered) setState(() => _covered = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = MotionTokens.duration(context, MotionTokens.page);
+    final animates = duration > Duration.zero;
+    final loaded = widget.loaded;
+    final showPlaceholder = !loaded || (animates && !_covered);
     return Stack(
       fit: StackFit.expand,
       children: [
-        placeholder,
+        if (showPlaceholder) widget.placeholder,
+        // Last child, so it keeps its element when the placeholder goes.
         AnimatedOpacity(
-          opacity: frame == null ? 0 : 1,
-          duration: MotionTokens.duration(context, MotionTokens.page),
+          opacity: loaded ? 1 : 0,
+          duration: duration,
           curve: MotionTokens.easeOut,
-          child: child,
+          // A zero-length fade ends inside the build; nothing to wait for.
+          onEnd: animates ? _onFadeEnd : null,
+          child: widget.child,
         ),
       ],
     );
-  };
+  }
 }
 
 /// The art the device has for [uri] (embedded cover, MediaStore thumbnail or
