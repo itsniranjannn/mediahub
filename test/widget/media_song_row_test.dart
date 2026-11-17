@@ -1,9 +1,7 @@
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/app/theme/app_colors.dart';
@@ -14,6 +12,8 @@ import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/features/library/media_song_row.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
+
+import '../helpers/app_fonts.dart';
 
 const _longTitle = 'Resham Firiri (Folk Song, Live at the Valley Festival 2026)';
 const _longArtist = 'The Kathmandu Valley Folk Ensemble and Friends';
@@ -38,16 +38,6 @@ MediaItem _song({
       source: source,
       availability: availability,
     );
-
-/// Real Inter, so widths match the phone (the test font is 1 em per glyph).
-Future<void> _loadInter() async {
-  final inter = FontLoader('Inter');
-  for (final weight in ['Regular', 'Medium', 'SemiBold']) {
-    final bytes = File('assets/fonts/Inter-$weight.otf').readAsBytesSync();
-    inter.addFont(Future.value(ByteData.view(bytes.buffer)));
-  }
-  await inter.load();
-}
 
 Future<void> _pumpRows(
   WidgetTester tester,
@@ -103,7 +93,8 @@ void _expectFullyShown(WidgetTester tester, Finder text) {
 }
 
 void main() {
-  setUpAll(_loadInter);
+  // The bundled fonts, so text widths match the phone.
+  setUpAll(loadAppFonts);
 
   testWidgets('the length ends the meta line and the title gets the freed width', (tester) async {
     final song = _song(title: _longTitle);

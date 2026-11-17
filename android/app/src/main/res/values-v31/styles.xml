@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Android 12+ system splash: dark canvas with the app icon, matching the app. -->
+    <!-- Android 12+ system splash (docs/DESIGN.md 7.16): ink background, the play-bolt on its
+         ultraviolet icon field, in both system themes (values-night-v31 repeats this, because
+         the night qualifier outranks the API level). -->
     <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">@drawable/launch_background</item>
         <item name="android:windowSplashScreenBackground">@color/mediahub_canvas</item>
@@ -9,6 +11,6 @@
         <item name="android:navigationBarColor">@color/mediahub_canvas</item>
     </style>
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
-        <item name="android:windowBackground">@color/mediahub_canvas</item>
+        <item name="android:windowBackground">@color/mediahub_window</item>
     </style>
 </resources>

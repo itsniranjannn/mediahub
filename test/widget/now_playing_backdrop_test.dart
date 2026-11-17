@@ -414,9 +414,10 @@ void main() {
       await pumpSheet(tester, _playing([_song(1, title: _longTitle)]));
       final title = tester.widget<Text>(find.text(_longTitle));
       expect(title.maxLines, 2);
-      expect(tester.getSize(find.text(_longTitle)).height, 56, reason: 'two 28 dp lines');
+      // playerTitle is 22/30 in the Bijuli scale (DESIGN.md 6).
+      expect(tester.getSize(find.text(_longTitle)).height, 60, reason: 'two 30 dp lines');
       final artist = tester.widget<Text>(find.text('Test Artist'));
-      expect(artist.style!.fontSize, 15);
+      expect(artist.style!.fontSize, 16, reason: 'body is 16/24 in the Bijuli scale');
       expect(artist.style!.color, AppColors.textSecondary);
     });
 

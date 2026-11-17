@@ -273,12 +273,12 @@ class _MetaLine extends StatelessWidget {
 
   const _MetaLine({required this.item, required this.artist, required this.isMissing});
 
-  /// Narrowest space left of the length (at 1.0x text, scaled with the
-  /// user's text size) that still shows the word "Downloaded": the word and
-  /// its icon take about 100 dp, which leaves the artist at least ~11
-  /// characters. Narrower lines (a small phone, or large text) keep only
-  /// the icon.
-  static const double _labelMinLineWidth = 180;
+  /// Room the artist keeps (at 1.0x text, scaled with the user's text size;
+  /// about ten characters) before the word "Downloaded" gives way to its
+  /// icon. The word, its icon and the separator are measured in the row's
+  /// own font, so a change of type scale cannot make them overflow. Narrower
+  /// lines (a small phone, or large text) keep only the icon.
+  static const double _minArtistWidth = 72;
 
   static const double _markerIconSize = 14;
 
@@ -365,7 +365,13 @@ class _MetaLine extends StatelessWidget {
   Widget _downloadedLead(BuildContext context, TextStyle style, Widget artistText) {
     // Text is never scaled down: the marker either fits at the user's text
     // size or falls back to its icon, and the artist always keeps the rest.
-    final labelMinWidth = MediaQuery.textScalerOf(context).scale(_labelMinLineWidth);
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    final markerWidth = scaler.scale(_markerIconSize) +
+        AppSpacing.xs4 +
+        _textWidth('Downloaded', style, scaler, direction) +
+        _textWidth(_separator, style, scaler, direction);
+    final labelMinWidth = markerWidth + scaler.scale(_minArtistWidth);
     // Teal, like the "Downloaded" badge on video covers: violet means "now
     // playing" in every list.
     final markerColor = isMissing ? AppColors.textMuted : AppColors.accent;
@@ -398,5 +404,18 @@ class _MetaLine extends StatelessWidget {
         );
       },
     );
+  }
+
+  /// Laid-out width of one line of [text] (plus a pixel for rounding).
+  static double _textWidth(String text, TextStyle style, TextScaler scaler, TextDirection direction) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textScaler: scaler,
+      textDirection: direction,
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width + 1;
   }
 }

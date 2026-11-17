@@ -1019,7 +1019,8 @@ class _ArtistAvatar extends StatelessWidget {
       ),
       child: Text(
         initial,
-        style: AppTypography.sectionTitle.copyWith(color: AppColors.primary),
+        // A letter of the artist's name: Anek draws Latin and Devanagari alike.
+        style: AppTypography.cardTitle.copyWith(color: AppColors.primary),
         textScaler: TextScaler.noScaling,
       ),
     );

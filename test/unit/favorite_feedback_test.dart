@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/data/database/app_database.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/data/repositories/library_repository_impl.dart';
@@ -132,6 +133,10 @@ void main() {
       await settleFavorite(tester);
 
       expect(find.bySemanticsLabel('Remove from favorites'), findsOneWidget);
+      // The filled heart is favourite pink, not the (coral) error colour.
+      final heart = tester.widget<Icon>(find.byIcon(Icons.favorite_rounded));
+      expect(heart.color, AppPalette.dark.favorite);
+      expect(heart.color, isNot(AppPalette.dark.error));
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 1));

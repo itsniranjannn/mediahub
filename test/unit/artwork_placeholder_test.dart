@@ -4,7 +4,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mediahub/app/theme/app_colors.dart';
+import 'package:mediahub/app/theme/app_palette.dart';
+import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/services/artwork_service.dart';
 import 'package:mediahub/core/widgets/artwork_thumbnail.dart';
 import 'package:mediahub/shared/widgets/artwork_placeholder.dart';
@@ -27,6 +28,8 @@ double _contrast(Color a, Color b) {
 /// [fg] at [alpha] painted over the opaque [bg].
 Color _over(Color fg, double alpha, Color bg) => Color.alphaBlend(fg.withValues(alpha: alpha), bg);
 
+const _palettes = {'dark': AppPalette.dark, 'light': AppPalette.light};
+
 void main() {
   group('ArtworkPlaceholder hash and palette', () {
     test('hashOf is 32-bit FNV-1a (published test vectors)', () {
@@ -43,59 +46,101 @@ void main() {
       }
       expect(
         ArtworkPlaceholder.gradientFor(seed),
-        same(AppColors.artworkGradients[first]),
+        same(AppPalette.dark.artworkGradients[first]),
       );
+      expect(
+        ArtworkPlaceholder.gradientFor(seed, AppPalette.light),
+        same(AppPalette.light.artworkGradients[first]),
+      );
+      // The legacy constants are the ink palette.
+      expect(AppColors.artworkGradients, same(AppPalette.dark.artworkGradients));
+    });
+
+    test('an item keeps its hue in both themes: same index and top stop, paper lifts the deep stop', () {
+      for (var i = 0; i < 50; i++) {
+        final seed = 'content://media/external/audio/media/$i';
+        final dark = ArtworkPlaceholder.gradientFor(seed, AppPalette.dark);
+        final light = ArtworkPlaceholder.gradientFor(seed, AppPalette.light);
+        expect(light.colors.first, dark.colors.first);
+        expect(_luminance(light.colors.last), greaterThan(_luminance(dark.colors.last)),
+            reason: 'the paper deep stop is one step lighter');
+        expect(ArtworkTint.light(seed, AppPalette.light), ArtworkTint.light(seed));
+        expect(ArtworkTint.deep(seed, AppPalette.light), light.colors.last);
+      }
     });
 
     test('indices stay in range and every palette gets used', () {
       final used = <int>{};
       for (var i = 0; i < 400; i++) {
         final index = ArtworkPlaceholder.paletteIndexFor('content://media/external/audio/media/$i');
-        expect(index, inInclusiveRange(0, AppColors.artworkGradients.length - 1));
+        expect(index, inInclusiveRange(0, ArtworkPlaceholder.paletteCount - 1));
         used.add(index);
       }
-      expect(used.length, AppColors.artworkGradients.length);
+      expect(used.length, ArtworkPlaceholder.paletteCount);
     });
 
-    test('there are 8 two-stop diagonal gradients', () {
-      expect(AppColors.artworkGradients, hasLength(8));
-      for (final gradient in AppColors.artworkGradients) {
-        expect(gradient.colors, hasLength(2));
-        expect(gradient.begin, Alignment.topLeft);
-        expect(gradient.end, Alignment.bottomRight);
-        expect(
-          _luminance(gradient.colors.first),
-          greaterThan(_luminance(gradient.colors.last)),
-          reason: 'the top-left stop is the light one',
-        );
-      }
-    });
-
-    test('white glyphs at 85 % read on both stops and in the middle', () {
-      final glyphAlpha = ArtworkPlaceholder.glyphOpacity;
-      for (final gradient in AppColors.artworkGradients) {
-        final light = gradient.colors.first;
-        final deep = gradient.colors.last;
-        final middle = Color.lerp(light, deep, 0.5)!;
-        for (final stop in [light, deep]) {
-          expect(_contrast(_over(Colors.white, glyphAlpha, stop), stop), greaterThanOrEqualTo(3.0),
-              reason: 'glyph on $stop');
+    for (final MapEntry(key: name, value: palette) in _palettes.entries) {
+      test('there are 8 two-stop diagonal gradients ($name)', () {
+        expect(palette.artworkGradients, hasLength(8));
+        expect(ArtworkPlaceholder.paletteCount, 8);
+        for (final gradient in palette.artworkGradients) {
+          expect(gradient.colors, hasLength(2));
+          expect(gradient.begin, Alignment.topLeft);
+          expect(gradient.end, Alignment.bottomRight);
+          expect(
+            _luminance(gradient.colors.first),
+            greaterThan(_luminance(gradient.colors.last)),
+            reason: 'the top-left stop is the light one',
+          );
         }
-        expect(_contrast(_over(Colors.white, glyphAlpha, middle), middle), greaterThanOrEqualTo(4.5),
-            reason: 'glyph on the middle of $gradient');
-      }
-    });
+      });
 
-    test('the eighth palette is dusk, and no cover passes for the success green', () {
-      expect(AppColors.artworkGradients.last.colors,
-          const [Color(0xFF7A6CC0), Color(0xFF221B4A)]);
-      final successHue = HSVColor.fromColor(AppColors.success).hue;
-      for (final gradient in AppColors.artworkGradients) {
-        final hue = HSVColor.fromColor(gradient.colors.first).hue;
-        final distance = (hue - successHue).abs();
-        expect(min(distance, 360 - distance), greaterThan(15),
-            reason: '${gradient.colors.first} looks like the success green');
+      test('white glyphs at 85 % read on both stops and in the middle ($name)', () {
+        final glyphAlpha = ArtworkPlaceholder.glyphOpacity;
+        for (final gradient in palette.artworkGradients) {
+          final light = gradient.colors.first;
+          final deep = gradient.colors.last;
+          final middle = Color.lerp(light, deep, 0.5)!;
+          for (final stop in [light, deep]) {
+            expect(_contrast(_over(Colors.white, glyphAlpha, stop), stop), greaterThanOrEqualTo(3.0),
+                reason: 'glyph on $stop');
+          }
+          expect(_contrast(_over(Colors.white, glyphAlpha, middle), middle), greaterThanOrEqualTo(4.5),
+              reason: 'glyph on the middle of $gradient');
+        }
+      });
+
+      test('the eighth palette is jade, and no cover passes for the success green ($name)', () {
+        expect(palette.artworkGradients.last.colors.first, const Color(0xFF12806E));
+        final successHue = HSVColor.fromColor(palette.success).hue;
+        for (final gradient in palette.artworkGradients) {
+          final hue = HSVColor.fromColor(gradient.colors.first).hue;
+          final distance = (hue - successHue).abs();
+          expect(min(distance, 360 - distance), greaterThan(15),
+              reason: '${gradient.colors.first} looks like the success green');
+        }
+      });
+    }
+
+    testWidgets('the placeholder paints the gradient of the theme it sits in', (tester) async {
+      const seed = 'content://media/external/audio/media/42';
+      Future<LinearGradient> painted(ThemeData? theme) async {
+        const cover = SizedBox.square(dimension: 64, child: ArtworkPlaceholder(seed: seed));
+        await tester.pumpWidget(
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: Center(child: theme == null ? cover : Theme(data: theme, child: cover)),
+          ),
+        );
+        final paint = tester.widget<CustomPaint>(
+          find.descendant(of: find.byType(ArtworkPlaceholder), matching: find.byType(CustomPaint)).first,
+        );
+        return (paint.painter as dynamic).gradient as LinearGradient;
       }
+
+      expect(await painted(null), ArtworkPlaceholder.gradientFor(seed), reason: 'no theme: the ink palette');
+      expect(await painted(AppTheme.darkTheme), ArtworkPlaceholder.gradientFor(seed, AppPalette.dark));
+      expect(await painted(AppTheme.lightTheme), ArtworkPlaceholder.gradientFor(seed, AppPalette.light));
     });
   });
 
@@ -107,50 +152,71 @@ void main() {
     const headerScrim = 0.82;
     const mostOpenScrim = 0.6;
 
+    // Now Playing always renders with the ink palette, in both themes.
+    const stage = AppPalette.dark;
+
     List<Color> glowPeaks() => [
-          for (final gradient in AppColors.artworkGradients) ...[
-            _over(gradient.colors.first, ArtworkTint.backdropLightAlpha, AppColors.background),
-            _over(gradient.colors.last, ArtworkTint.backdropDeepAlpha, AppColors.background),
+          for (final gradient in stage.artworkGradients) ...[
+            _over(gradient.colors.first, ArtworkTint.backdropLightAlpha, stage.background),
+            _over(gradient.colors.last, ArtworkTint.backdropDeepAlpha, stage.background),
             _over(gradient.colors.first, ArtworkTint.backdropLightAlpha,
-                _over(gradient.colors.last, ArtworkTint.backdropDeepAlpha, AppColors.background)),
+                _over(gradient.colors.last, ArtworkTint.backdropDeepAlpha, stage.background)),
           ],
         ];
 
     test('the glow peak keeps text >= 4.5:1 even where the veil opens most', () {
       for (final scrim in [headerScrim, mostOpenScrim]) {
         for (final glow in glowPeaks()) {
-          final behindText = _over(AppColors.background, scrim, glow);
-          for (final text in [AppColors.textPrimary, AppColors.textSecondary]) {
+          final behindText = _over(stage.background, scrim, glow);
+          for (final text in [stage.textPrimary, stage.textSecondary]) {
             expect(_contrast(text, behindText), greaterThanOrEqualTo(4.5),
                 reason: '$text on $behindText (veil $scrim)');
           }
-          expect(_contrast(AppColors.primary, behindText), greaterThanOrEqualTo(3.0),
-              reason: 'violet controls on $behindText (veil $scrim)');
+          expect(_contrast(stage.primary, behindText), greaterThanOrEqualTo(3.0),
+              reason: 'Volt controls on $behindText (veil $scrim)');
         }
       }
     });
 
     test('a white cover under the header veil keeps the header text readable', () {
-      final behindHeader = _over(AppColors.background, headerScrim, Colors.white);
-      expect(_contrast(AppColors.textPrimary, behindHeader), greaterThanOrEqualTo(4.5));
-      expect(_contrast(AppColors.textSecondary, behindHeader), greaterThanOrEqualTo(4.5));
-      expect(_contrast(AppColors.primary, behindHeader), greaterThanOrEqualTo(3.0));
+      final behindHeader = _over(stage.background, headerScrim, Colors.white);
+      expect(_contrast(stage.textPrimary, behindHeader), greaterThanOrEqualTo(4.5));
+      expect(_contrast(stage.textSecondary, behindHeader), greaterThanOrEqualTo(4.5));
+      expect(_contrast(stage.primary, behindHeader), greaterThanOrEqualTo(3.0));
     });
 
-    test('tinted hero surfaces keep label, title and metadata text >= 4.5:1', () {
-      for (var i = 0; i < AppColors.artworkGradients.length; i++) {
-        // Find a seed for every palette.
-        var n = 0;
-        while (ArtworkPlaceholder.paletteIndexFor('seed$n') != i) {
-          n++;
-        }
-        final gradient = ArtworkTint.surfaceGradient('seed$n');
-        for (final stop in gradient.colors) {
-          for (final text in [AppColors.primary, AppColors.textPrimary, AppColors.textSecondary]) {
-            expect(_contrast(text, stop), greaterThanOrEqualTo(4.5), reason: '$text on $stop');
+    for (final MapEntry(key: name, value: palette) in _palettes.entries) {
+      test('tinted hero surfaces keep label, title and metadata text >= 4.5:1 ($name)', () {
+        for (var i = 0; i < ArtworkPlaceholder.paletteCount; i++) {
+          // Find a seed for every palette.
+          var n = 0;
+          while (ArtworkPlaceholder.paletteIndexFor('seed$n') != i) {
+            n++;
+          }
+          final gradient = ArtworkTint.surfaceGradient('seed$n', palette);
+          expect(gradient.colors.last, palette.background);
+          for (final stop in gradient.colors) {
+            for (final text in [palette.primary, palette.textPrimary, palette.textSecondary]) {
+              expect(_contrast(text, stop), greaterThanOrEqualTo(4.5), reason: '$text on $stop');
+            }
           }
         }
-      }
+      });
+    }
+
+    test('the surface recipe: ink melts the deep stop, paper washes the top stop', () {
+      const seed = 'seed1';
+      final dark = ArtworkTint.surfaceGradient(seed);
+      final deep = ArtworkTint.deep(seed);
+      expect(dark.colors[0], Color.lerp(deep, AppPalette.dark.background, 0.30));
+      expect(dark.colors[1], Color.lerp(deep, AppPalette.dark.background, 0.68));
+      expect(ArtworkTint.surfaceGradient(seed, AppPalette.dark), dark);
+
+      final light = ArtworkTint.surfaceGradient(seed, AppPalette.light);
+      final top = ArtworkTint.light(seed, AppPalette.light);
+      expect(light.colors[0], Color.lerp(top, AppPalette.light.background, 0.85));
+      expect(light.colors[1], Color.lerp(top, AppPalette.light.background, 0.93));
+      expect(light.colors[2], AppPalette.light.background);
     });
   });
 

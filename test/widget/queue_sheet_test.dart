@@ -1,7 +1,4 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/app/theme/app_colors.dart';
@@ -12,6 +9,8 @@ import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/domain/models/playback_state.dart' as domain;
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/features/music_player/queue_sheet.dart';
+
+import '../helpers/app_fonts.dart';
 
 class _FakePlayback extends PlaybackNotifier {
   _FakePlayback(this._initial);
@@ -35,18 +34,9 @@ MediaItem _song(int n, {String? title}) => MediaItem(
       dateAdded: DateTime(2026),
     );
 
-/// Real Inter, so text widths match the phone.
-Future<void> _loadInter() async {
-  final inter = FontLoader('Inter');
-  for (final weight in ['Regular', 'Medium', 'SemiBold']) {
-    final bytes = File('assets/fonts/Inter-$weight.otf').readAsBytesSync();
-    inter.addFont(Future.value(ByteData.view(bytes.buffer)));
-  }
-  await inter.load();
-}
-
 void main() {
-  setUpAll(_loadInter);
+  // The bundled fonts, so text widths match the phone.
+  setUpAll(loadAppFonts);
 
   final queue = [_song(1), _song(2, title: _longTitle), _song(3)];
 

@@ -536,7 +536,10 @@ class _DetailScaffoldState extends State<_DetailScaffold> {
                   curve: MotionTokens.easeOut,
                   child: Text(
                     widget.title,
-                    style: AppTypography.sectionTitle,
+                    // The album, artist or playlist name: Anek, which draws
+                    // Latin and Devanagari alike (DESIGN.md 0.5), at a size
+                    // that suits the collapsed bar.
+                    style: AppTypography.cardTitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),

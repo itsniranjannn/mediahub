@@ -3,8 +3,6 @@
 // ("Audit_Long_Tone_5m" / "in"). The Home cards show breakableTitle(title),
 // which lets the line break after an underscore, while semantics keep the
 // real title.
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -18,8 +16,13 @@ import 'package:mediahub/domain/repositories/library_repository.dart';
 import 'package:mediahub/features/home/home_screen.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 
-const _songTitle = 'Audit_Long_Tone_5min';
-const _videoTitle = 'Family_Trip_Pokhara_Lakeside_2026';
+import '../helpers/app_fonts.dart';
+
+// Chosen so that, in the bundled fonts at these card widths, the plain
+// title breaks inside a word ("Audit_Swee" / "p_5min"; "..._Lakesi" / "de").
+// Retune them if the card title style or width changes.
+const _songTitle = 'Audit_Sweep_5min';
+const _videoTitle = 'Family_Trip_to_Pokhara_Lakeside';
 const _zeroWidthSpace = '​';
 
 const _artChannel = MethodChannel('mediahub/media_store');
@@ -70,16 +73,6 @@ class _HomeRepo implements LibraryRepository {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
-/// Real Inter, so widths match the phone (the test font is 1 em per glyph).
-Future<void> _loadInter() async {
-  final inter = FontLoader('Inter');
-  for (final weight in ['Regular', 'Medium', 'SemiBold']) {
-    final bytes = File('assets/fonts/Inter-$weight.otf').readAsBytesSync();
-    inter.addFont(Future.value(ByteData.view(bytes.buffer)));
-  }
-  await inter.load();
 }
 
 Future<void> _pumpHome(WidgetTester tester, {MediaItem? song, List<MediaItem> videos = const []}) async {
@@ -170,7 +163,8 @@ void _expectBreaksAfterUnderscores(List<String> lines, String title) {
 }
 
 void main() {
-  setUpAll(_loadInter);
+  // The bundled fonts, so text widths match the phone.
+  setUpAll(loadAppFonts);
 
   setUp(() {
     // A device-art lookup answers (with nothing) at once, like a phone.

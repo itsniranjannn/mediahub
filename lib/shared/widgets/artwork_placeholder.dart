@@ -3,13 +3,15 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 
 /// Cover art for a song or video that has none of its own.
 ///
-/// Fills its constraints with one of [AppColors.artworkGradients], picked
-/// from [seed] (use the item's uri) with a stable hash, so an item wears the
-/// same colours in every list, card and player. A soft highlight lifts the
+/// Fills its constraints with one of the palette's
+/// [AppPalette.artworkGradients], picked from [seed] (use the item's uri)
+/// with a stable hash, so an item wears the same colours in every list, card
+/// and player, and keeps its hue when the phone switches theme (the paper
+/// palette only lifts the deep stop). A soft highlight lifts the
 /// top-left corner, faint rings echo the bottom-right on covers of
 /// [ringMinSide] and up, and [icon] sits in the centre at about 40 % of the
 /// shortest side (a little less on wide stills).
@@ -61,16 +63,21 @@ class ArtworkPlaceholder extends StatelessWidget {
   static String albumSeed(String album) => 'album:$album';
   static String artistSeed(String artist) => 'artist:$artist';
 
-  /// Index into [AppColors.artworkGradients] for [seed]. The high half of
+  /// Number of cover gradients; the same in both palettes.
+  static int get paletteCount => AppPalette.dark.artworkGradients.length;
+
+  /// Index into [AppPalette.artworkGradients] for [seed]. The high half of
   /// the hash is folded in first: FNV-1a's low bits only see the low bits of
   /// each byte, so uris that differ in their last digits would cluster.
   static int paletteIndexFor(String seed) {
     final hash = hashOf(seed);
-    return (hash ^ (hash >> 16)) % AppColors.artworkGradients.length;
+    return (hash ^ (hash >> 16)) % paletteCount;
   }
 
-  /// The cover gradient for [seed]: the same one its placeholder paints.
-  static LinearGradient gradientFor(String seed) => AppColors.artworkGradients[paletteIndexFor(seed)];
+  /// The cover gradient for [seed] in [palette] (the ink palette unless
+  /// given): the same one its placeholder paints in that theme.
+  static LinearGradient gradientFor(String seed, [AppPalette palette = AppPalette.dark]) =>
+      palette.artworkGradients[paletteIndexFor(seed) % palette.artworkGradients.length];
 
   /// Glyph edge for a placeholder of [size]: [glyphFraction] of the shortest
   /// side on a square cover, a little less on wide stills (about 30 % on
@@ -87,7 +94,7 @@ class ArtworkPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
-      painter: _CoverPainter(gradient: gradientFor(seed), borderRadius: borderRadius),
+      painter: _CoverPainter(gradient: gradientFor(seed, context.palette), borderRadius: borderRadius),
       child: CustomSingleChildLayout(
         delegate: const _CentredGlyphLayout(),
         // Drawn at a fixed size and scaled into the slot the delegate gives
@@ -190,14 +197,22 @@ class _CoverPainter extends CustomPainter {
 /// Ambient colours taken from an item's cover palette, for the surfaces
 /// around its artwork (Now Playing backdrop, the "Continue listening" card,
 /// album and artist headers). Same seed, same colours as its placeholder.
-/// Every surface stays dark enough for the text tokens on it (checked in
-/// test/unit/artwork_placeholder_test.dart).
+/// Every surface keeps the text tokens on it readable, in both palettes
+/// (checked in test/unit/artwork_placeholder_test.dart).
+///
+/// Each method takes the palette of the theme it is drawn in and defaults to
+/// [AppPalette.dark]: Now Playing is always dark, so its backdrop glows use
+/// the defaults in both themes.
 abstract class ArtworkTint {
-  /// Light (top-left) stop of [seed]'s cover gradient.
-  static Color light(String seed) => ArtworkPlaceholder.gradientFor(seed).colors.first;
+  /// Light (top-left) stop of [seed]'s cover gradient; the same in both
+  /// palettes.
+  static Color light(String seed, [AppPalette palette = AppPalette.dark]) =>
+      ArtworkPlaceholder.gradientFor(seed, palette).colors.first;
 
-  /// Deep (bottom-right) stop of [seed]'s cover gradient.
-  static Color deep(String seed) => ArtworkPlaceholder.gradientFor(seed).colors.last;
+  /// Deep (bottom-right) stop of [seed]'s cover gradient (lifted one step on
+  /// paper).
+  static Color deep(String seed, [AppPalette palette = AppPalette.dark]) =>
+      ArtworkPlaceholder.gradientFor(seed, palette).colors.last;
 
   /// Opacity of the light glow around the Now Playing cover. Strong, because
   /// the scrim over it lets only the band around the cover show colour; text
@@ -207,21 +222,33 @@ abstract class ArtworkTint {
   /// Opacity of the deep glow on the right of the Now Playing cover.
   static const double backdropDeepAlpha = 0.6;
 
-  /// [AppColors.heroGradient] re-coloured with [seed]'s deep stop, for cards
-  /// and headers that carry text.
-  static LinearGradient surfaceGradient(String seed) {
-    final deep = ArtworkTint.deep(seed);
+  /// Where the two tinted stops of [surfaceGradient] sit between the item's
+  /// colour and the canvas. Ink melts the deep stop into the canvas; paper
+  /// washes the top stop out into it, so ink text stays readable.
+  static const List<double> darkSurfaceMix = [0.30, 0.68];
+  static const List<double> lightSurfaceMix = [0.85, 0.93];
+
+  /// The hero gradient re-coloured with [seed]'s colours, for cards and
+  /// headers that carry text (docs/DESIGN.md 3): on ink
+  /// `[lerp(deep, background, 0.30), lerp(deep, background, 0.68), background]`,
+  /// on paper `[lerp(top, background, 0.85), lerp(top, background, 0.93),
+  /// background]`. Put textPrimary and textSecondary on it.
+  static LinearGradient surfaceGradient(String seed, [AppPalette palette = AppPalette.dark]) {
+    final dark = palette.isDark;
+    final base = dark ? deep(seed, palette) : light(seed, palette);
+    final mix = dark ? darkSurfaceMix : lightSurfaceMix;
     return LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [
-        Color.lerp(deep, AppColors.background, 0.3)!,
-        Color.lerp(deep, AppColors.background, 0.68)!,
-        AppColors.heroGradient.colors.last,
+        Color.lerp(base, palette.background, mix[0])!,
+        Color.lerp(base, palette.background, mix[1])!,
+        palette.background,
       ],
     );
   }
 
   /// Soft coloured shadow under a cover.
-  static Color glow(String seed) => light(seed).withValues(alpha: 0.3);
+  static Color glow(String seed, [AppPalette palette = AppPalette.dark]) =>
+      light(seed, palette).withValues(alpha: 0.3);
 }

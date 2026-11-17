@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Ink window behind the Flutter UI in the dark theme (AppPalette.dark.background). -->
+    <color name="mediahub_window">#180A2E</color>
+</resources>

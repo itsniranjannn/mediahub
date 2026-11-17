@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0B0D12</color>
-    <!-- Same as AppColors.background in Dart: the app is dark-only, so the window behind
-         Flutter (and the launch screen) uses it in light and dark system mode alike. -->
-    <color name="mediahub_canvas">#07090F</color>
+    <!-- Adaptive icon field (docs/DESIGN.md 7.16): ultraviolet behind the Volt play-bolt. -->
+    <color name="ic_launcher_background">#421E78</color>
+    <!-- The brand ink (AppPalette.dark.background). The launch screen and the Android 12+
+         splash are ink in both system themes. -->
+    <color name="mediahub_canvas">#180A2E</color>
+    <!-- Window behind the Flutter UI while it runs (rotation, PiP): the canvas of the theme
+         the app follows, paper here and ink in values-night. -->
+    <color name="mediahub_window">#F7F2E8</color>
 </resources>

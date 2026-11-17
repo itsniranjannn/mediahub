@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Launch screen (Android 8-11): dark canvas with the app mark in the middle. -->
+<!-- Launch screen (Android 8-11): ink canvas with the Volt play-bolt in the middle. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/mediahub_canvas" />
     <item>

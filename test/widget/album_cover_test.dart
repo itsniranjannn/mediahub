@@ -171,7 +171,8 @@ void main() {
               .first,
         );
     expect(fill('Play').color, AppColors.primary);
-    expect(fill('Shuffle').color, const Color(0xFF25253F));
-    expect(fill('Shuffle').textStyle?.color, AppColors.primary);
+    // Bijuli's tonal pair (DESIGN.md 2.3): deep violet fill, pale Volt label.
+    expect(fill('Shuffle').color, AppPalette.dark.secondaryContainer);
+    expect(fill('Shuffle').textStyle?.color, AppPalette.dark.onSecondaryContainer);
   });
 }

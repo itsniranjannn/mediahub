@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,17 +11,9 @@ import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/shared/widgets/media_item_tile.dart';
 import 'package:mediahub/shared/widgets/ui_kit.dart';
 
-const _channel = MethodChannel('mediahub/media_store');
+import '../helpers/app_fonts.dart';
 
-/// Real Inter, so text widths match the phone.
-Future<void> _loadInter() async {
-  final inter = FontLoader('Inter');
-  for (final weight in ['Regular', 'Medium', 'SemiBold']) {
-    final bytes = File('assets/fonts/Inter-$weight.otf').readAsBytesSync();
-    inter.addFont(Future.value(ByteData.view(bytes.buffer)));
-  }
-  await inter.load();
-}
+const _channel = MethodChannel('mediahub/media_store');
 
 Future<void> _pump(WidgetTester tester, Widget child, {double width = 360, double textScale = 1.0}) async {
   tester.view.physicalSize = Size(width * 3, 800 * 3);
@@ -58,7 +49,8 @@ MediaItem _video({String source = 'download'}) => MediaItem(
     );
 
 void main() {
-  setUpAll(_loadInter);
+  // The bundled fonts, so text widths match the phone.
+  setUpAll(loadAppFonts);
 
   group('DurationBadge', () {
     testWidgets('uses the one clock format: no leading zero, hours included', (tester) async {
@@ -82,7 +74,7 @@ void main() {
   });
 
   group('MediaBadge', () {
-    testWidgets('sits on the same dark chip as DurationBadge with a 12 dp teal glyph', (tester) async {
+    testWidgets('sits on the same dark chip as DurationBadge with a 16 dp Ice glyph', (tester) async {
       await _pump(
         tester,
         const Column(
@@ -100,8 +92,9 @@ void main() {
       expect(badge.borderRadius, duration.borderRadius);
 
       final icon = tester.widget<Icon>(find.byIcon(Icons.download_done_rounded));
-      expect(icon.size, 12);
+      expect(icon.size, 16);
       expect(icon.color, AppColors.accent);
+      expect(icon.color, MediaBadge.glyphColor);
 
       final text = tester.widget<Text>(find.text('Downloaded'));
       final durationText = tester.widget<Text>(find.text('3:00'));
