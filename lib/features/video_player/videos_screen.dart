@@ -20,6 +20,7 @@ import '../../shared/widgets/ui_kit.dart';
 import '../library/library_notifier.dart';
 import '../library/media_context_menu.dart';
 import 'video_player_notifier.dart';
+import 'video_queue.dart';
 
 class VideosScreen extends ConsumerStatefulWidget {
   const VideosScreen({super.key});
@@ -37,17 +38,30 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
     super.dispose();
   }
 
-  void _openPlayer(BuildContext context, MediaItem item) {
+  /// Opens the player on [item]. [list] is what the user sees around it
+  /// (the library as sorted and searched, or the Continue watching rail):
+  /// the player's Next and Previous follow it, skipping videos whose file is
+  /// gone.
+  void _openPlayer(BuildContext context, MediaItem item, {List<MediaItem>? list}) {
+    if (!_isPlayable(item)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File is missing or unavailable on storage')),
+      );
+      return;
+    }
+    final queue = videoQueueFor(item, list ?? [item], isPlayable: _isPlayable);
+    context.push('/video_player', extra: queue);
+  }
+
+  static bool _isPlayable(MediaItem item) {
     if (item.source == 'download' || item.availability == MediaAvailability.missing) {
-      final file = File(item.uri);
-      if (!file.existsSync()) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('File is missing or unavailable on storage')),
-        );
-        return;
+      try {
+        return File(item.uri).existsSync();
+      } catch (_) {
+        return false;
       }
     }
-    context.push('/video_player', extra: item);
+    return true;
   }
 
   /// The media sheet for [item] (Play, Play as audio, Picture-in-picture ...).
@@ -103,15 +117,14 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
         SliverFillRemaining(
           hasScrollBody: false,
           child: EmptyStateWidget(
-            icon: Icons.lock_outline_rounded,
+            icon: Icons.video_library_rounded,
             iconColor: palette.accent,
-            title: 'Permission Required',
-            message:
-                '${AppConfig.appName} needs media permission to access your video files and build your video library.',
+            title: 'Allow access to your videos',
+            message: '${AppConfig.appName} shows the videos saved on this phone. Your videos stay on your phone.',
             action: FilledButton.icon(
               onPressed: () => notifier.requestPermission(),
-              icon: const Icon(Icons.lock_open_rounded, size: 20),
-              label: const Text('Allow Access'),
+              icon: const Icon(Icons.video_library_rounded, size: 20),
+              label: const Text('Allow access'),
             ),
           ),
         ),
@@ -123,15 +136,14 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
         SliverFillRemaining(
           hasScrollBody: false,
           child: EmptyStateWidget(
-            icon: Icons.no_encryption_gmailerrorred_rounded,
+            icon: Icons.video_library_rounded,
             iconColor: palette.warning,
-            title: 'Permission Permanently Denied',
-            message:
-                'Media permission was permanently denied. Please grant permission in system settings to access your video library.',
+            title: 'Video access is off',
+            message: 'To see your videos here, allow ${AppConfig.appName} to use videos in your phone settings.',
             action: FilledButton.tonalIcon(
               onPressed: () => notifier.openSettings(),
               icon: const Icon(Icons.settings_rounded, size: 20),
-              label: const Text('Open Settings'),
+              label: const Text('Open settings'),
             ),
           ),
         ),
@@ -154,8 +166,9 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           child: EmptyStateWidget(
             icon: Icons.error_outline_rounded,
             iconColor: palette.error,
-            title: 'Failed to load video library',
-            message: state.errorMessage ?? 'An unknown error occurred.',
+            title: "Couldn't load your videos",
+            // A plain sentence: the raw error text is not for the screen.
+            message: 'Something went wrong while reading your videos. Your files are safe.',
             action: FilledButton.tonalIcon(
               onPressed: () => notifier.scanDevice(),
               icon: const Icon(Icons.refresh_rounded, size: 20),
@@ -195,7 +208,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           child: _ContinueWatchingRail(
             items: continueWatchingItems,
             progressMap: progressMap,
-            onOpen: (item) => _openPlayer(context, item),
+            onOpen: (item) => _openPlayer(context, item, list: continueWatchingItems),
             onMenu: _openMenu,
           ),
         ),
@@ -237,7 +250,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
                 key: ValueKey(video.id),
                 item: video,
                 progress: ratio,
-                onTap: () => _openPlayer(context, video),
+                onTap: () => _openPlayer(context, video, list: state.items),
                 onMore: (anchor) => _openMenu(anchor, video),
                 onLongPress: () => _openMenu(context, video),
               );

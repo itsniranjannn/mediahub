@@ -13,6 +13,9 @@ class DownloadServiceChannel(
 
     private val channel = MethodChannel(messenger, "mediahub/download_service")
 
+    /** A notification tap the Dart side was not listening for yet (cold start). */
+    private var pendingOpenDownloads = false
+
     init {
         channel.setMethodCallHandler(this)
         DownloadService.eventListener = { action ->
@@ -61,6 +64,11 @@ class DownloadServiceChannel(
                     result.error("SERVICE_UPDATE_FAILED", e.localizedMessage, null)
                 }
             }
+            "takePendingActions" -> {
+                val pending = if (pendingOpenDownloads) listOf("openDownloads") else emptyList()
+                pendingOpenDownloads = false
+                result.success(pending)
+            }
             "stop" -> {
                 val intent = Intent(context, DownloadService::class.java).apply {
                     action = DownloadService.ACTION_STOP
@@ -76,6 +84,22 @@ class DownloadServiceChannel(
                 result.notImplemented()
             }
         }
+    }
+
+    /** The download notification was tapped: Dart shows the Downloads tab. */
+    fun openDownloads() {
+        channel.invokeMethod("openDownloads", null, object : MethodChannel.Result {
+            override fun success(result: Any?) {}
+
+            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                pendingOpenDownloads = true
+            }
+
+            // No Dart handler yet (the engine is still starting): keep it for takePendingActions.
+            override fun notImplemented() {
+                pendingOpenDownloads = true
+            }
+        })
     }
 
     fun cleanup() {

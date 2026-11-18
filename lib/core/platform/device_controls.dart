@@ -4,8 +4,23 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../platform_info.dart';
 
-/// Volume and brightness for the video player's swipe gestures (Android only).
-/// Every call fails soft so the gestures simply do nothing on other platforms.
+/// A button in the video player's picture-in-picture window (Android).
+enum PipAction {
+  rewind,
+  playPause,
+  forward;
+
+  static PipAction? fromWire(Object? raw) => switch (raw) {
+        'rewind' => PipAction.rewind,
+        'playPause' => PipAction.playPause,
+        'forward' => PipAction.forward,
+        _ => null,
+      };
+}
+
+/// Volume, brightness, picture-in-picture, the headphone-unplug signal and
+/// the video volume boost (Android only). Every call fails soft so the
+/// gestures simply do nothing on other platforms.
 class DeviceControls {
   DeviceControls._();
 
@@ -27,20 +42,41 @@ class DeviceControls {
   /// playback in it should stop, as Android expects.
   static Stream<void> get pipDismissed => _pipDismissed.stream;
 
+  static final StreamController<PipAction> _pipActions = StreamController<PipAction>.broadcast();
+
+  /// A button in the video player's picture-in-picture window was pressed
+  /// (only shown while the video player owns the window, see [setPipPlaying]).
+  static Stream<PipAction> get pipActions => _pipActions.stream;
+
   static bool _handlerSet = false;
 
-  /// Starts listening for native events (picture-in-picture changes). Safe to call often.
+  /// Starts listening for native events (picture-in-picture changes, volume
+  /// changes, headphones unplugged). Safe to call often.
   static void init() {
     if (_handlerSet || !available) return;
     _handlerSet = true;
-    _channel.setMethodCallHandler((call) async {
-      switch (call.method) {
-        case 'pipChanged':
-          handlePipChanged(call.arguments == true);
-        case 'pipDismissed':
-          _pipDismissed.add(null);
-      }
-    });
+    _channel.setMethodCallHandler(handlePlatformCall);
+  }
+
+  /// Applies one event from the platform. Public for tests.
+  @visibleForTesting
+  static Future<void> handlePlatformCall(MethodCall call) async {
+    switch (call.method) {
+      case 'pipChanged':
+        handlePipChanged(call.arguments == true);
+      case 'pipDismissed':
+        _pipDismissed.add(null);
+      case 'pipAction':
+        final action = PipAction.fromWire(call.arguments);
+        if (action != null) _pipActions.add(action);
+      case 'volumeChanged':
+        final v = call.arguments;
+        if (v is num) _volumeChanges.add(v.toDouble().clamp(0.0, 1.0));
+      case 'becomingNoisy':
+        for (final c in _noisyWatchers.values.toList()) {
+          c.add(null);
+        }
+    }
   }
 
   /// Applies a picture-in-picture change reported by the platform.
@@ -62,6 +98,11 @@ class DeviceControls {
   static bool _appliedEligible = false;
   static double _appliedAspect = 0;
 
+  /// Whether the video player's window shows its buttons, and with a pause
+  /// (true) or a play (false) glyph; null = no buttons.
+  static bool? _videoPipPlaying;
+  static bool? _appliedPipPlaying;
+
   /// The screen whose claim is in force, or null.
   static String? get effectivePipOwner => _pipClaims.isEmpty ? null : _pipClaims.keys.last;
 
@@ -73,6 +114,8 @@ class DeviceControls {
     _pipClaims.clear();
     _appliedEligible = false;
     _appliedAspect = 0;
+    _videoPipPlaying = null;
+    _appliedPipPlaying = null;
     inPip.value = false;
     pipOwner.value = null;
   }
@@ -106,11 +149,33 @@ class DeviceControls {
     } else {
       _pipClaims.remove(owner);
     }
+    await _applyPip();
+  }
+
+  /// The play state the video player's picture-in-picture buttons show
+  /// (rewind 10 s, play / pause, forward 10 s); null removes the buttons.
+  /// The buttons only appear while the video player's claim is in force.
+  static Future<void> setPipPlaying(bool? playing) async {
+    _videoPipPlaying = playing;
+    await _applyPip();
+  }
+
+  /// The buttons for the claim in force: only the video player has them.
+  static bool? get _effectivePipPlaying =>
+      effectivePipOwner == pipOwnerVideoPlayer ? _videoPipPlaying : null;
+
+  static Future<void> _applyPip() async {
     final effectiveEligible = _pipClaims.isNotEmpty;
     final effectiveAspect = effectiveEligible ? _pipClaims.values.last : _appliedAspect;
-    if (effectiveEligible == _appliedEligible && effectiveAspect == _appliedAspect) return;
+    final playing = _effectivePipPlaying;
+    if (effectiveEligible == _appliedEligible &&
+        effectiveAspect == _appliedAspect &&
+        playing == _appliedPipPlaying) {
+      return;
+    }
     _appliedEligible = effectiveEligible;
     _appliedAspect = effectiveAspect;
+    _appliedPipPlaying = playing;
     if (!available) return;
     try {
       // The channel carries integers: scale the ratio to 1000ths.
@@ -118,6 +183,8 @@ class DeviceControls {
         'eligible': effectiveEligible,
         'width': ((effectiveAspect > 0 ? effectiveAspect : 16 / 9) * 1000).round().clamp(1, 100000),
         'height': 1000,
+        // Absent = no buttons in the window.
+        'actionsPlaying': ?playing,
       });
     } catch (_) {}
   }
@@ -131,6 +198,98 @@ class DeviceControls {
       return false;
     }
   }
+
+  // --- volume ----------------------------------------------------------------
+
+  static final StreamController<double> _volumeChanges = StreamController<double>.broadcast(
+    onListen: () => _setWatch('watchVolume', true),
+    onCancel: () => _setWatch('watchVolume', false),
+  );
+
+  /// The phone's media volume (0..1) each time it changes by any means: the
+  /// volume keys, the system slider, another app or this one. Android
+  /// reports only while someone listens.
+  static Stream<double> get volumeChanges => _volumeChanges.stream;
+
+  // --- headphones unplugged ("becoming noisy") -------------------------------
+
+  static final Map<String, StreamController<void>> _noisyWatchers = {};
+
+  /// Fires when the audio is about to come out of the speaker because
+  /// headphones were unplugged or a Bluetooth headset disconnected: playback
+  /// should pause, as every media app does. One native receiver serves every
+  /// [owner] (e.g. 'video_player', 'online'); it is registered while at least
+  /// one owner listens. Calling again with the same owner returns the same
+  /// stream.
+  static Stream<void> watchBecomingNoisy(String owner) {
+    final existing = _noisyWatchers[owner];
+    if (existing != null) return existing.stream;
+    final controller = StreamController<void>.broadcast(
+      onListen: _syncNoisyWatch,
+      onCancel: _syncNoisyWatch,
+    );
+    _noisyWatchers[owner] = controller;
+    return controller.stream;
+  }
+
+  /// Owners with a live listener (tests).
+  @visibleForTesting
+  static List<String> get debugNoisyOwners =>
+      [for (final e in _noisyWatchers.entries) if (e.value.hasListener) e.key];
+
+  static bool _noisyApplied = false;
+
+  static void _syncNoisyWatch() {
+    final want = _noisyWatchers.values.any((c) => c.hasListener);
+    if (want == _noisyApplied) return;
+    _noisyApplied = want;
+    _setWatch('watchNoisy', want);
+  }
+
+  static Future<void> _setWatch(String method, bool on) async {
+    if (!available) return;
+    init();
+    try {
+      await _channel.invokeMethod<bool>(method, {'on': on});
+    } catch (_) {}
+  }
+
+  // --- video volume boost ------------------------------------------------------
+
+  /// Highest boost the video player offers (percent of full volume).
+  static const int maxBoostPercent = 200;
+
+  /// Whether this platform can try to boost a video past full volume
+  /// (Android's LoudnessEnhancer on the video's own audio session).
+  static bool get boostAvailable => available;
+
+  /// Raises video [playerId]'s loudness to [percent] (100 = off, up to
+  /// [maxBoostPercent]) on its own audio session; music is never touched.
+  /// Returns false when the phone refuses (no LoudnessEnhancer, no session):
+  /// the player then hides its boost zone.
+  static Future<bool> setVideoBoost({required int playerId, required int percent}) async {
+    if (!available || playerId < 0) return false;
+    init();
+    try {
+      return (await _channel.invokeMethod<bool>('setVideoBoost', {
+            'playerId': playerId,
+            'percent': percent.clamp(100, maxBoostPercent),
+          })) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Drops any video boost (the player closed or switched video).
+  static Future<void> releaseVideoBoost() async {
+    if (!available) return;
+    try {
+      await _channel.invokeMethod<bool>('releaseVideoBoost');
+    } catch (_) {}
+  }
+
+  // --- volume / brightness values ----------------------------------------------
 
   static Future<double> getVolume() => _read('getVolume', 0.5);
   static Future<double> getBrightness() => _read('getBrightness', 0.5);

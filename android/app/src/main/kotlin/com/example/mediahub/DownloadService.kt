@@ -107,10 +107,11 @@ class DownloadService : Service() {
     }
 
     private fun buildNotification(count: Int, percent: Int, fileName: String?): Notification {
-        // Content intent: open Downloads tab in MainActivity
+        // Content intent: open the Downloads tab. An explicit app-internal action (the
+        // Activity ignores "route" extras, which any app could send).
         val openIntent = Intent(this, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_OPEN_DOWNLOADS
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("route", "/downloads")
         }
         val contentPendingIntent = PendingIntent.getActivity(
             this,

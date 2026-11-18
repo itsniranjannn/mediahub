@@ -62,6 +62,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Share sheet: read-only access to the app's own downloads folder, only for a URI
+             granted to the app the user picked (not exported). Phone media are shared by
+             their MediaStore URI instead. -->
+        <provider
+            android:name=".DownloadShareProvider"
+            android:authorities="${applicationId}.downloadshare"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- DownloadService foreground service for background downloading -->
         <service
             android:name=".DownloadService"

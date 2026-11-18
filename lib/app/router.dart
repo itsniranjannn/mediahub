@@ -3,7 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/logging/diagnostics_service.dart';
-import '../domain/models/media_item.dart';
+import '../core/services/download_service_controller.dart';
+import '../features/downloads/download_providers.dart';
 import '../features/downloads/downloads_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/music_player/music_screen.dart';
@@ -11,17 +12,33 @@ import '../features/online/online_screen.dart';
 import '../features/settings/diagnostics_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/video_player/video_player_screen.dart';
+import '../features/video_player/video_queue.dart';
 import '../features/video_player/videos_screen.dart';
 import '../shared/widgets/ui_kit.dart';
 import 'app_shell.dart';
+import 'unfocus_on_push.dart';
 import '../core/platform_info.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
 
 final routerProvider = Provider<GoRouter>((ref) {
-  return GoRouter(
+  final router = GoRouter(
     navigatorKey: _rootNavigatorKey,
     initialLocation: '/home',
+    // A page, sheet or dialog opening drops a text field's focus, so closing
+    // it does not pop the keyboard up again. go_router also hands the root
+    // observers to every tab's navigator (StatefulShellRoute's
+    // notifyRootObserver, on by default), so this one covers the tabs too.
+    observers: [UnfocusOnPush()],
+    // The app always starts on Home: a route handed over by the platform
+    // (an intent's "route" extra, a deep link) is ignored, so another app
+    // cannot open a screen of its choosing on a cold start.
+    overridePlatformDefaultLocation: true,
+    // A location no route matches goes Home instead of an error page.
+    onException: (context, state, router) {
+      DiagnosticsService.instance.logEvent('route_not_found', {'path': state.uri.path});
+      router.go('/home');
+    },
     routes: [
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
@@ -62,7 +79,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           if (PlatformInfo.supportsDownloads)
             StatefulShellBranch(
-              routes: [
+                routes: [
                 GoRoute(
                   path: '/downloads',
                   builder: (context, state) => const DownloadsScreen(),
@@ -97,18 +114,31 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
     ],
   );
+
+  // The download notification's tap (Android sends 'openDownloads' over the
+  // download service channel) opens the Downloads tab.
+  if (PlatformInfo.supportsDownloads) {
+    final sub = ref.read(downloadServiceControllerProvider).actionEvents.listen((event) {
+      if (event == DownloadServiceActions.openDownloads) router.go('/downloads');
+    });
+    ref.onDispose(sub.cancel);
+  }
+  return router;
 });
 
-/// Builds '/video_player'. The item to play travels in `extra`; when it is
-/// missing or not a [MediaItem] (an external deep link, a restored route, a
-/// stray push) a small "Nothing to play" page is shown instead of crashing.
+/// Builds '/video_player'. What to play travels in `extra`: a MediaItem
+/// (a queue of one) or a [VideoQueue] (the Videos tab's list, for Next and
+/// Previous). When it is missing or anything else (an external deep link, a
+/// restored route, a stray push) a small "Nothing to play" page is shown
+/// instead of crashing.
 ///
 /// Kept free of side effects: GoRouter runs page builders again on every
 /// rebuild (navigation, rotation, theme changes), so the page logs instead.
 Widget videoPlayerRouteBuilder(BuildContext context, GoRouterState state) {
   final extra = state.extra;
-  return extra is MediaItem
-      ? VideoPlayerScreen(item: extra)
+  final queue = VideoQueue.fromExtra(extra);
+  return queue != null
+      ? VideoPlayerScreen(item: queue.current, queue: queue)
       : NothingToPlayScreen(extraType: extra?.runtimeType.toString() ?? 'null');
 }
 
@@ -118,7 +148,7 @@ Widget videoPlayerRouteBuilder(BuildContext context, GoRouterState state) {
 class NothingToPlayScreen extends StatefulWidget {
   const NothingToPlayScreen({super.key, required this.extraType});
 
-  /// Type of the `extra` the route got instead of a [MediaItem] ('null' when
+  /// Type of the `extra` the route got instead of a MediaItem ('null' when
   /// there was none); logged to Diagnostics, never its value.
   final String extraType;
 

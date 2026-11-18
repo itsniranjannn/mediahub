@@ -2,6 +2,18 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import '../../core/logging/diagnostics_service.dart';
 
+/// The events [DownloadServiceController.actionEvents] carries.
+abstract final class DownloadServiceActions {
+  /// The notification's "Pause all".
+  static const String pauseAll = 'pauseAll';
+
+  /// Android 15 stopped the data-sync service after its time limit.
+  static const String timeout = 'timeout';
+
+  /// The notification itself was tapped: show the Downloads tab.
+  static const String openDownloads = 'openDownloads';
+}
+
 abstract class DownloadServiceController {
   Future<void> startService({required int count, int percent = -1, String? fileName});
   Future<void> updateProgress({required int count, int percent = -1, String? fileName});
@@ -18,6 +30,22 @@ class AndroidDownloadServiceController implements DownloadServiceController {
 
   AndroidDownloadServiceController() {
     _channel.setMethodCallHandler(_handleMethodCall);
+    // A notification tap that arrived before this side was listening (the
+    // Activity started from it) waits natively until asked for.
+    _takePendingActions();
+  }
+
+  Future<void> _takePendingActions() async {
+    try {
+      final pending = await _channel.invokeMethod<List<Object?>>('takePendingActions');
+      for (final action in pending ?? const <Object?>[]) {
+        if (action == DownloadServiceActions.openDownloads && !_actionEventsController.isClosed) {
+          _actionEventsController.add(DownloadServiceActions.openDownloads);
+        }
+      }
+    } catch (_) {
+      // Not Android (no channel) or an older native side.
+    }
   }
 
   @override
@@ -25,8 +53,9 @@ class AndroidDownloadServiceController implements DownloadServiceController {
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
     switch (call.method) {
-      case 'pauseAll':
-      case 'timeout':
+      case DownloadServiceActions.pauseAll:
+      case DownloadServiceActions.timeout:
+      case DownloadServiceActions.openDownloads:
         _actionEventsController.add(call.method);
         break;
       case 'wake_lock_acquired':

@@ -270,7 +270,8 @@ void main() {
       (_otherFailure, _friendlyOther, ['timed out']),
     ]) {
       testWidgets('shows "$friendly" and never the raw exception', (tester) async {
-        final factory = _EngineFactory([_ScriptedEngine(failWith: raw)]);
+        // A decoder failure is retried once by itself: it has to fail twice.
+        final factory = _EngineFactory([_ScriptedEngine(failWith: raw), _ScriptedEngine(failWith: raw)]);
         await _pumpScreen(tester, factory);
 
         expect(find.text('Unable to play video'), findsOneWidget);
@@ -307,7 +308,10 @@ void main() {
 
     testWidgets('a screen reader is told: one live-region heading with the title and the cause', (tester) async {
       final handle = tester.ensureSemantics();
-      final factory = _EngineFactory([_ScriptedEngine(failWith: _decoderFailure)]);
+      final factory = _EngineFactory([
+        _ScriptedEngine(failWith: _decoderFailure),
+        _ScriptedEngine(failWith: _decoderFailure),
+      ]);
       await _pumpScreen(tester, factory);
 
       final message = find.semantics.byLabel('Unable to play video\n$_friendlyDecoder\nYour file is safe.');
@@ -347,9 +351,11 @@ void main() {
     testWidgets('clears the error, releases the failed player and starts the same item again from the saved position',
         (tester) async {
       final events = <String>[];
+      // The quiet retry ('failed') fails too, so the error screen shows.
+      final quiet = _ScriptedEngine(failWith: _decoderFailure, name: 'quiet', events: events);
       final failed = _ScriptedEngine(failWith: _decoderFailure, name: 'failed', events: events);
       final fresh = _ScriptedEngine(name: 'fresh', events: events);
-      final factory = _EngineFactory([failed, fresh]);
+      final factory = _EngineFactory([quiet, failed, fresh]);
       final library = _LibraryRepo();
       await _pumpScreen(
         tester,
@@ -363,6 +369,8 @@ void main() {
         ),
       );
       expect(find.text(_friendlyDecoder), findsOneWidget);
+      expect(events.take(5), ['quiet.initialize', 'quiet.dispose', 'quiet.disposed', 'quiet.dispose', 'failed.initialize']);
+      events.removeRange(0, events.indexOf('failed.initialize'));
 
       await tester.tap(find.text('Try again'));
       await _settle(tester);
@@ -374,7 +382,7 @@ void main() {
       // before the fresh one starts; the provider then disposes it once more.
       expect(failed.disposeCalls, 2);
       expect(events, ['failed.initialize', 'failed.dispose', 'failed.disposed', 'failed.dispose', 'fresh.initialize']);
-      expect(factory.created, 2);
+      expect(factory.created, 3);
       expect(fresh.initializedWith, [_item.uri]);
       expect(fresh.seeks, [const Duration(seconds: 90)]);
       expect(fresh.playCalls, 1);
@@ -386,7 +394,8 @@ void main() {
 
     testWidgets('a failed player whose dispose never finishes holds the retry for 2 s at most', (tester) async {
       final events = <String>[];
-      final failed = _ScriptedEngine(failWith: _decoderFailure, name: 'failed', events: events, disposeHangs: true);
+      // Not a decoder error: no quiet retry, so Try again is the first retry.
+      final failed = _ScriptedEngine(failWith: _otherFailure, name: 'failed', events: events, disposeHangs: true);
       final fresh = _ScriptedEngine(name: 'fresh', events: events);
       final factory = _EngineFactory([failed, fresh]);
       await _pumpScreen(tester, factory);
@@ -444,7 +453,7 @@ void main() {
       await _unmount(tester);
     });
 
-    testWidgets('after an error during playback it resumes from where the video was', (tester) async {
+    testWidgets('after an error during playback Try again resumes from where the video was', (tester) async {
       final first = _ScriptedEngine();
       final second = _ScriptedEngine();
       final factory = _EngineFactory([first, second]);
@@ -453,12 +462,13 @@ void main() {
 
       first.emitPosition(const Duration(seconds: 42));
       await tester.pump();
-      first.emitError(_decoderFailure);
+      // Not a decoder error, so no quiet retry: the error screen shows.
+      first.emitError(_otherFailure);
       await tester.pump();
       // Later updates from the dead player must not wipe the error.
       first.emitPosition(const Duration(seconds: 43));
       await _settle(tester);
-      expect(find.text(_friendlyDecoder), findsOneWidget);
+      expect(find.text(_friendlyOther), findsOneWidget);
 
       await tester.tap(find.text('Try again'));
       await _settle(tester);
@@ -472,7 +482,7 @@ void main() {
 
     testWidgets('double taps start only one retry', (tester) async {
       final factory = _EngineFactory([
-        _ScriptedEngine(failWith: _decoderFailure),
+        _ScriptedEngine(failWith: _otherFailure),
         _ScriptedEngine(),
         _ScriptedEngine(),
       ]);
@@ -491,15 +501,15 @@ void main() {
 
     testWidgets('a retry that fails again shows the error again and can be retried', (tester) async {
       final factory = _EngineFactory([
-        _ScriptedEngine(failWith: _decoderFailure),
-        _ScriptedEngine(failWith: _decoderFailure),
+        _ScriptedEngine(failWith: _otherFailure),
+        _ScriptedEngine(failWith: _otherFailure),
         _ScriptedEngine(),
       ]);
       await _pumpScreen(tester, factory);
 
       await tester.tap(find.text('Try again'));
       await _settle(tester);
-      expect(find.text(_friendlyDecoder), findsOneWidget);
+      expect(find.text(_friendlyOther), findsOneWidget);
       expect(factory.created, 2);
       // Each failed attempt is logged once.
       expect(
@@ -513,6 +523,115 @@ void main() {
       expect(factory.created, 3);
 
       await _unmount(tester);
+    });
+  });
+
+  // Found on the emulator: the hardware decoder failed right after the player
+  // moved on to the next video, and "Try again" then played it fine.
+  group('a decoder error gets one quiet retry', () {
+    const wakelock = 'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle';
+
+    setUp(() async {
+      DiagnosticsService.enableDebounce = false;
+      await DiagnosticsService.instance.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMessageHandler(
+        wakelock,
+        (_) async => const StandardMessageCodec().encodeMessage(<Object?>[null]),
+      );
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMessageHandler(wakelock, null);
+    });
+
+    Iterable<String> logged(String event) => DiagnosticsService.instance.logs.where((l) => l.contains(event));
+
+    testWidgets('at start: the second player plays and no error screen shows', (tester) async {
+      final factory = _EngineFactory([_ScriptedEngine(failWith: _decoderFailure), _ScriptedEngine()]);
+      await _pumpScreen(tester, factory);
+
+      expect(find.text('Unable to play video'), findsNothing);
+      expect(find.byKey(const ValueKey('video-surface')), findsOneWidget);
+      expect(factory.created, 2);
+      expect(logged('video_player_auto_retry'), hasLength(1));
+      expect(logged('video_player_error'), isEmpty);
+
+      await _unmount(tester);
+    });
+
+    testWidgets('during playback: it carries on from where the video was', (tester) async {
+      final first = _ScriptedEngine();
+      final second = _ScriptedEngine();
+      final factory = _EngineFactory([first, second]);
+      await _pumpScreen(tester, factory);
+
+      first.emitPosition(const Duration(seconds: 42));
+      await tester.pump();
+      first.emitError(_decoderFailure);
+      await _settle(tester);
+      // The failed player was released before the second one started.
+      expect(first.disposeCalls, greaterThanOrEqualTo(1));
+
+      expect(find.text('Unable to play video'), findsNothing);
+      expect(find.byKey(const ValueKey('video-surface')), findsOneWidget);
+      expect(second.seeks, [const Duration(seconds: 42)]);
+      expect(second.playCalls, 1);
+      expect(factory.created, 2);
+
+      await _unmount(tester);
+    });
+
+    testWidgets('only once: when the quiet retry fails too, the error screen shows', (tester) async {
+      final factory = _EngineFactory([
+        _ScriptedEngine(failWith: _decoderFailure),
+        _ScriptedEngine(failWith: _decoderFailure),
+        _ScriptedEngine(),
+      ]);
+      await _pumpScreen(tester, factory);
+
+      expect(find.text(_friendlyDecoder), findsOneWidget);
+      expect(factory.created, 2);
+      expect(logged('video_player_auto_retry'), hasLength(1));
+      expect(logged('video_player_error'), hasLength(1));
+
+      // Try again is still there and works.
+      await tester.tap(find.text('Try again'));
+      await _settle(tester);
+      expect(find.text('Unable to play video'), findsNothing);
+      expect(factory.created, 3);
+
+      await _unmount(tester);
+    });
+
+    // Review finding: a retry always starts playback, so it must not follow a
+    // pause (or backgrounding, or the end of the video).
+    testWidgets('paused by the viewer: no quiet retry, so nothing starts playing by itself', (tester) async {
+      final first = _ScriptedEngine();
+      final factory = _EngineFactory([first, _ScriptedEngine()]);
+      await _pumpScreen(tester, factory);
+      expect(find.byTooltip('Pause'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Pause'));
+      await tester.pump();
+      first.emitError(_decoderFailure);
+      await _settle(tester);
+
+      expect(find.text(_friendlyDecoder), findsOneWidget);
+      expect(factory.created, 1);
+      expect(logged('video_player_auto_retry'), isEmpty);
+
+      await _unmount(tester);
+    });
+
+    testWidgets('a missing file or another error is not retried by itself', (tester) async {
+      for (final raw in [_sourceFailure, _otherFailure]) {
+        final factory = _EngineFactory([_ScriptedEngine(failWith: raw), _ScriptedEngine()]);
+        await _pumpScreen(tester, factory);
+        expect(find.text('Unable to play video'), findsOneWidget, reason: raw);
+        expect(factory.created, 1, reason: raw);
+        await _unmount(tester);
+      }
+      expect(logged('video_player_auto_retry'), isEmpty);
     });
   });
 
@@ -585,7 +704,7 @@ void main() {
     testWidgets('the error view keeps the dark palette in the light theme', (tester) async {
       await _pumpScreen(
         tester,
-        _EngineFactory([_ScriptedEngine(failWith: _decoderFailure)]),
+        _EngineFactory([_ScriptedEngine(failWith: _decoderFailure), _ScriptedEngine(failWith: _decoderFailure)]),
         theme: AppTheme.lightTheme,
       );
       final heading = tester.widget<Text>(find.text('Unable to play video'));
