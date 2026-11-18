@@ -940,7 +940,8 @@ class DownloadEngine {
     File finalDest = File(p.join(downloadDir.path, finalFileName));
     int duplicateIndex = 1;
     while (finalDest.existsSync()) {
-      finalFileName = '$baseWithoutExt ($duplicateIndex)$ext';
+      // Kept within the 255-byte name limit (long Devanagari titles).
+      finalFileName = SafeFilename.numbered(baseWithoutExt, duplicateIndex, ext);
       finalDest = File(p.join(downloadDir.path, finalFileName));
       duplicateIndex++;
     }

@@ -11,7 +11,10 @@
 //      and posts compact JSON to Dart through flutter_inappwebview;
 //  (d) runs commands from Dart (play, pause, seekTo, next, previous ...);
 //  (e) picture-in-picture helpers: an html class that makes the playing video
-//      fill the window (Android PiP), and the browser's own PiP on iOS.
+//      fill the window (Android PiP), and the browser's own PiP on iOS;
+//  (f) keep-alive while "Background play" is on: YouTube's last-activity
+//      clock (window._lact) is refreshed every minute, and its "Continue
+//      watching?" prompt is confirmed when it paused the video by itself.
 //
 // Every message carries the token Dart put in place of the placeholder below;
 // Dart drops messages without it. Nothing here may ever throw into the page:
@@ -26,6 +29,10 @@
   var PIP_ANCESTOR_CLASS = 'mediahub-pip-ancestor';
   var TICK_MS = 1000;
   var DEDUPE_MS = 800;
+  var KEEPALIVE_MS = 60000;
+  // A pause this soon after the user touched the page is the user's own.
+  var INPUT_GRACE_MS = 5000;
+  var MAX_QUERY = 200;
 
   var w = typeof window !== 'undefined' ? window : null;
   if (!w) return;
@@ -49,8 +56,34 @@
   var doc = w.document;
   if (!doc) return;
 
+  // Captured now, before any page script runs: a page that later swaps these
+  // for wrappers never sees a message (or its token).
+  var reflectApply = typeof Reflect === 'object' && Reflect && typeof Reflect.apply === 'function' ? Reflect.apply : null;
+  var dateNow = Date.now;
+  var platform = null; // { obj, call }: flutter_inappwebview and its callHandler, captured once
+
+  function capturePlatform() {
+    if (platform) return true;
+    try {
+      var b = w.flutter_inappwebview;
+      if (b && typeof b.callHandler === 'function') {
+        platform = { obj: b, call: b.callHandler };
+        return true;
+      }
+    } catch (e) {
+      // a getter that throws: no bridge yet
+    }
+    return false;
+  }
+  capturePlatform();
+
+  function invoke(fn, self, args) {
+    if (reflectApply) return reflectApply(fn, self, args);
+    return fn.apply(self, args);
+  }
+
   function now() {
-    return Date.now();
+    return invoke(dateNow, Date, []);
   }
 
   function safe(fn, fallback) {
@@ -74,6 +107,11 @@
     nativeAt: {}, // when the browser itself last invoked an action handler (iOS lock screen)
     bridgeAt: {}, // when Dart last invoked one
     metadata: null,
+    lastInputAt: 0, // the user's last touch, click or key in the page
+    bridgePausing: false, // our own pause command is running
+    scriptPauseAt: 0, // page script paused a media element (not us)
+    scriptPauseEl: null, // ... and which one
+    idlePauseAt: 0, // the page paused the main video by itself (no user input before it)
   };
 
   // ---------------------------------------------------------------------------
@@ -147,6 +185,34 @@
     safe(function () {
       doc.addEventListener(type, swallow, true);
     });
+  });
+
+  // Who paused the video? The user's own touches and keys are noted, and the
+  // page's script calls to pause() are told apart from ours, so a pause the
+  // page made by itself (YouTube's idle "Continue watching?" stop) can be
+  // reported as such. A pause the browser makes (audio focus, a phone call)
+  // goes through neither and is never taken for one.
+  function onInput(event) {
+    if (event && event.isTrusted === false) return; // a script's synthetic event
+    state.lastInputAt = now();
+  }
+  ['pointerdown', 'touchstart', 'mousedown', 'keydown'].forEach(function (type) {
+    safe(function () {
+      doc.addEventListener(type, onInput, { capture: true, passive: true });
+    });
+  });
+
+  safe(function () {
+    var proto = w.HTMLMediaElement && w.HTMLMediaElement.prototype;
+    var original = proto && proto.pause;
+    if (typeof original !== 'function') return;
+    proto.pause = function () {
+      if (!state.bridgePausing) {
+        state.scriptPauseAt = now();
+        state.scriptPauseEl = this;
+      }
+      return invoke(original, this, []);
+    };
   });
 
   // ---------------------------------------------------------------------------
@@ -334,9 +400,23 @@
     return typeof v === 'number' && isFinite(v) ? Math.round(v * 1000) / 1000 : null;
   }
 
+  // For a pause of the main video: [pausedByPage, pausedFromSystemControls].
+  function pauseCause(eventType, v) {
+    if (eventType !== 'pause' || !v || !v.paused) return [false, false];
+    var t = now();
+    var native = !!(state.nativeAt.pause && t - state.nativeAt.pause < 1500) ||
+      !!(state.nativeAt.stop && t - state.nativeAt.stop < 1500);
+    // The page's script paused this very video (a muted feed preview it
+    // paused a moment before does not count).
+    var byScript = state.scriptPauseEl === v && state.scriptPauseAt > 0 && t - state.scriptPauseAt < 1000;
+    var userTouched = state.lastInputAt > 0 && state.scriptPauseAt - state.lastInputAt < INPUT_GRACE_MS;
+    return [byScript && !native && !userTouched, native];
+  }
+
   function snapshot(eventType) {
     var v = findVideo();
     var meta = state.metadata;
+    var cause = pauseCause(eventType, v);
     var msg = {
       t: TOKEN,
       k: 'media',
@@ -352,22 +432,32 @@
       n: !!state.handlers.nexttrack || !!findNextButton(),
       vw: v ? v.videoWidth || 0 : 0,
       vh: v ? v.videoHeight || 0 : 0,
+      // Why a 'pause' happened: the page paused itself (no user input, not
+      // us), or the phone's own media controls (lock screen) paused it.
+      yp: cause[0],
+      na: cause[1],
     };
+    if (cause[0]) {
+      state.idlePauseAt = now();
+      // YouTube's "Continue watching?" prompt shows up with such a pause.
+      safe(function () {
+        w.setTimeout(confirmStillWatching, 800);
+      });
+    }
     return msg;
   }
 
   function send(msg) {
-    var bridge = w.flutter_inappwebview;
-    if (bridge && typeof bridge.callHandler === 'function') {
-      try {
-        var r = bridge.callHandler(HANDLER, msg);
-        if (r && typeof r.catch === 'function') r.catch(function () {});
-        return true;
-      } catch (e) {
-        return false;
-      }
+    // Only the reference captured at injection (or when the platform said it
+    // is ready): a later wrapper put in place by a page script never runs.
+    if (!platform) return false;
+    try {
+      var r = invoke(platform.call, platform.obj, [HANDLER, msg]);
+      if (r && typeof r.catch === 'function') r.catch(function () {});
+      return true;
+    } catch (e) {
+      return false;
     }
-    return false;
   }
 
   function post(msg) {
@@ -455,6 +545,7 @@
 
   safe(function () {
     w.addEventListener('flutterInAppWebViewPlatformReady', function () {
+      capturePlatform(); // the platform object arrived after injection (older WebViews)
       state.ready = true;
       var p = state.pending;
       state.pending = null;
@@ -494,11 +585,15 @@
 
   function pause() {
     var v = findVideo();
-    if (!v) return callHandler('pause');
+    // Our own pause is never mistaken for one the page made by itself.
+    state.bridgePausing = true;
     try {
+      if (!v) return callHandler('pause');
       v.pause();
     } catch (e) {
       return false;
+    } finally {
+      state.bridgePausing = false;
     }
     return true;
   }
@@ -531,34 +626,85 @@
     return false;
   }
 
-  function previous() {
-    var v = findVideo();
-    // Like the music player: past 3 s, "previous" restarts the video.
-    if (v && typeof v.currentTime === 'number' && v.currentTime > 3) {
-      try {
-        v.currentTime = 0;
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-    if (callHandler('previoustrack')) return true;
+  function restart(v) {
+    if (!v) return false;
     try {
-      if (w.history && w.history.length > 1) {
-        w.history.back();
-        return true;
-      }
+      v.currentTime = 0;
+      return true;
     } catch (e) {
       return false;
     }
-    if (v) {
-      try {
-        v.currentTime = 0;
-      } catch (e) {
-        return false;
+  }
+
+  function previous() {
+    var v = findVideo();
+    // Like the music player: past 3 s, "previous" restarts the video.
+    if (v && typeof v.currentTime === 'number' && v.currentTime > 3) return restart(v);
+    if (callHandler('previoustrack')) return true;
+    // Never the browser's history: the lock screen must not walk the user
+    // back through the pages they browsed. Without a page handler it restarts.
+    return restart(v);
+  }
+
+  // Leaves the page's fullscreen (system Back while a video is fullscreen).
+  function exitFullscreen() {
+    return safe(function () {
+      if (doc.fullscreenElement && typeof doc.exitFullscreen === 'function') {
+        var r = doc.exitFullscreen();
+        if (r && typeof r.catch === 'function') r.catch(function () {});
+        return true;
       }
-    }
-    return !!v;
+      if (doc.webkitFullscreenElement && typeof doc.webkitExitFullscreen === 'function') {
+        doc.webkitExitFullscreen();
+        return true;
+      }
+      var v = findVideo();
+      if (v && v.webkitDisplayingFullscreen && typeof v.webkitExitFullscreen === 'function') {
+        v.webkitExitFullscreen(); // iOS native video fullscreen
+        return true;
+      }
+      return false;
+    }, false);
+  }
+
+  // Our own search box's query, submitted inside YouTube's single-page app
+  // (so its mini player keeps playing). Only structural selectors: the
+  // search field's name and YouTube's own element names, never a label in
+  // one language. False when the page has no search field to use; Dart then
+  // loads the results page itself.
+  function search(query) {
+    if (typeof query !== 'string') return false;
+    var q = query.replace(/\s+/g, ' ').trim();
+    if (!q || q.length > MAX_QUERY) return false;
+    return safe(function () {
+      var input =
+        doc.querySelector('input[name="search_query"]') ||
+        doc.querySelector('ytm-searchbox input') ||
+        doc.querySelector('input.searchbox-input') ||
+        doc.querySelector('input[name="search"]') ||
+        doc.querySelector('ytmusic-search-box input') ||
+        doc.querySelector('form[action="/results"] input');
+      if (!input) return false;
+      var proto = w.HTMLInputElement && w.HTMLInputElement.prototype;
+      var desc = proto ? Object.getOwnPropertyDescriptor(proto, 'value') : null;
+      if (desc && typeof desc.set === 'function') desc.set.call(input, q);
+      else input.value = q;
+      safe(function () {
+        input.dispatchEvent(new w.Event('input', { bubbles: true }));
+      });
+      var form = input.form || null;
+      if (form && typeof form.requestSubmit === 'function') {
+        form.requestSubmit(); // the app's own submit handler runs (no page load)
+        return true;
+      }
+      if (typeof w.KeyboardEvent === 'function') {
+        var init = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+        input.dispatchEvent(new w.KeyboardEvent('keydown', init));
+        input.dispatchEvent(new w.KeyboardEvent('keyup', init));
+        return true;
+      }
+      return false;
+    }, false);
   }
 
   // ---------------------------------------------------------------------------
@@ -646,24 +792,75 @@
     return true;
   }
 
-  function focusSearch() {
-    return safe(function () {
-      var input = doc.querySelector('input.searchbox-input, input[name="search"], input#search');
-      if (input && typeof input.focus === 'function') {
-        input.focus();
+  // Back to the page from the browser's own picture-in-picture (iOS): used
+  // when it was started by a short trip to Control Center that never left
+  // the app.
+  function exitPip() {
+    var v = findVideo();
+    try {
+      if (v && typeof v.webkitSetPresentationMode === 'function' && v.webkitPresentationMode === 'picture-in-picture') {
+        v.webkitSetPresentationMode('inline');
         return true;
       }
-      var button =
-        doc.querySelector('button[aria-label="Search YouTube"]') ||
-        doc.querySelector('ytm-topbar-renderer button.topbar-menu-button-avatar-button') ||
-        doc.querySelector('button[aria-label*="Search"]');
-      if (button && typeof button.click === 'function') {
-        button.click();
+      if (doc.pictureInPictureElement && typeof doc.exitPictureInPicture === 'function') {
+        var r = doc.exitPictureInPicture();
+        if (r && typeof r.catch === 'function') r.catch(function () {});
         return true;
+      }
+    } catch (e) {
+      return false;
+    }
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // (f) Keep-alive while "Background play" is on.
+  // ---------------------------------------------------------------------------
+  // YouTube's prompts that stop a long listen ("Video paused. Continue
+  // watching?", YouTube Music's "Still there?"), by element name. Only ever
+  // pressed after the page paused the main video by itself with no touch or
+  // key from the user since, so a dialog the user opened is never confirmed.
+  var STILL_WATCHING = [
+    'yt-confirm-dialog-renderer #confirm-button button',
+    'yt-confirm-dialog-renderer #confirm-button',
+    'ytmusic-you-there-renderer button',
+    'ytm-you-there-renderer button',
+  ];
+
+  function confirmStillWatching() {
+    return safe(function () {
+      if (!state.background || !state.idlePauseAt) return false;
+      if (state.lastInputAt > state.idlePauseAt) {
+        state.idlePauseAt = 0; // the user has been back since: theirs to answer
+        return false;
+      }
+      var v = findVideo();
+      if (!v || !v.paused || v.ended) return false;
+      for (var i = 0; i < STILL_WATCHING.length; i++) {
+        var b = doc.querySelector(STILL_WATCHING[i]);
+        if (b && typeof b.click === 'function') {
+          b.click();
+          state.idlePauseAt = 0;
+          play();
+          return true;
+        }
       }
       return false;
     }, false);
   }
+
+  function keepAlive() {
+    if (!state.background) return;
+    // YouTube's last-activity clock: an hour without "activity" is what
+    // brings up its "Continue watching?" stop.
+    safe(function () {
+      w._lact = now();
+    });
+    confirmStillWatching();
+  }
+  safe(function () {
+    w.setInterval(keepAlive, KEEPALIVE_MS);
+  });
 
   var COMMANDS = {
     play: play,
@@ -678,7 +875,9 @@
     setPipLayout: setPipLayout,
     enterPip: enterPip,
     setAutoPip: setAutoPip,
-    focusSearch: focusSearch,
+    exitPip: exitPip,
+    exitFullscreen: exitFullscreen,
+    search: search,
     requestState: function () {
       postMedia('request');
       return true;
@@ -708,7 +907,7 @@
   });
 
   // The platform bridge may already be up (scripts injected after load).
-  if (w.flutter_inappwebview && typeof w.flutter_inappwebview.callHandler === 'function') {
+  if (platform) {
     state.ready = true;
     postReady();
   }

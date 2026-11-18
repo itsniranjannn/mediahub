@@ -96,6 +96,7 @@ void main() {
     GlobalKey<NavigatorState>? navigatorKey,
     bool noticeAgreed = false,
     Future<void> Function()? onEngineUnavailable,
+    Uri? uri,
   }) async {
     usePhone(tester);
     final caller = Consumer(
@@ -105,7 +106,7 @@ void main() {
             WebLinkDownloadFlow.start(
               context,
               ref,
-              _videoUri,
+              uri ?? _videoUri,
               onQueued: () => queuedCallbacks++,
               onEngineUnavailable: onEngineUnavailable,
             ).then((_) => flowDone = true),
@@ -410,5 +411,34 @@ void main() {
     expect(queuedCallbacks, 1);
     expect(find.text('Added to Downloads: Sample Test Video (720p)'), findsOneWidget);
     expect(flowDone, isTrue);
+  });
+
+  group('Spotify (SEC-14)', () {
+    const message = "Spotify songs are protected and can't be saved. Search for the song in the Online tab instead.";
+
+    for (final link in [
+      'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT',
+      'https://open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3',
+      'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M',
+      'https://open.spotify.com/intl-de/track/4cOdK2wGLETKBW3PvgPWqT',
+    ]) {
+      testWidgets('$link is refused at once, without a lookup', (tester) async {
+        await pumpHost(tester, uri: Uri.parse(link));
+        await tapDownload(tester);
+        expect(find.text(_dialogText), findsNothing);
+        expect(backend.infoCalls, isEmpty);
+        expect(find.text(message), findsOneWidget);
+        expect(runner.enqueued, isEmpty);
+        expect(flowDone, isTrue);
+      });
+    }
+
+    testWidgets('a podcast episode is still looked up', (tester) async {
+      final episode = Uri.parse('https://open.spotify.com/episode/512ojhOuo1ktJprKbVcKyQ');
+      await pumpHost(tester, uri: episode, noticeAgreed: true);
+      await tapDownload(tester);
+      expect(backend.infoCalls, [episode.toString()]);
+      expect(find.text(message), findsNothing);
+    });
   });
 }

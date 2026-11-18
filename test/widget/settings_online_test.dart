@@ -3,13 +3,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/core/logging/diagnostics_service.dart';
+import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/core/storage/settings_store.dart';
+import 'package:mediahub/features/downloads/download_providers.dart';
 import 'package:mediahub/features/music_player/music_audio_handler.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/features/online/online_settings.dart';
 import 'package:mediahub/features/online/online_web_view.dart';
 import 'package:mediahub/features/settings/settings_screen.dart';
+import 'package:mediahub/personal/extractor_backend.dart';
+import 'package:mediahub/personal/personal_tools_notifier.dart';
+
+import '../unit/fake_extractor_backend.dart';
 
 class MockAudioPlayer extends Mock implements AudioPlayer {}
 
@@ -32,12 +39,19 @@ void main() {
     await SettingsStore.instance.setBool(OnlineAutoPipNotifier.prefKey, true);
   });
 
-  Future<ProviderContainer> pump(WidgetTester tester, {required void Function() onClear}) async {
+  tearDown(PlatformInfo.resetForTests);
+
+  Future<ProviderContainer> pump(
+    WidgetTester tester, {
+    required void Function() onClear,
+    ExtractorBackend? backend,
+  }) async {
     final handler = _handler();
     addTearDown(handler.dispose);
     final container = ProviderContainer(overrides: [
       audioHandlerProvider.overrideWithValue(handler),
       onlineDataClearerProvider.overrideWithValue(() async => onClear()),
+      if (backend != null) extractorBackendProvider.overrideWithValue(backend),
     ]);
     addTearDown(container.dispose);
     tester.view.physicalSize = const Size(1080, 4000);
@@ -96,4 +110,73 @@ void main() {
     expect(cleared, 1);
     expect(find.text('YouTube data cleared'), findsOneWidget);
   });
+
+  testWidgets('Settings → Online says plainly that YouTube sign-in is not supported', (tester) async {
+    await pump(tester, onClear: () {});
+    expect(find.text('YouTube sign-in'), findsOneWidget);
+    expect(find.textContaining('Not supported'), findsOneWidget);
+    expect(find.textContaining('Signs you out'), findsNothing, reason: 'there is no sign-in to undo');
+  });
+
+  group('Personal tools: yt-dlp Update and Reset (SEC-10)', () {
+    Future<ProviderContainer> pumpAndroid(WidgetTester tester, FakeExtractorBackend backend) async {
+      PlatformInfo.debugIsAndroid = true;
+      await SettingsStore.instance.setBool('personal_tools_enabled', true);
+      final c = await pump(tester, onClear: () {}, backend: backend);
+      await tester.pumpAndSettle();
+      return c;
+    }
+
+    testWidgets('off while a web link download runs, with a reason; on again after', (tester) async {
+      final c = await pumpAndroid(tester, FakeExtractorBackend());
+      FilledButton update() => tester.widget<FilledButton>(find.byKey(const ValueKey('settings_ytdlp_update')));
+      TextButton reset() => tester.widget<TextButton>(find.byKey(const ValueKey('settings_ytdlp_reset')));
+      expect(update().onPressed, isNotNull);
+      expect(reset().onPressed, isNotNull);
+
+      c.read(extractorRunningDownloadsProvider.notifier).set(1);
+      await tester.pumpAndSettle();
+      expect(update().onPressed, isNull);
+      expect(reset().onPressed, isNull);
+      expect(find.byKey(const ValueKey('settings_ytdlp_busy')), findsOneWidget);
+      expect(find.text('Web link downloads are running. Update when they finish.'), findsOneWidget);
+
+      c.read(extractorRunningDownloadsProvider.notifier).set(0);
+      await tester.pumpAndSettle();
+      expect(update().onPressed, isNotNull);
+      expect(find.byKey(const ValueKey('settings_ytdlp_busy')), findsNothing);
+    });
+
+    testWidgets('the result is one plain line: success in the success colour, failure in the error colour',
+        (tester) async {
+      final backend = _FailingUpdate();
+      final c = await pumpAndroid(tester, backend);
+      final update = find.byKey(const ValueKey('settings_ytdlp_update'));
+      await tester.ensureVisible(update);
+      await tester.pumpAndSettle();
+      await tester.tap(update);
+      await tester.pumpAndSettle();
+      final failed = tester.widget<Text>(find.text('Could not update. Check your connection.'));
+      final palette = tester.element(find.byType(SettingsScreen)).palette;
+      expect(failed.style!.color, palette.error);
+      expect(c.read(personalToolsProvider).updateFailed, isTrue);
+
+      backend.fail = false;
+      await tester.tap(update);
+      await tester.pumpAndSettle();
+      final ok = tester.widget<Text>(find.text('Updated to 2026.11.02'));
+      expect(ok.style!.color, palette.success);
+    });
+  });
 }
+
+class _FailingUpdate extends FakeExtractorBackend {
+  bool fail = true;
+
+  @override
+  Future<String> update() async {
+    if (fail) throw const ExtractorException('UPDATE_ERROR', 'java.net.UnknownHostException');
+    return super.update();
+  }
+}
+

@@ -53,6 +53,8 @@ class OnlineMediaState {
     this.videoHeight = 0,
     this.pageUrl,
     this.event = '',
+    this.pausedByPage = false,
+    this.pausedBySystemControls = false,
   });
 
   final OnlineMediaStatus status;
@@ -78,6 +80,16 @@ class OnlineMediaState {
   /// The DOM event behind this snapshot ('play', 'pause', 'timeupdate', ...).
   final String event;
 
+  /// A 'pause' the page made by itself: its own script paused the video with
+  /// no touch or key from the user just before, and not on MediaHub's
+  /// command (YouTube's idle "Continue watching?" stop looks like this). A
+  /// pause from the browser itself (audio focus, a call) is never one.
+  final bool pausedByPage;
+
+  /// A 'pause' that came from the phone's own media controls through the
+  /// browser (the iOS lock screen or Control Center): the user's choice.
+  final bool pausedBySystemControls;
+
   bool get isPlaying => status == OnlineMediaStatus.playing || status == OnlineMediaStatus.buffering;
 
   /// This snapshot with another [status] (and the [event] that explains it).
@@ -94,6 +106,8 @@ class OnlineMediaState {
         videoHeight: videoHeight,
         pageUrl: pageUrl,
         event: event,
+        pausedByPage: pausedByPage,
+        pausedBySystemControls: pausedBySystemControls,
       );
 
   String? get videoId => youTubeVideoId(pageUrl);
@@ -119,11 +133,13 @@ class OnlineMediaState {
       other.videoWidth == videoWidth &&
       other.videoHeight == videoHeight &&
       other.pageUrl == pageUrl &&
-      other.event == event;
+      other.event == event &&
+      other.pausedByPage == pausedByPage &&
+      other.pausedBySystemControls == pausedBySystemControls;
 
   @override
   int get hashCode => Object.hash(status, position, duration, rate, title, artist, artworkUrl, hasNext,
-      videoWidth, videoHeight, pageUrl, event);
+      videoWidth, videoHeight, pageUrl, event, pausedByPage, pausedBySystemControls);
 
   @override
   String toString() => 'OnlineMediaState($status, ${position.inSeconds}s/${duration?.inSeconds}s, "$title")';
@@ -245,6 +261,8 @@ BridgeMessage? parseBridgeMessage(Object? args, {required String token}) {
         videoHeight: h,
         pageUrl: pageUrl,
         event: _text(raw['e'], 24),
+        pausedByPage: raw['yp'] == true,
+        pausedBySystemControls: raw['na'] == true,
       ));
   }
   return null;
@@ -261,9 +279,14 @@ enum BridgeCommandKind {
   setPipLayout,
   enterPip,
   setAutoPip,
-  focusSearch,
+  exitPip,
+  exitFullscreen,
+  search,
   requestState,
 }
+
+/// Longest search query sent to the page (the page refuses longer ones).
+const int onlineMaxSearchQuery = 200;
 
 class BridgeCommand {
   const BridgeCommand._(this.kind, [this.argument]);
@@ -281,14 +304,28 @@ class BridgeCommand {
   /// iOS: the browser's own picture-in-picture for the playing video.
   const BridgeCommand.enterPip() : this._(BridgeCommandKind.enterPip);
   const BridgeCommand.setAutoPip(bool on) : this._(BridgeCommandKind.setAutoPip, on);
-  const BridgeCommand.focusSearch() : this._(BridgeCommandKind.focusSearch);
+
+  /// iOS: back from the browser's own picture-in-picture to the page.
+  const BridgeCommand.exitPip() : this._(BridgeCommandKind.exitPip);
+
+  /// Leaves the page's fullscreen (system Back).
+  const BridgeCommand.exitFullscreen() : this._(BridgeCommandKind.exitFullscreen);
+
+  /// Submits [query] in the page's own search (YouTube's single-page app).
+  BridgeCommand.search(String query) : this._(BridgeCommandKind.search, _cleanQuery(query));
   const BridgeCommand.requestState() : this._(BridgeCommandKind.requestState);
+
+  static String _cleanQuery(String q) {
+    final cleaned = q.replaceAll(RegExp(r'[\u0000-\u001F\u007F]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    return cleaned.length > onlineMaxSearchQuery ? cleaned.substring(0, onlineMaxSearchQuery) : cleaned;
+  }
 
   final BridgeCommandKind kind;
   final Object? argument;
 
-  /// The JS to evaluate. The argument is a bool or a finite number, so the
-  /// text never contains page-controlled input.
+  /// The JS to evaluate. The argument is a bool, a finite number or the
+  /// user's own search text; text goes in as a JSON string literal (quotes,
+  /// backslashes and line breaks escaped), so it can never end the literal.
   String toJavaScript() {
     final arg = argument;
     final String argJs;
@@ -297,6 +334,10 @@ class BridgeCommand {
     } else if (arg is num) {
       final v = arg.isFinite ? arg.clamp(0, 1e7) : 0;
       argJs = v.toString();
+    } else if (arg is String) {
+      // U+2028 / U+2029 are legal in JSON but ended JS string literals in
+      // older engines: escaped as well.
+      argJs = jsonEncode(arg).replaceAll('\u2028', r'\u2028').replaceAll('\u2029', r'\u2029');
     } else {
       argJs = 'null';
     }

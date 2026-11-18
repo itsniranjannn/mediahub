@@ -16,11 +16,15 @@ import '../../app/theme/motion_tokens.dart';
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/platform/device_controls.dart';
 import '../../core/platform_info.dart';
+import '../../domain/models/media_item.dart' as domain;
 import '../../shared/widgets/ui_kit.dart';
 import '../downloads/download_link_inbox.dart';
 import '../library/library_notifier.dart';
+import '../library/media_context_menu.dart';
+import 'online_background_handoff.dart';
 import 'online_bridge_protocol.dart';
 import 'online_media_session.dart';
+import 'online_open_request.dart';
 import 'online_settings.dart';
 import 'online_web_view.dart';
 import 'youtube_urls.dart';
@@ -57,6 +61,42 @@ final androidSdkIntProvider = FutureProvider<int?>((ref) async {
   }
 });
 
+/// YouTube Music's own web player (Online ⋮ → YouTube Music).
+const String youTubeMusicHomeUrl = 'https://music.youtube.com/';
+
+/// Opens the media sheet (Like, Add to playlist ...) for an online item from
+/// the watch strip's Save button. Tests override it.
+final onlineSaveSheetProvider = Provider<Future<void> Function(BuildContext context, WidgetRef ref, domain.MediaItem item)>(
+  (ref) => (context, ref, item) => MediaContextMenu.show(context, ref, item),
+);
+
+/// Orientation and system bars while a page video is fullscreen. Tests
+/// override it (the platform channel is not there in `flutter test`).
+typedef OnlineFullscreenChrome = Future<void> Function({required bool fullscreen, required bool landscape});
+
+final onlineFullscreenChromeProvider = Provider<OnlineFullscreenChrome>((ref) => applyOnlineFullscreenChrome);
+
+/// A wide video fills the phone sideways; leaving fullscreen frees the
+/// rotation again and brings the system bars back.
+Future<void> applyOnlineFullscreenChrome({required bool fullscreen, required bool landscape}) async {
+  try {
+    if (fullscreen) {
+      if (landscape) {
+        await SystemChrome.setPreferredOrientations(const [
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      }
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    } else {
+      await SystemChrome.setPreferredOrientations(const []);
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+  } catch (e) {
+    debugPrint('[Online] fullscreen chrome failed: $e');
+  }
+}
+
 /// Opens a non-YouTube link in the phone's browser (or the app that owns it).
 final onlineExternalLauncherProvider = Provider<Future<void> Function(Uri uri)>((ref) {
   return (uri) async {
@@ -85,6 +125,8 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
   final String _token = newOnlineBridgeToken();
   OnlineWebController? _controller;
   late final OnlineMediaSession _session;
+  late final OnlineBackgroundHandoff _handoff;
+  late final OnlineFullscreenChrome _fullscreenChrome;
   StreamSubscription<void>? _pipDismissedSub;
 
   Uri? _url;
@@ -100,6 +142,13 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
   bool _pipLayout = false;
   bool _lastPipWasOurs = false;
   bool _visible = true;
+  bool _fullscreenChromeApplied = false;
+
+  /// iOS: picture-in-picture started by the app going inactive (Control
+  /// Center, a notification pulled down). If the app never actually left,
+  /// it is closed again on the way back.
+  bool _autoPipOnInactive = false;
+  bool _reachedHidden = false;
 
   /// Bumped when the renderer dies, to build a fresh WebView.
   int _generation = 0;
@@ -109,7 +158,18 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
   void initState() {
     super.initState();
     _session = ref.read(onlineMediaSessionProvider);
+    _handoff = ref.read(onlineBackgroundHandoffProvider);
+    _fullscreenChrome = ref.read(onlineFullscreenChromeProvider);
+    _session.backgroundPlay = ref.read(onlineBackgroundPlayProvider);
     _session.media.addListener(_onMediaChanged);
+    // Another screen asked for a page before this tab was first built.
+    final requested = ref.read(onlineOpenRequestProvider);
+    if (requested != null) {
+      _initialUrl = requested;
+      Future.microtask(() {
+        if (mounted) ref.read(onlineOpenRequestProvider.notifier).clear();
+      });
+    }
     WidgetsBinding.instance.addObserver(this);
     DeviceControls.init();
     DeviceControls.inPip.addListener(_onPipChanged);
@@ -138,6 +198,7 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     _session.media.removeListener(_onMediaChanged);
     _session.detachPage();
     DeviceControls.setPipEligible(false, owner: DeviceControls.pipOwnerOnline);
+    if (_fullscreenChromeApplied) _fullscreenChrome(fullscreen: false, landscape: false);
     super.dispose();
   }
 
@@ -240,7 +301,20 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
 
   void _onFullscreen(bool fullscreen) {
     if (!mounted) return;
-    setState(() => _fullscreen = fullscreen);
+    if (fullscreen != _fullscreen) setState(() => _fullscreen = fullscreen);
+    if (fullscreen == _fullscreenChromeApplied) return;
+    _fullscreenChromeApplied = fullscreen;
+    // A wide video turns the phone sideways (16:9 when its size is unknown).
+    final landscape = fullscreen && (_session.media.value?.aspectRatio ?? 16 / 9) > 1;
+    _fullscreenChrome(fullscreen: fullscreen, landscape: landscape);
+  }
+
+  /// System Back while a video is fullscreen leaves fullscreen and stops there.
+  Future<void> _exitFullscreen() async {
+    final ok = await _session.send(const BridgeCommand.exitFullscreen());
+    // The page could not leave it (no bridge, or nothing it knows as
+    // fullscreen): drop our fullscreen state so Back is never stuck.
+    if (!ok) _onFullscreen(false);
   }
 
   void _onRendererGone() {
@@ -286,6 +360,9 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
 
   void _onMediaChanged() {
     _updatePipEligibility();
+    final media = _session.media.value;
+    // iOS: have the audio stream ready before the app leaves the screen.
+    if (media != null && media.isPlaying) _handoff.prefetch(media.videoId);
   }
 
   /// Android: the system may enter picture-in-picture by itself when the user
@@ -320,21 +397,39 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive && PlatformInfo.isIOS && _shouldAutoPip() && !_reachedHidden) {
+      // iOS: the browser's own picture-in-picture is the way a video keeps
+      // showing (and playing) once the app leaves the screen.
+      _autoPipOnInactive = true;
+      _handoff.pipRequested();
+      _session.send(const BridgeCommand.enterPip());
+    }
+    // The hand-off first: it decides whether the page is paused on purpose
+    // before the session considers undoing a pause.
+    _handoff.lifecycleChanged(state);
+    _session.appLifecycleChanged(state);
     switch (state) {
       case AppLifecycleState.inactive:
-        // iOS: the browser's own picture-in-picture is the way a video keeps
-        // showing (and playing) once the app leaves the screen.
-        if (PlatformInfo.isIOS && _shouldAutoPip()) _session.send(const BridgeCommand.enterPip());
+        break;
+      case AppLifecycleState.hidden:
+        _reachedHidden = true;
       case AppLifecycleState.paused:
+        _reachedHidden = true;
         final inPip = DeviceControls.inPip.value || _session.browserPipActive.value;
         if (!ref.read(onlineBackgroundPlayProvider) && !inPip) {
           _session.send(const BridgeCommand.pause());
         }
       case AppLifecycleState.resumed:
+        // A picture-in-picture that Control Center started, while the app
+        // never left the screen, closes again.
+        if (_autoPipOnInactive && !_reachedHidden && PlatformInfo.isIOS) {
+          _session.send(const BridgeCommand.exitPip());
+        }
+        _autoPipOnInactive = false;
+        _reachedHidden = false;
         _session.send(const BridgeCommand.requestState());
         _updatePipEligibility();
       case AppLifecycleState.detached:
-      case AppLifecycleState.hidden:
         break;
     }
   }
@@ -367,19 +462,53 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     _snack('Link copied');
   }
 
+  /// The media title only when it belongs to the video on screen: after a
+  /// move from video A to B the last report may still be A's.
+  String _videoTitle() {
+    final media = _currentMedia();
+    final title = media?.title;
+    return (title != null && title.isNotEmpty) ? title : addressLabel(title: _title, url: _url);
+  }
+
+  /// The page's last report, if it is about the video on screen.
+  OnlineMediaState? _currentMedia() {
+    final media = _session.media.value;
+    final videoId = youTubeVideoId(_url);
+    return (media != null && videoId != null && media.videoId == videoId) ? media : null;
+  }
+
   void _download() {
     final link = canonicalYouTubeLink(_url);
     if (link == null) return;
-    // The media title only when it belongs to the video on screen: after a
-    // move from video A to B the last report may still be A's.
-    final media = _session.media.value;
-    final videoId = youTubeVideoId(_url);
-    final title = (media != null && videoId != null && media.videoId == videoId) ? media.title : null;
-    final pageTitle = (title != null && title.isNotEmpty) ? title : addressLabel(title: _title, url: _url);
+    final pageTitle = _videoTitle();
     ref.read(downloadLinkInboxProvider.notifier).send(PendingDownloadLink(link, title: pageTitle, inspect: true));
     DiagnosticsService.instance.logEvent('online_sent_to_downloads');
     _snack('Sent to Downloads');
     GoRouter.maybeOf(context)?.go('/downloads');
+  }
+
+  /// Save: Like or add the video to a playlist (the library's own media
+  /// sheet, which knows online items).
+  Future<void> _save() async {
+    final link = canonicalYouTubeLink(_url);
+    final videoId = youTubeVideoId(_url);
+    if (link == null || videoId == null) return;
+    final media = _currentMedia();
+    final item = domain.MediaItem(
+      id: 'yt_$videoId',
+      uri: link,
+      mediaType: domain.MediaType.audio,
+      title: _videoTitle(),
+      artist: (media?.artist.isNotEmpty ?? false) ? media!.artist : null,
+      album: 'YouTube',
+      durationMs: media?.duration?.inMilliseconds ?? 0,
+      sizeBytes: 0,
+      dateAdded: DateTime.now(),
+      source: 'online',
+      artworkPath: media?.artworkUrl ?? youTubeThumbnailFor(videoId),
+    );
+    DiagnosticsService.instance.logEvent('online_save_opened');
+    await ref.read(onlineSaveSheetProvider)(context, ref, item);
   }
 
   Future<void> _enterPip() async {
@@ -440,9 +569,10 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     }
   }
 
+  /// Our own search sheet. The query is submitted inside the page (YouTube's
+  /// single-page app keeps its mini player playing); only when the page has
+  /// no search field to use is the results page loaded instead.
   Future<void> _openSearch() async {
-    final focused = await _session.send(const BridgeCommand.focusSearch());
-    if (focused || !mounted) return;
     final query = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
@@ -450,8 +580,23 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
       builder: (context) => const _SearchSheet(),
     );
     final q = query?.trim() ?? '';
-    if (q.isEmpty) return;
+    if (q.isEmpty || !mounted) return;
+    final inPage = await _session.send(BridgeCommand.search(q));
+    if (inPage || !mounted) return;
     await _controller?.loadUrl(youTubeSearchUri(q));
+  }
+
+  /// Another screen asked for [uri] (a saved online song, say).
+  void _openRequested(Uri uri) {
+    final c = _controller;
+    if (c != null) {
+      c.loadUrl(uri);
+    } else {
+      setState(() => _initialUrl = uri);
+    }
+    Future.microtask(() {
+      if (mounted) ref.read(onlineOpenRequestProvider.notifier).clear();
+    });
   }
 
   Future<void> _confirmClearData() async {
@@ -472,6 +617,10 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
           Navigator.of(sheetContext).pop();
           _controller?.reload();
         },
+        onYouTubeMusic: () {
+          Navigator.of(sheetContext).pop();
+          _controller?.loadUrl(Uri.parse(youTubeMusicHomeUrl));
+        },
         onOpenDownloads: PlatformInfo.supportsDownloads
             ? () {
                 Navigator.of(sheetContext).pop();
@@ -491,8 +640,12 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
   @override
   Widget build(BuildContext context) {
     ref.listen<bool>(onlineBackgroundPlayProvider, (previous, next) {
+      _session.backgroundPlay = next;
       _session.send(BridgeCommand.setBackgroundPlay(next));
       _controller?.setBackgroundAudioAllowed(next);
+    });
+    ref.listen<Uri?>(onlineOpenRequestProvider, (previous, next) {
+      if (next != null) _openRequested(next);
     });
     ref.listen<bool>(onlineAutoPipProvider, (previous, next) {
       _session.send(BridgeCommand.setAutoPip(next));
@@ -521,10 +674,16 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     );
 
     return PopScope(
-      // System back walks back through YouTube's own history first.
-      canPop: !_canGoBack,
+      // System back leaves a fullscreen video first, then walks back
+      // through YouTube's own history.
+      canPop: !_canGoBack && !_fullscreen,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && _canGoBack) _controller?.goBack();
+        if (didPop) return;
+        if (_fullscreen) {
+          _exitFullscreen();
+        } else if (_canGoBack) {
+          _controller?.goBack();
+        }
       },
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         // The status bar sits on the toolbar, which is the canvas colour.
@@ -651,7 +810,28 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
   Widget _buildWatchStrip(BuildContext context) {
     final background = ref.watch(onlineBackgroundPlayProvider);
     final autoPip = ref.watch(onlineAutoPipProvider);
-    const compact = Size(0, 40);
+    // Picture-in-picture, Save and Copy link are round icon buttons (their
+    // names in the tooltip and for screen readers), so Download, PiP and
+    // Background play, what this tab is for, stay in view on a 360 dp phone.
+    Widget iconAction(String key, IconData icon, String label, VoidCallback onPressed) => Semantics(
+          label: label,
+          button: true,
+          excludeSemantics: true,
+          onTap: onPressed,
+          child: Tooltip(
+            message: label,
+            child: OutlinedButton(
+              key: ValueKey(key),
+              onPressed: onPressed,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(40, 40),
+                padding: EdgeInsets.zero,
+                shape: const CircleBorder(),
+              ),
+              child: Icon(icon, size: 20),
+            ),
+          ),
+        );
     final items = <Widget>[
       if (PlatformInfo.supportsDownloads)
         VoltButton.compact(
@@ -660,32 +840,17 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
           icon: Icons.download_rounded,
           onPressed: _download,
         ),
-      OutlinedButton.icon(
-        key: const ValueKey('online_copy_link'),
-        onPressed: _copyLink,
-        style: OutlinedButton.styleFrom(minimumSize: compact),
-        icon: const Icon(Icons.link_rounded, size: 20),
-        label: const Text('Copy link'),
-      ),
-      Semantics(
-        label: 'Picture-in-picture',
-        button: true,
-        excludeSemantics: true,
-        onTap: _enterPip,
-        child: OutlinedButton.icon(
-          key: const ValueKey('online_pip'),
-          onPressed: _enterPip,
-          style: OutlinedButton.styleFrom(minimumSize: compact),
-          icon: const Icon(Icons.picture_in_picture_alt_rounded, size: 20),
-          label: const Text('PiP'),
-        ),
-      ),
+      iconAction('online_pip', Icons.picture_in_picture_alt_rounded, 'Picture-in-picture', _enterPip),
       FilterChip(
         key: const ValueKey('online_background_chip'),
-        label: const Text('Background play'),
+        // Short on screen; read and shown in full ("Background play").
+        label: const Text('Background', semanticsLabel: 'Background play'),
+        tooltip: 'Background play: keeps playing with the screen off',
         selected: background,
         onSelected: _setBackgroundPlay,
       ),
+      iconAction('online_save', Icons.library_add_outlined, 'Save to Liked songs or a playlist', _save),
+      iconAction('online_copy_link', Icons.link_rounded, 'Copy link', _copyLink),
       FilterChip(
         key: const ValueKey('online_autopip_chip'),
         label: const Text('Auto PiP'),
@@ -712,7 +877,9 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
           // full 48 dp tap targets (DESIGN.md 7.1).
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: 2),
           itemCount: items.length,
-          separatorBuilder: (context, index) => const SizedBox(width: AppSpacing.sm8),
+          // 4 dp between the 48 dp targets: the round buttons and chips sit
+          // inside theirs, so the visible gaps stay about 8 dp.
+          separatorBuilder: (context, index) => const SizedBox(width: AppSpacing.xs4),
           itemBuilder: (context, index) => Center(child: items[index]),
         ),
       ),
@@ -872,11 +1039,18 @@ class _SearchSheetState extends State<_SearchSheet> {
   }
 }
 
-/// The ⋮ sheet: Reload · Open Downloads · Background play · Auto PiP · Clear site data.
+/// The ⋮ sheet: Reload · YouTube Music · Open Downloads · Background play ·
+/// Auto PiP · Clear site data.
 class _OnlineMenuSheet extends ConsumerWidget {
-  const _OnlineMenuSheet({required this.onReload, required this.onOpenDownloads, required this.onClearData});
+  const _OnlineMenuSheet({
+    required this.onReload,
+    required this.onYouTubeMusic,
+    required this.onOpenDownloads,
+    required this.onClearData,
+  });
 
   final VoidCallback onReload;
+  final VoidCallback onYouTubeMusic;
   final VoidCallback? onOpenDownloads;
   final VoidCallback onClearData;
 
@@ -895,6 +1069,12 @@ class _OnlineMenuSheet extends ConsumerWidget {
               leading: const Icon(Icons.refresh_rounded),
               title: const Text('Reload'),
               onTap: onReload,
+            ),
+            ListTile(
+              key: const ValueKey('online_menu_music'),
+              leading: const Icon(Icons.library_music_outlined),
+              title: const Text('YouTube Music'),
+              onTap: onYouTubeMusic,
             ),
             if (onOpenDownloads != null)
               ListTile(
@@ -937,8 +1117,8 @@ Future<bool> confirmClearYouTubeData(BuildContext context) async {
     builder: (context) => AlertDialog(
       title: const Text('Clear YouTube data?'),
       content: const Text(
-        'Signs you out of YouTube on this phone and forgets its cookies, '
-        'cache and site settings. Your downloads and library stay.',
+        "Forgets YouTube's cookies, cache and site settings on this phone. "
+        'Your downloads and library stay.',
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),

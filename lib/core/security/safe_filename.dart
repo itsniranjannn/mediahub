@@ -1,9 +1,60 @@
+import 'dart:convert';
 import 'dart:math';
+
+// Grapheme clusters (re-exported by Flutter; no extra dependency).
+import 'package:flutter/widgets.dart' show StringCharacters;
 
 class SafeFilename {
   SafeFilename._();
 
   static const int maxFilenameLength = 120;
+
+  /// Android (ext4, f2fs) and iOS (APFS) refuse a file name longer than 255
+  /// bytes of UTF-8. A Devanagari letter takes 3 bytes, so 120 characters
+  /// of a Nepali title are 360 bytes: the name must be measured in bytes.
+  static const int maxFilenameBytes = 255;
+
+  /// Bytes the base name (without extension) may take. The rest of the 255
+  /// leaves room for the extension and a " (n)" duplicate counter.
+  static const int maxBaseNameBytes = 200;
+
+  /// Room kept for the " (n)" counter of a duplicate name.
+  static const int _counterReserve = 12;
+
+  static int utf8Length(String s) => utf8.encode(s).length;
+
+  /// The longest start of [s] that fits [maxBytes] of UTF-8 and [maxUnits]
+  /// UTF-16 code units, cut between whole characters (graphemes): never in
+  /// the middle of a Devanagari conjunct, an accented letter or an emoji.
+  static String fitWithin(String s, {required int maxBytes, int? maxUnits}) {
+    final units = maxUnits ?? s.length;
+    if (s.length <= units && utf8Length(s) <= maxBytes) return s;
+    final out = StringBuffer();
+    var usedUnits = 0;
+    var usedBytes = 0;
+    for (final g in s.characters) {
+      final b = utf8Length(g);
+      if (usedUnits + g.length > units || usedBytes + b > maxBytes) break;
+      out.write(g);
+      usedUnits += g.length;
+      usedBytes += b;
+    }
+    return out.toString();
+  }
+
+  static String _trimEnd(String s) => s.replaceAll(RegExp(r'[\. ]+$'), '');
+
+  /// "[baseName] ([n])[extension]" for the n-th duplicate, with the base
+  /// shortened (on a character boundary) so the whole name stays within
+  /// [maxFilenameBytes]. [extension] includes its dot, or is empty.
+  static String numbered(String baseName, int n, String extension) {
+    final counter = ' ($n)';
+    final budget = maxFilenameBytes - utf8Length(counter) - utf8Length(extension);
+    var base = fitWithin(baseName, maxBytes: budget < 1 ? 1 : budget);
+    base = _trimEnd(base);
+    if (base.isEmpty) base = 'download';
+    return '$base$counter$extension';
+  }
 
   static const Set<String> _windowsReservedNames = {
     'CON', 'PRN', 'AUX', 'NUL',
@@ -18,7 +69,9 @@ class SafeFilename {
   /// - Strips leading dots (hidden files on Unix)
   /// - Strips trailing spaces and dots (problematic on Windows)
   /// - Checks against reserved Windows device names
-  /// - Limits length to 120 characters while preserving extension
+  /// - Limits length to 120 characters while preserving extension, and the
+  ///   base name to [maxBaseNameBytes] bytes of UTF-8 (the whole name within
+  ///   [maxFilenameBytes]), cut between whole characters
   /// - Falls back to 'download_' + random suffix if the result is empty or invalid
   static String sanitize(String? rawName, {String defaultExtension = ''}) {
     if (rawName == null || rawName.trim().isEmpty) {
@@ -60,17 +113,21 @@ class SafeFilename {
       baseName = '${baseName}_file';
     }
 
-    // 7. Enforce max length (120 chars) keeping the extension
+    // 7. Enforce max length (120 chars, and the byte budget) keeping the extension
     final maxBaseLength = maxFilenameLength - extension.length;
-    if (maxBaseLength <= 0) {
-      // Very long extension edge case
-      return _generateFallback(extension.isNotEmpty ? extension : defaultExtension);
+    final extensionBytes = utf8Length(extension);
+    var maxBaseBytes = maxFilenameBytes - _counterReserve - extensionBytes;
+    if (maxBaseBytes > maxBaseNameBytes) maxBaseBytes = maxBaseNameBytes;
+    if (maxBaseLength <= 0 || maxBaseBytes <= 0) {
+      // Very long extension edge case: too long to keep as it is.
+      final keep = extension.isNotEmpty && extensionBytes <= 32;
+      return _generateFallback(keep ? extension : defaultExtension);
     }
 
-    if (baseName.length > maxBaseLength) {
-      baseName = baseName.substring(0, maxBaseLength);
+    if (baseName.length > maxBaseLength || utf8Length(baseName) > maxBaseBytes) {
+      baseName = fitWithin(baseName, maxBytes: maxBaseBytes, maxUnits: maxBaseLength);
       // Clean any trailing spaces or dots introduced by truncation
-      baseName = baseName.replaceAll(RegExp(r'[\. ]+$'), '');
+      baseName = _trimEnd(baseName);
     }
 
     if (baseName.isEmpty) {

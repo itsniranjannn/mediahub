@@ -10,6 +10,7 @@ import '../../core/platform_info.dart';
 import '../../personal/extractor_backend.dart';
 import '../../personal/personal_tools_notifier.dart';
 import '../../shared/widgets/ui_kit.dart';
+import '../downloads/download_providers.dart' show extractorRunningDownloadsProvider;
 import '../library/library_notifier.dart';
 import '../online/online_screen.dart' show confirmClearYouTubeData;
 import '../online/online_settings.dart';
@@ -288,10 +289,19 @@ class _OnlineCard extends ConsumerWidget {
           onChanged: (v) => ref.read(onlineAutoPipProvider.notifier).set(v),
         ),
         const _CardDivider.betweenRows(),
+        // Google refuses sign-in inside apps' web views, so there is no
+        // account here: said plainly instead of offering a sign-in that fails.
+        const _InfoRow(
+          icon: Icons.no_accounts_outlined,
+          title: 'YouTube sign-in',
+          body: "Not supported. Google doesn't allow signing in inside other apps, "
+              'so the Online tab works without an account.',
+        ),
+        const _CardDivider.betweenRows(),
         _NavRow(
           icon: Icons.delete_sweep_outlined,
           title: 'Clear YouTube data',
-          subtitle: "Signs you out and forgets YouTube's cookies and cache on this phone.",
+          subtitle: "Forgets YouTube's cookies, cache and site settings on this phone.",
           trailingIcon: Icons.chevron_right_rounded,
           onTap: () => _clearData(context, ref),
         ),
@@ -309,6 +319,9 @@ class _PersonalToolsCard extends ConsumerWidget {
     final personalState = ref.watch(personalToolsProvider);
     final personalNotifier = ref.read(personalToolsProvider.notifier);
     final status = personalState.updateStatus;
+    // yt-dlp's files must not be replaced while a web link download runs them.
+    final downloadsRunning = ref.watch(extractorRunningDownloadsProvider) > 0;
+    final canChange = !personalState.isUpdating && !downloadsRunning;
     void startUpdate() => personalNotifier.updateYtDlp();
     void startReset() => personalNotifier.resetYtDlp();
 
@@ -372,24 +385,37 @@ class _PersonalToolsCard extends ConsumerWidget {
                           // what is being updated. The tap action is kept on the node.
                           : Semantics(
                               button: true,
-                              enabled: true,
+                              enabled: canChange,
                               label: 'Update yt-dlp engine',
-                              onTap: startUpdate,
+                              onTap: canChange ? startUpdate : null,
                               excludeSemantics: true,
                               child: FilledButton.tonal(
-                                onPressed: startUpdate,
+                                key: const ValueKey('settings_ytdlp_update'),
+                                onPressed: canChange ? startUpdate : null,
                                 child: const Text('Update'),
                               ),
                             ),
                     ),
-                    if (status != null) _UpdateStatus(text: status, updating: personalState.isUpdating),
+                    if (downloadsRunning && !personalState.isUpdating)
+                      const _UpdateStatus(
+                        key: ValueKey('settings_ytdlp_busy'),
+                        text: 'Web link downloads are running. Update when they finish.',
+                        updating: true,
+                      )
+                    else if (status != null)
+                      _UpdateStatus(
+                        text: status,
+                        updating: personalState.isUpdating,
+                        failed: personalState.updateFailed,
+                      ),
                     // Way back if an update ever breaks downloads (no need to clear app storage).
                     Padding(
                       padding: const EdgeInsets.fromLTRB(AppSpacing.sm8, 0, AppSpacing.sm8, AppSpacing.sm8),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: TextButton.icon(
-                          onPressed: personalState.isUpdating ? null : startReset,
+                          key: const ValueKey('settings_ytdlp_reset'),
+                          onPressed: canChange ? startReset : null,
                           icon: const Icon(Icons.restore_rounded, size: 18),
                           label: const Text('Use the built-in yt-dlp'),
                         ),
@@ -858,14 +884,14 @@ class _AppIdentity extends StatelessWidget {
 class _UpdateStatus extends StatelessWidget {
   final String text;
   final bool updating;
+  final bool failed;
 
-  const _UpdateStatus({required this.text, required this.updating});
+  const _UpdateStatus({super.key, required this.text, required this.updating, this.failed = false});
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final type = AppTypography.of(palette);
-    final failed = text.startsWith('Update failed') || text.startsWith('Reset failed');
     final color = failed
         ? palette.error
         : updating

@@ -9,14 +9,21 @@ import 'package:mediahub/core/logging/diagnostics_service.dart';
 import 'package:mediahub/core/platform/device_controls.dart';
 import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/core/storage/settings_store.dart';
+import 'package:mediahub/domain/models/media_item.dart' as domain;
+import 'package:mediahub/domain/models/playback_state.dart' as domain;
 import 'package:mediahub/features/downloads/download_link_inbox.dart';
+import 'package:mediahub/features/explore/online_models.dart';
+import 'package:mediahub/features/online/online_background_handoff.dart';
 import 'package:mediahub/features/online/online_media_session.dart';
+import 'package:mediahub/features/online/online_open_request.dart';
 import 'package:mediahub/features/online/online_screen.dart';
 import 'package:mediahub/features/online/online_settings.dart';
 import 'package:mediahub/features/online/online_web_view.dart';
 import 'package:mediahub/shared/widgets/ui_kit.dart';
 
 import 'online_fakes.dart';
+
+import '../helpers/app_fonts.dart';
 
 const watchUrl = 'https://m.youtube.com/watch?v=dQw4w9WgXcQ&si=tracking&pp=x';
 
@@ -28,9 +35,27 @@ class _Harness {
   final GoRouter router;
   final List<Uri> opened = [];
   int cleared = 0;
+  final List<domain.MediaItem> saved = [];
+
+  /// (fullscreen, landscape) for every orientation / system-bar change.
+  final List<(bool, bool)> chrome = [];
 }
 
-Future<_Harness> _pumpOnline(WidgetTester tester, {int? androidSdk, ThemeData? theme}) async {
+/// The music player is never driven from these widget tests.
+class _NoPlayer implements HandoffPlayer {
+  @override
+  domain.PlaybackState? captureLocal() => null;
+  @override
+  HandoffPlayerState get current => const HandoffPlayerState();
+  @override
+  Future<void> pause() async {}
+  @override
+  Future<void> playAlone(domain.MediaItem item, Duration position) async {}
+  @override
+  Future<void> restoreLocal(domain.PlaybackState? saved) async {}
+}
+
+Future<_Harness> _pumpOnline(WidgetTester tester, {int? androidSdk, ThemeData? theme, Uri? openRequest}) async {
   final web = FakeOnlineWebView();
   final host = FakeExternalHost();
   late _Harness h;
@@ -56,9 +81,24 @@ Future<_Harness> _pumpOnline(WidgetTester tester, {int? androidSdk, ThemeData? t
       }),
       onlineExternalLauncherProvider.overrideWithValue((uri) async => h.opened.add(uri)),
       onlineDataClearerProvider.overrideWithValue(() async => h.cleared++),
+      onlineSaveSheetProvider.overrideWithValue((context, ref, item) async => h.saved.add(item)),
+      onlineFullscreenChromeProvider.overrideWithValue(({required fullscreen, required landscape}) async {
+        h.chrome.add((fullscreen, landscape));
+      }),
+      onlineBackgroundHandoffProvider.overrideWith((ref) {
+        final handoff = OnlineBackgroundHandoff(
+          session: ref.watch(onlineMediaSessionProvider),
+          player: _NoPlayer(),
+          resolveStreams: (id) async => throw const OnlineException('no network in tests'),
+          enabled: () => false,
+        );
+        ref.onDispose(handoff.dispose);
+        return handoff;
+      }),
     ],
   );
   h = _Harness(web, host, container, router);
+  if (openRequest != null) container.read(onlineOpenRequestProvider.notifier).open(openRequest);
   addTearDown(container.dispose);
   await tester.pumpWidget(
     UncontrolledProviderScope(
@@ -246,6 +286,9 @@ void main() {
     expect(h.web.controller.calls, contains('bgAudio false'));
     expect(h.web.controller.scripts.last, contains('"setBackgroundPlay",false'));
 
+    // The strip scrolls sideways (Save joined it): bring the chip into view.
+    await tester.ensureVisible(key('online_autopip_chip'));
+    await tester.pumpAndSettle();
     await tester.tap(key('online_autopip_chip'));
     await tester.pump();
     expect(h.container.read(onlineAutoPipProvider), isFalse);
@@ -312,16 +355,27 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('address pill: the page search box first, else our own search', (tester) async {
+  testWidgets('address pill: our search sheet, submitted inside the page (the mini player survives)', (tester) async {
     final h = await _pumpOnline(tester);
     h.web.navigate('https://m.youtube.com/');
     await tester.pumpAndSettle();
+    h.web.controller.calls.clear();
 
     await tester.tap(key('online_address'));
     await tester.pumpAndSettle();
-    expect(h.web.controller.commands.last, 'focusSearch');
-    expect(key('online_search_field'), findsNothing, reason: 'the page focused its own box');
+    expect(key('online_search_field'), findsOneWidget, reason: 'always our own sheet');
+    await tester.enterText(key('online_search_field'), 'lofi beats');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(h.web.controller.commands.last, 'search');
+    expect(h.web.controller.scripts.last, contains('b.command("search","lofi beats")'));
+    expect(h.web.controller.calls.where((c) => c.startsWith('load')), isEmpty, reason: 'no page load');
+  });
 
+  testWidgets('address pill: a page without a search field loads the results page instead', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate('https://m.youtube.com/');
+    await tester.pumpAndSettle();
     h.web.controller.scriptResult = false;
     await tester.tap(key('online_address'));
     await tester.pumpAndSettle();
@@ -503,11 +557,209 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.widget(key('online_download')), isA<VoltButton>());
     expect(tester.getSize(key('online_watch_strip')).height, 52);
-    for (final k in ['online_copy_link', 'online_pip', 'online_background_chip', 'online_autopip_chip']) {
-      expect(tester.getSize(key(k)).height, greaterThanOrEqualTo(48), reason: k);
-    }
     final download = find.descendant(of: key('online_download'), matching: find.byType(FilledButton));
     expect(tester.getSize(download).height, greaterThanOrEqualTo(48));
+    final strip = find.descendant(of: key('online_watch_strip'), matching: find.byType(Scrollable));
+    for (final k in ['online_save', 'online_copy_link', 'online_pip', 'online_background_chip', 'online_autopip_chip']) {
+      await tester.scrollUntilVisible(key(k), 80, scrollable: strip);
+      expect(tester.getSize(key(k)).height, greaterThanOrEqualTo(48), reason: k);
+    }
+  });
+
+  // --- fullscreen (ONL-3, ONL-4) ----------------------------------------------
+
+  testWidgets('a fullscreen video turns the phone sideways; leaving frees it again', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.postMedia(); // 1280 x 720
+    h.web.events!.onFullscreenChanged(true);
+    await tester.pump();
+    expect(h.chrome, [(true, true)]);
+    expect(key('online_address'), findsNothing, reason: 'no chrome over a fullscreen video');
+    h.web.events!.onFullscreenChanged(false);
+    await tester.pump();
+    expect(h.chrome, [(true, true), (false, false)]);
+    expect(key('online_address'), findsOneWidget);
+  });
+
+  testWidgets('system Back in fullscreen leaves fullscreen and stops there', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.controller.canBack = true;
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.events!.onFullscreenChanged(true);
+    await tester.pump();
+    h.web.controller.calls.clear();
+
+    final handled = await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(handled, isTrue);
+    expect(h.web.controller.commands.last, 'exitFullscreen');
+    expect(h.web.controller.calls, isNot(contains('back')), reason: 'the page history stays where it is');
+    expect(find.byType(OnlineScreen), findsOneWidget);
+  });
+
+  testWidgets('Back is never stuck when the page cannot leave fullscreen', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.events!.onFullscreenChanged(true);
+    await tester.pump();
+    h.web.controller.scriptResult = false;
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(key('online_address'), findsOneWidget);
+    expect(h.chrome.last, (false, false));
+  });
+
+  testWidgets('a portrait video stays upright in fullscreen', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate('https://m.youtube.com/shorts/aqz-KE-bpKQ');
+    await tester.pumpAndSettle();
+    h.web.events!.onBridgeMessage([
+      {
+        't': h.web.token, 'k': 'media', 'e': 'play', 'u': 'https://m.youtube.com/shorts/aqz-KE-bpKQ',
+        's': 'playing', 'p': 1, 'd': 30, 'r': 1, 'ti': 'Short', 'ar': 'C', 'aw': '', 'n': false,
+        'vw': 720, 'vh': 1280,
+      }
+    ]);
+    h.web.events!.onFullscreenChanged(true);
+    await tester.pump();
+    expect(h.chrome, [(true, false)]);
+  });
+
+  // --- YouTube Music, Save, open requests (ONL-12) ------------------------------
+
+  testWidgets('menu: YouTube Music opens its web player in the tab', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate('https://m.youtube.com/');
+    await tester.pumpAndSettle();
+    await tester.tap(key('online_menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(key('online_menu_music'));
+    await tester.pumpAndSettle();
+    expect(h.web.controller.calls.last, 'load https://music.youtube.com/');
+  });
+
+  testWidgets('Save opens the media sheet for the video as an online item', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl, title: 'Never Gonna Give You Up - YouTube');
+    await tester.pumpAndSettle();
+    h.web.postMedia(title: 'Never Gonna Give You Up', artist: 'Rick Astley');
+    await tester.tap(key('online_save'));
+    await tester.pump();
+    expect(h.saved, hasLength(1));
+    final item = h.saved.single;
+    expect(item.id, 'yt_dQw4w9WgXcQ');
+    expect(item.source, 'online');
+    expect(item.uri, 'https://youtu.be/dQw4w9WgXcQ', reason: 'the clean link, never a stream URL');
+    expect(item.title, 'Never Gonna Give You Up');
+    expect(item.artist, 'Rick Astley');
+    expect(item.artworkPath, 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg');
+    expect(item.durationMs, 213000);
+  });
+
+  testWidgets('another screen can open a page in the tab; only YouTube pages', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate('https://m.youtube.com/');
+    await tester.pumpAndSettle();
+    final notifier = h.container.read(onlineOpenRequestProvider.notifier);
+    expect(notifier.open(Uri.parse('https://evil.example/watch?v=dQw4w9WgXcQ')), isFalse);
+    expect(notifier.open(Uri.parse('http://m.youtube.com/watch?v=aqz-KE-bpKQ')), isTrue);
+    await tester.pump();
+    await tester.pump();
+    expect(h.web.controller.calls.last, 'load https://m.youtube.com/watch?v=aqz-KE-bpKQ');
+    expect(h.container.read(onlineOpenRequestProvider), isNull, reason: 'taken');
+  });
+
+  testWidgets('a page asked for before the tab was built is where it starts', (tester) async {
+    final h = await _pumpOnline(tester, openRequest: Uri.parse('https://music.youtube.com/watch?v=jNQXAC9IVRw'));
+    expect(h.web.config!.initialUrl.toString(), 'https://music.youtube.com/watch?v=jNQXAC9IVRw');
+    await tester.pump();
+    expect(h.container.read(onlineOpenRequestProvider), isNull);
+  });
+
+  // --- background play and iOS picture-in-picture (ONL-2, ONL-7) ---------------
+
+  testWidgets('the session follows the Background play setting', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    final session = h.container.read(onlineMediaSessionProvider);
+    expect(session.backgroundPlay, isTrue);
+    await tester.tap(key('online_background_chip'));
+    await tester.pump();
+    expect(session.backgroundPlay, isFalse);
+  });
+
+  testWidgets('iOS: Control Center started PiP but the app never left: it closes on the way back', (tester) async {
+    PlatformInfo.debugIsIOS = true;
+    addTearDown(() => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.postMedia();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(h.web.controller.commands.last, 'enterPip');
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(h.web.controller.commands, contains('exitPip'));
+  });
+
+  testWidgets('iOS: a PiP that carried the video out of the app stays open on return', (tester) async {
+    PlatformInfo.debugIsIOS = true;
+    addTearDown(() => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.postMedia();
+    for (final s in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(s);
+      await tester.pump();
+    }
+    expect(h.web.controller.commands.where((c) => c == 'enterPip'), hasLength(1), reason: 'not again on the way back');
+    expect(h.web.controller.commands, isNot(contains('exitPip')));
+  });
+
+  // Real fonts (the test font draws every glyph as a 1 em square, far wider
+  // than the app's): last in the file, so the tests above keep the test font.
+  group('watch strip with the app fonts', () {
+    setUpAll(loadAppFonts);
+
+    for (final light in [false, true]) {
+      testWidgets('watch strip at 360 dp: Picture-in-picture and Background play are in full view '
+          '(${light ? 'paper' : 'ink'})', (tester) async {
+        PlatformInfo.debugIsAndroid = true;
+        tester.view.physicalSize = const Size(1080, 2340);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        final h = await _pumpOnline(tester, theme: light ? AppTheme.lightTheme : AppTheme.darkTheme);
+        h.web.navigate(watchUrl);
+        await tester.pumpAndSettle();
+        final strip = tester.getRect(key('online_watch_strip'));
+        // The last 24 dp of the strip fade out (the scroll hint).
+        final clear = strip.right - 24;
+        for (final k in ['online_download', 'online_pip', 'online_background_chip']) {
+          final r = tester.getRect(key(k));
+          expect(r.left, greaterThanOrEqualTo(strip.left), reason: k);
+          expect(r.right, lessThanOrEqualTo(clear), reason: '$k ends at ${r.right}, the fade starts at $clear');
+        }
+        // Save and Copy link are named for screen readers and in a tooltip.
+        expect(find.bySemanticsLabel('Save to Liked songs or a playlist'), findsOneWidget);
+        expect(find.byTooltip('Copy link', skipOffstage: false), findsOneWidget);
+        expect(find.byTooltip('Picture-in-picture'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
   });
 }
 
@@ -517,4 +769,5 @@ double _contrast(Color a, Color b) {
   final hi = la > lb ? la : lb;
   final lo = la > lb ? lb : la;
   return (hi + 0.05) / (lo + 0.05);
+
 }

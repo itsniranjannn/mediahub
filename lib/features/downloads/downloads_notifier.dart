@@ -43,6 +43,17 @@ class InspectionNotifier extends Notifier<InspectionState> {
   Future<void> inspect(Uri uri) async {
     cancel();
 
+    // Protected music (a Spotify song, album or playlist) is refused up
+    // front: no lookup could ever save it.
+    final protectedReason = KnownPlatformChecker.protectedContentMessage(uri);
+    if (protectedReason != null) {
+      state = InspectionState(
+        errorMessage: protectedReason,
+        knownPlatformName: KnownPlatformChecker.matchPlatformName(uri),
+      );
+      return;
+    }
+
     // Check if URL belongs to a known platform first (no network call needed)
     final platform = KnownPlatformChecker.matchPlatformName(uri);
     if (platform != null) {

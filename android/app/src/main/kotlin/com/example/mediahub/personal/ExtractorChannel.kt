@@ -241,6 +241,11 @@ class ExtractorChannel(
     }
 
     private fun handleUpdate(result: MethodChannel.Result) {
+        // Replacing the yt-dlp files while a download runs them breaks that download.
+        if (activeTasks.isNotEmpty()) {
+            result.error("BUSY", "Wait for the current downloads to finish first", null)
+            return
+        }
         executor.execute {
             try {
                 ensureInitialized()

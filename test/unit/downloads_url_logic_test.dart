@@ -180,8 +180,20 @@ void main() {
         findsOneWidget,
       );
 
-      // 2. Spotify
+      // 2. Spotify: a song is refused at once (SEC-14: protected, it can never
+      // be saved), with no platform card and no Download button ...
       await tester.enterText(textField, 'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Inspect'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text("Spotify songs are protected and can't be saved. Search for the song in the Online tab instead."),
+        findsOneWidget,
+      );
+      expect(find.text('Download'), findsNothing);
+
+      // ... while a podcast episode still gets the platform card.
+      await tester.enterText(textField, 'https://open.spotify.com/episode/512ojhOuo1ktJprKbVcKyQ');
       await tester.pumpAndSettle();
       await tester.tap(find.text('Inspect'));
       await tester.pumpAndSettle();

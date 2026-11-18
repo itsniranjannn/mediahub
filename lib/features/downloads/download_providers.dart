@@ -56,17 +56,35 @@ final downloadEngineProvider = Provider<DownloadEngine>((ref) {
   return engine;
 });
 
+/// How many yt-dlp web-link downloads run right now. The runner reports into
+/// it, so Settings can keep "Update" and "Use the built-in yt-dlp" off
+/// meanwhile without building the download machinery itself.
+class ExtractorRunningDownloadsNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  void set(int running) {
+    final value = running < 0 ? 0 : running;
+    if (value != state) state = value;
+  }
+}
+
+final extractorRunningDownloadsProvider =
+    NotifierProvider<ExtractorRunningDownloadsNotifier, int>(ExtractorRunningDownloadsNotifier.new);
+
 /// Runs yt-dlp web-link downloads. Shares the engine's progress stream so both
 /// kinds of download update the same list.
 final extractorDownloadRunnerProvider = Provider<ExtractorDownloadRunner>((ref) {
   final db = ref.watch(appDatabaseProvider);
   final backend = ref.watch(extractorBackendProvider);
   final engine = ref.watch(downloadEngineProvider);
+  final running = ref.read(extractorRunningDownloadsProvider.notifier);
   return ExtractorDownloadRunner(
     db: db,
     backend: backend,
     // Same folder future as the engine (see above): no temp-dir fallback.
     downloadDir: ref.watch(downloadDirectoryProvider.future),
     publish: engine.publishProgress,
+    onRunningChanged: running.set,
   );
 });

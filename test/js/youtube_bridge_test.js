@@ -91,7 +91,22 @@ class Event {
 
 /** Builds a fresh page and runs the bridge in it. */
 function makePage(opts = {}) {
-  const env = { realHidden: false, posted: [], timers: [], backCalls: 0, now: 1000000 };
+  const env = { realHidden: false, posted: [], timers: [], intervals: [], backCalls: 0, now: 1000000 };
+
+  // The page's own media element class: play() / pause() live on its
+  // prototype, as in a browser, so the bridge can tell the page's script
+  // calls apart from its own.
+  class HTMLMediaElement extends Element {
+    play() {
+      this.playCalls++;
+      this.paused = false;
+      return Promise.resolve();
+    }
+    pause() {
+      this.pauseCalls++;
+      this.paused = true;
+    }
+  }
 
   class FakeDocument extends Target {}
   Object.defineProperty(FakeDocument.prototype, 'hidden', {
@@ -112,7 +127,7 @@ function makePage(opts = {}) {
   const head = new Element('head', html);
   const body = new Element('body', html);
   const player = new Element('div', body);
-  const video = new Element('video', player);
+  const video = new HTMLMediaElement('video', player);
   Object.assign(video, {
     paused: true,
     ended: false,
@@ -126,15 +141,6 @@ function makePage(opts = {}) {
     videoHeight: 720,
     playCalls: 0,
     pauseCalls: 0,
-    play() {
-      this.playCalls++;
-      this.paused = false;
-      return Promise.resolve();
-    },
-    pause() {
-      this.pauseCalls++;
-      this.paused = true;
-    },
   });
   const nextButton = opts.nextButton ? new Element('button', body) : null;
   const all = [html, head, body, player, video].concat(nextButton ? [nextButton] : []);
@@ -168,6 +174,7 @@ function makePage(opts = {}) {
   Object.assign(win, {
     document: doc,
     Document: FakeDocument,
+    HTMLMediaElement,
     navigator: {},
     location: { href, protocol: parsed.protocol, hostname: parsed.hostname },
     history: {
@@ -179,6 +186,10 @@ function makePage(opts = {}) {
     setTimeout(fn) {
       env.timers.push(fn);
       return env.timers.length;
+    },
+    setInterval(fn, ms) {
+      env.intervals.push({ fn, ms });
+      return env.intervals.length;
     },
   });
   win.window = win;
@@ -259,7 +270,30 @@ function makePage(opts = {}) {
     return vm.runInContext(`window.__mediahubBridge.command(${JSON.stringify(name)}, ${JSON.stringify(arg)})`, context);
   }
 
-  return { env, win, doc, html, head, video, player, body, nextButton, dispatch, flushTimers, media, command, context };
+  /** Every interval of [ms] fires once (one minute of page time passes). */
+  function tickIntervals(ms) {
+    env.now += ms;
+    env.intervals.filter((i) => i.ms === ms).forEach((i) => i.fn());
+  }
+
+  return {
+    env,
+    win,
+    doc,
+    html,
+    head,
+    video,
+    player,
+    body,
+    nextButton,
+    selectors,
+    dispatch,
+    flushTimers,
+    tickIntervals,
+    media,
+    command,
+    context,
+  };
 }
 
 test('installs in the main frame only', () => {
@@ -453,24 +487,35 @@ test('next falls back to the next button when the page has no handler', () => {
   assert.equal(none.command('next'), false);
 });
 
-test('previous restarts past 3 s, else the handler, else history back', () => {
+test('previous restarts past 3 s, else the page handler, else restarts: never history back', () => {
   const p = makePage({ historyLength: 3 });
   p.video.currentTime = 10;
   assert.equal(p.command('previous'), true);
   assert.equal(p.video.currentTime, 0);
   assert.equal(p.env.backCalls, 0);
-  // Under 3 s, no handler: back in history.
+  // Under 3 s, no handler: the video restarts; the browsing history is
+  // never walked (the lock screen used to take the user back a page).
   p.video.currentTime = 1;
   assert.equal(p.command('previous'), true);
-  assert.equal(p.env.backCalls, 1);
+  assert.equal(p.video.currentTime, 0);
+  assert.equal(p.env.backCalls, 0);
+  // Pressed many times in a row: still never history.
+  for (let i = 0; i < 10; i++) p.command('previous');
+  assert.equal(p.env.backCalls, 0);
   // With a previoustrack handler it wins.
+  p.video.currentTime = 1;
   vm.runInContext(
     "navigator.mediaSession.setActionHandler('previoustrack', function () { window.prevCalls = (window.prevCalls || 0) + 1; });",
     p.context
   );
   assert.equal(p.command('previous'), true);
   assert.equal(p.win.prevCalls, 1);
-  assert.equal(p.env.backCalls, 1);
+  assert.equal(p.env.backCalls, 0);
+  // No video at all: nothing to do.
+  const none = makePage({ historyLength: 3 });
+  none.selectors['video.html5-main-video'] = null;
+  assert.equal(none.command('previous'), false);
+  assert.equal(none.env.backCalls, 0);
 });
 
 test('wraps a native media session and de-duplicates the same press', () => {
@@ -556,7 +601,9 @@ test('never throws into the page, even when the DOM does', () => {
   assert.equal(p.command('play'), false);
   assert.equal(p.command('next'), false);
   assert.equal(p.command('setPipLayout', true), true);
-  assert.equal(p.command('focusSearch'), false);
+  assert.equal(p.command('focusSearch'), false, 'gone: the search goes through our own sheet');
+  assert.equal(p.command('search', 'lofi'), false);
+  assert.equal(p.command('exitFullscreen'), false);
   assert.equal(p.command('noSuchCommand'), false);
   assert.equal(p.command('constructor'), false);
   assert.doesNotThrow(() => p.dispatch(p.video, 'play'));
@@ -564,4 +611,304 @@ test('never throws into the page, even when the DOM does', () => {
 
 test('the token placeholder is the only templated part', () => {
   assert.equal(SOURCE.split('__MEDIAHUB_BRIDGE_TOKEN__').length, 2, 'exactly one placeholder');
+});
+
+// --- keep-alive and who paused the video (ONL-2) ---------------------------
+
+function playing(p) {
+  p.video.play();
+  p.dispatch(p.video, 'play');
+}
+
+function pauseMsg(p) {
+  return p.media().filter((m) => m.e === 'pause').pop();
+}
+
+test('keep-alive: YouTube\'s last-activity clock is refreshed every minute while Background play is on', () => {
+  const p = makePage();
+  assert.equal(p.env.intervals.length, 1);
+  assert.equal(p.env.intervals[0].ms, 60000);
+  vm.runInContext('window._lact = 1;', p.context);
+  p.tickIntervals(60000);
+  assert.equal(p.win._lact, p.env.now);
+  p.tickIntervals(60000);
+  assert.equal(p.win._lact, p.env.now, 'every minute, not once');
+  p.command('setBackgroundPlay', false);
+  const before = p.win._lact;
+  p.tickIntervals(60000);
+  assert.equal(p.win._lact, before, 'off: YouTube sees the real idle time');
+});
+
+test('a pause the page makes by itself is reported as such', () => {
+  const p = makePage();
+  playing(p);
+  p.env.now += 60000;
+  // YouTube's own script pauses the video, with no touch from the user.
+  p.video.pause();
+  p.dispatch(p.video, 'pause');
+  const m = pauseMsg(p);
+  assert.equal(m.s, 'paused');
+  assert.equal(m.yp, true);
+  assert.equal(m.na, false);
+});
+
+test('a pause right after the user touched the page is the user\'s', () => {
+  const p = makePage();
+  playing(p);
+  p.env.now += 60000;
+  p.dispatch(p.doc, 'pointerdown', [p.win, p.doc]);
+  p.env.now += 300;
+  p.video.pause(); // the page's pause button handler
+  p.dispatch(p.video, 'pause');
+  assert.equal(pauseMsg(p).yp, false);
+  // A key press counts too.
+  const q = makePage();
+  playing(q);
+  q.env.now += 60000;
+  q.dispatch(q.doc, 'keydown', [q.win, q.doc]);
+  q.video.pause();
+  q.dispatch(q.video, 'pause');
+  assert.equal(pauseMsg(q).yp, false);
+});
+
+test('a muted preview the page paused does not make the main video pause the page one', () => {
+  const p = makePage();
+  playing(p);
+  p.env.now += 60000;
+  const preview = new p.win.HTMLMediaElement('video', p.body);
+  Object.assign(preview, { muted: true, paused: false, playCalls: 0, pauseCalls: 0 });
+  preview.pause(); // the feed scrolls a preview away
+  p.video.paused = true; // then the browser pauses the main video (audio focus)
+  p.dispatch(p.video, 'pause');
+  assert.equal(pauseMsg(p).yp, false);
+});
+
+test('a synthetic click from a script is not the user', () => {
+  const p = makePage();
+  playing(p);
+  p.env.now += 60000;
+  const ev = { type: 'pointerdown', isTrusted: false };
+  p.doc.listeners.filter((l) => l.type === 'pointerdown').forEach((l) => l.fn(ev));
+  p.video.pause();
+  p.dispatch(p.video, 'pause');
+  assert.equal(pauseMsg(p).yp, true);
+});
+
+test('our own pause command is never taken for the page\'s', () => {
+  const p = makePage();
+  playing(p);
+  p.env.now += 60000;
+  assert.equal(p.command('pause'), true);
+  p.dispatch(p.video, 'pause');
+  assert.equal(pauseMsg(p).yp, false);
+  assert.equal(p.video.paused, true);
+});
+
+test('a pause by the browser itself (audio focus, a call) is not the page\'s', () => {
+  const p = makePage();
+  playing(p);
+  p.env.now += 60000;
+  p.video.paused = true; // no script call: the browser paused the element
+  p.dispatch(p.video, 'pause');
+  assert.equal(pauseMsg(p).yp, false);
+  assert.equal(pauseMsg(p).na, false);
+});
+
+test('a pause from the phone\'s lock screen is flagged as the system controls', () => {
+  const p = makePage({ nativeMediaSession: true });
+  vm.runInContext(
+    "navigator.mediaSession.setActionHandler('pause', function () { document.querySelector('video.html5-main-video').pause(); });",
+    p.context
+  );
+  playing(p);
+  p.env.now += 60000;
+  p.env.native.actions.pause({ action: 'pause' }); // the browser runs the page's handler
+  p.dispatch(p.video, 'pause');
+  const m = pauseMsg(p);
+  assert.equal(m.na, true);
+  assert.equal(m.yp, false);
+});
+
+function stillWatchingButton(p) {
+  const b = new Element('button', p.body);
+  p.selectors['yt-confirm-dialog-renderer #confirm-button button'] = b;
+  return b;
+}
+
+test('"Continue watching?" is confirmed after the page paused itself, and the video plays on', () => {
+  const p = makePage();
+  playing(p);
+  p.env.now += 3600000;
+  p.video.pause();
+  p.dispatch(p.video, 'pause');
+  const button = stillWatchingButton(p);
+  const plays = p.video.playCalls;
+  p.flushTimers();
+  assert.equal(button.clicks, 1);
+  assert.equal(p.video.paused, false);
+  assert.equal(p.video.playCalls, plays + 1);
+  // Once: a later minute does not click again.
+  p.tickIntervals(60000);
+  assert.equal(button.clicks, 1);
+});
+
+test('the keep-alive tick also confirms a prompt that showed up late', () => {
+  const p = makePage();
+  playing(p);
+  p.env.now += 3600000;
+  p.video.pause();
+  p.dispatch(p.video, 'pause');
+  p.flushTimers(); // no dialog yet
+  const button = stillWatchingButton(p);
+  p.tickIntervals(60000);
+  assert.equal(button.clicks, 1);
+});
+
+test('a dialog is never confirmed after the user paused, touched the page since, or with Background play off', () => {
+  // The user paused (touch just before): their dialog, their answer.
+  const a = makePage();
+  playing(a);
+  a.env.now += 60000;
+  a.dispatch(a.doc, 'touchstart', [a.win, a.doc]);
+  a.video.pause();
+  a.dispatch(a.video, 'pause');
+  const ba = stillWatchingButton(a);
+  a.flushTimers();
+  a.tickIntervals(60000);
+  assert.equal(ba.clicks, 0);
+
+  // The page paused itself, then the user touched the page (opened a dialog).
+  const b = makePage();
+  playing(b);
+  b.env.now += 60000;
+  b.video.pause();
+  b.dispatch(b.video, 'pause');
+  b.env.now += 2000;
+  b.dispatch(b.doc, 'pointerdown', [b.win, b.doc]);
+  const bb = stillWatchingButton(b);
+  b.flushTimers();
+  b.tickIntervals(60000);
+  assert.equal(bb.clicks, 0);
+
+  // Background play off.
+  const c = makePage();
+  c.command('setBackgroundPlay', false);
+  playing(c);
+  c.env.now += 60000;
+  c.video.pause();
+  c.dispatch(c.video, 'pause');
+  const bc = stillWatchingButton(c);
+  c.flushTimers();
+  assert.equal(bc.clicks, 0);
+
+  // The video plays: nothing to confirm.
+  const d = makePage();
+  playing(d);
+  const bd = stillWatchingButton(d);
+  d.tickIntervals(60000);
+  assert.equal(bd.clicks, 0);
+});
+
+// --- fullscreen, picture-in-picture, search (ONL-3, ONL-7, ONL-11) ---------
+
+test('exitFullscreen leaves the page\'s fullscreen, or iOS\'s native video fullscreen', () => {
+  const p = makePage();
+  assert.equal(p.command('exitFullscreen'), false, 'nothing is fullscreen');
+  let exits = 0;
+  p.doc.fullscreenElement = p.video;
+  p.doc.exitFullscreen = () => {
+    exits++;
+    p.doc.fullscreenElement = null;
+    return Promise.resolve();
+  };
+  assert.equal(p.command('exitFullscreen'), true);
+  assert.equal(exits, 1);
+
+  const ios = makePage();
+  let nativeExits = 0;
+  ios.video.webkitDisplayingFullscreen = true;
+  ios.video.webkitExitFullscreen = () => nativeExits++;
+  assert.equal(ios.command('exitFullscreen'), true);
+  assert.equal(nativeExits, 1);
+});
+
+test('exitPip returns from iOS picture-in-picture to the page', () => {
+  const p = makePage();
+  let mode = 'picture-in-picture';
+  p.video.webkitPresentationMode = mode;
+  p.video.webkitSetPresentationMode = (m) => {
+    mode = m;
+    p.video.webkitPresentationMode = m;
+  };
+  assert.equal(p.command('exitPip'), true);
+  assert.equal(mode, 'inline');
+  assert.equal(p.command('exitPip'), false, 'already inline');
+});
+
+test('search submits the query inside the page, by structure, never by label', () => {
+  const p = makePage();
+  const form = new Element('form', p.body);
+  form.submits = 0;
+  form.requestSubmit = () => form.submits++;
+  const input = new Element('input', form);
+  input.form = form;
+  p.selectors['input[name="search_query"]'] = input;
+  assert.equal(p.command('search', '  lofi   beats '), true);
+  assert.equal(input.value, 'lofi beats');
+  assert.equal(form.submits, 1);
+  assert.equal(p.command('search', ''), false);
+  assert.equal(p.command('search', 'x'.repeat(201)), false);
+  assert.equal(p.command('search', 42), false);
+  // No search field on this page: Dart loads the results page itself.
+  const none = makePage();
+  assert.equal(none.command('search', 'lofi'), false);
+  // Search looks for no label in one language.
+  const searchFn = SOURCE.slice(SOURCE.indexOf('function search('), SOURCE.indexOf('function exitPip('));
+  assert.ok(searchFn.length > 100);
+  assert.ok(!/aria-label/.test(searchFn), 'no aria-label selectors');
+});
+
+// --- the platform bridge is captured once (ONL-13) -------------------------
+
+test('messages go through the platform bridge captured at injection, never a later wrapper', () => {
+  const p = makePage();
+  p.env.posted.length = 0;
+  vm.runInContext(
+    `window.stolen = [];
+     var original = window.flutter_inappwebview.callHandler;
+     window.flutter_inappwebview.callHandler = function (name, msg) {
+       window.stolen.push(msg);
+       return original.apply(this, arguments);
+     };`,
+    p.context
+  );
+  playing(p);
+  assert.equal(p.media().length, 1, 'the real bridge still hears it');
+  assert.equal(p.win.stolen.length, 0, 'the wrapper never sees a message or the token');
+  // Swapping the whole object does not help either.
+  vm.runInContext(
+    "window.flutter_inappwebview = { callHandler: function (n, m) { window.stolen.push(m); } };",
+    p.context
+  );
+  p.video.pause();
+  p.dispatch(p.video, 'pause');
+  assert.equal(p.media().length, 2);
+  assert.equal(p.win.stolen.length, 0);
+});
+
+test('a platform bridge that arrives late is captured when it says it is ready', () => {
+  const p = makePage({ bridgeLate: true });
+  p.win.flutter_inappwebview = {
+    callHandler(name, msg) {
+      p.env.posted.push({ name, msg });
+      return Promise.resolve();
+    },
+  };
+  p.dispatch(p.win, 'flutterInAppWebViewPlatformReady', [p.win]);
+  assert.deepEqual(p.env.posted.map((x) => x.msg.k), ['ready']);
+  const stolen = [];
+  p.win.flutter_inappwebview.callHandler = (n, m) => stolen.push(m);
+  playing(p);
+  assert.equal(p.media().length, 1);
+  assert.deepEqual(stolen, []);
 });

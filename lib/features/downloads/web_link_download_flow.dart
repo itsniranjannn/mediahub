@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../app/theme/app_palette.dart';
+import '../../core/downloads/known_platform_checker.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/platform_info.dart';
@@ -150,6 +151,18 @@ class WebLinkDownloadFlow {
     Future<void> Function()? onEngineUnavailable,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
+
+    // A Spotify song, album or playlist can never be saved: said at once
+    // instead of after a long lookup that ends in "DRM protected".
+    final protectedReason = KnownPlatformChecker.protectedContentMessage(uri);
+    if (protectedReason != null) {
+      // The Downloads screen already says it under the link.
+      if (ref.read(inspectionProvider).errorMessage != protectedReason) {
+        messenger.showSnackBar(SnackBar(content: Text(protectedReason)));
+      }
+      return;
+    }
+
     final backend = ref.read(extractorBackendProvider);
 
     final requestId = 'info${DateTime.now().microsecondsSinceEpoch}';

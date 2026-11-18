@@ -19,7 +19,9 @@ import '../../data/downloads/youtube_link.dart';
 import '../../domain/models/download_state.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/repositories/platform_resolver.dart';
+import '../../data/repositories/library_repository_impl.dart';
 import '../../shared/widgets/ui_kit.dart';
+import '../library/media_context_menu.dart' show isPathInside;
 import '../music_player/playback_notifier.dart';
 import '../../personal/extractor_backend.dart';
 import '../../personal/personal_tools_notifier.dart';
@@ -28,6 +30,7 @@ import 'download_providers.dart';
 import 'downloads_notifier.dart';
 import 'web_link_download_flow.dart';
 import 'youtube_direct_flow.dart';
+import '../library/playable.dart' show removeFromPlayQueue;
 
 class DownloadsScreen extends ConsumerStatefulWidget {
   const DownloadsScreen({super.key});
@@ -796,9 +799,14 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
   Future<void> _confirmDelete(DownloadEntry task) async {
     // Read while the screen is surely mounted: `ref.read` throws once it is
-    // gone, and the screen can go away while the dialog is open. With both
-    // captured here a confirmed delete still completes.
+    // gone, and the screen can go away while the dialog is open. With all of
+    // them captured here a confirmed delete still completes.
     final db = ref.read(appDatabaseProvider);
+    final library = ref.read(libraryRepositoryProvider);
+    final container = ProviderScope.containerOf(context, listen: false);
+    // Marked handled at once: a folder that cannot be found only means no
+    // file is deleted.
+    final downloadDir = ref.read(downloadDirectoryProvider.future)..ignore();
     final runner = task.engine == 'extractor' ? ref.read(extractorDownloadRunnerProvider) : null;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -825,9 +833,18 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     );
 
     if (confirmed == true) {
-      // Delete files on disk if they exist (media + cover image)
-      for (final path in [task.finalPath, task.thumbnailPath]) {
-        if (path == null) continue;
+      // Delete files on disk if they exist (media + cover image), and only
+      // inside the downloads folder: a row pointing anywhere else (a corrupt
+      // or crafted database) never deletes that file.
+      final paths = [task.finalPath, task.thumbnailPath].whereType<String>().toList();
+      String? dir;
+      if (paths.isNotEmpty) {
+        try {
+          dir = (await downloadDir).path;
+        } catch (_) {}
+      }
+      for (final path in paths) {
+        if (dir == null || !isPathInside(dir, path)) continue;
         final f = File(path);
         if (f.existsSync()) {
           try {
@@ -836,9 +853,15 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
         }
       }
 
-      // Delete media row
-      if (task.mediaId != null) {
-        await (db.delete(db.mediaItemsTable)..where((tbl) => tbl.id.equals(task.mediaId!))).go();
+      // The song leaves the library with everything pointing at it: its
+      // playlist entries (each playlist renumbered, so its count, remove and
+      // reorder stay right), its video progress, its row, and the queue.
+      final mediaId = task.mediaId;
+      if (mediaId != null) {
+        await library.deleteMediaCompletely(mediaId);
+        try {
+          await removeFromPlayQueue(container, mediaId);
+        } catch (_) {}
       }
 
       // Delete download row
@@ -899,10 +922,12 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final queue = rows.map((r) => r.toDomain()).toList();
     final index = queue.indexWhere((m) => m.id == item!.id);
     if (!mounted) return;
+    final playback = ref.read(playbackNotifierProvider.notifier);
     if (index < 0) {
-      ref.read(playbackNotifierProvider.notifier).loadQueue([item], autoPlay: true);
+      playback.loadQueue([item], autoPlay: true, shuffle: playback.shuffleMode);
     } else {
-      ref.read(playbackNotifierProvider.notifier).loadQueue(queue, startIndex: index, autoPlay: true);
+      // Shuffle mode stays as the user set it: the tapped song first.
+      playback.loadQueue(queue, startIndex: index, autoPlay: true, shuffle: playback.shuffleMode);
     }
   }
 }
@@ -1553,14 +1578,16 @@ class _BackgroundNoticeSliver extends StatelessWidget {
       padding: atTop
           ? const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.md12)
           : const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.md12, AppSpacing.lg16, 0),
-      sliver: const SliverToBoxAdapter(
+      sliver: SliverToBoxAdapter(
         child: _Callout(
           icon: Icons.info_outline_rounded,
           tone: _Tone.brand,
           tinted: false,
           dense: true,
-          text:
-              'Downloads continue in the background. If you swipe MediaHub away from recent apps, they pause and resume when you reopen it.',
+          // iOS gives an app no background downloads of this kind.
+          text: PlatformInfo.isIOS
+              ? 'Keep MediaHub open until downloads finish.'
+              : 'Downloads continue in the background. If you swipe MediaHub away from recent apps, they pause and resume when you reopen it.',
         ),
       ),
     );

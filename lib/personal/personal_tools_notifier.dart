@@ -7,13 +7,20 @@ class PersonalToolsState {
   final bool isEnabled;
   final String ytDlpVersion;
   final bool isUpdating;
+
+  /// One plain line about the last Update or Reset ("Already up to date",
+  /// "Updated to 2026.11.01", "Could not update. Check your connection.").
   final String? updateStatus;
+
+  /// [updateStatus] reports a failure (shown in the error colour).
+  final bool updateFailed;
 
   const PersonalToolsState({
     required this.isEnabled,
     this.ytDlpVersion = '',
     this.isUpdating = false,
     this.updateStatus,
+    this.updateFailed = false,
   });
 
   PersonalToolsState copyWith({
@@ -21,12 +28,14 @@ class PersonalToolsState {
     String? ytDlpVersion,
     bool? isUpdating,
     String? updateStatus,
+    bool updateFailed = false,
   }) {
     return PersonalToolsState(
       isEnabled: isEnabled ?? this.isEnabled,
       ytDlpVersion: ytDlpVersion ?? this.ytDlpVersion,
       isUpdating: isUpdating ?? this.isUpdating,
       updateStatus: updateStatus,
+      updateFailed: updateFailed,
     );
   }
 }
@@ -71,6 +80,23 @@ class PersonalToolsNotifier extends Notifier<PersonalToolsState> {
     } catch (_) {}
   }
 
+  /// Shown when yt-dlp is busy with a download (the native side refuses).
+  static const String busyMessage = 'Wait for your web link downloads to finish first.';
+  static const String upToDateMessage = 'Already up to date';
+  static const String updateFailedMessage = 'Could not update. Check your connection.';
+  static const String restoredMessage = 'Restored the built-in yt-dlp';
+  static const String restoreFailedMessage = 'Could not restore the built-in yt-dlp. Try again.';
+
+  /// The plain line for an update that finished with native status [status]
+  /// ('ALREADY_UP_TO_DATE' or 'DONE') and left [version] in place.
+  static String updatedMessage(String status, String version) {
+    if (status.toUpperCase() == 'ALREADY_UP_TO_DATE') return upToDateMessage;
+    final v = version.trim();
+    return v.isEmpty ? 'Updated' : 'Updated to $v';
+  }
+
+  static bool _isBusy(Object e) => e is ExtractorException && e.code == 'BUSY';
+
   /// Undo an update that broke downloads: back to the yt-dlp copy inside the app.
   Future<void> resetYtDlp() async {
     if (state.isUpdating) return;
@@ -78,15 +104,12 @@ class PersonalToolsNotifier extends Notifier<PersonalToolsState> {
     try {
       await _backend.resetToBundled();
       final ver = await _backend.getVersion();
-      state = state.copyWith(
-        isUpdating: false,
-        ytDlpVersion: ver,
-        updateStatus: 'Restored the built-in yt-dlp',
-      );
+      state = state.copyWith(isUpdating: false, ytDlpVersion: ver, updateStatus: restoredMessage);
     } catch (e) {
       state = state.copyWith(
         isUpdating: false,
-        updateStatus: 'Reset failed: ${e is ExtractorException ? e.message : e.toString()}',
+        updateStatus: _isBusy(e) ? busyMessage : restoreFailedMessage,
+        updateFailed: true,
       );
     }
   }
@@ -97,15 +120,12 @@ class PersonalToolsNotifier extends Notifier<PersonalToolsState> {
     try {
       final res = await _backend.update();
       final newVer = await _backend.getVersion();
-      state = state.copyWith(
-        isUpdating: false,
-        ytDlpVersion: newVer,
-        updateStatus: 'Updated: $res',
-      );
+      state = state.copyWith(isUpdating: false, ytDlpVersion: newVer, updateStatus: updatedMessage(res, newVer));
     } catch (e) {
       state = state.copyWith(
         isUpdating: false,
-        updateStatus: 'Update failed: ${e.toString()}',
+        updateStatus: _isBusy(e) ? busyMessage : updateFailedMessage,
+        updateFailed: true,
       );
     }
   }

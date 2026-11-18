@@ -116,6 +116,28 @@ void main() {
       expect(parseMedia([media(s: 'none')])!.isPlaying, isFalse);
     });
 
+    test('why a pause happened: the page itself, or the phone\'s own controls', () {
+      final page = parseMedia([
+        {...media(s: 'paused', e: 'pause'), 'yp': true, 'na': false}
+      ])!;
+      expect(page.pausedByPage, isTrue);
+      expect(page.pausedBySystemControls, isFalse);
+      final system = parseMedia([
+        {...media(s: 'paused', e: 'pause'), 'yp': false, 'na': true}
+      ])!;
+      expect(system.pausedBySystemControls, isTrue);
+      expect(system.pausedByPage, isFalse);
+      // Anything but a real true is false.
+      final junk = parseMedia([
+        {...media(s: 'paused', e: 'pause'), 'yp': 'true', 'na': 1}
+      ])!;
+      expect(junk.pausedByPage, isFalse);
+      expect(junk.pausedBySystemControls, isFalse);
+      expect(parseMedia([media()])!.pausedByPage, isFalse);
+      expect(page == system, isFalse);
+      expect(page.withStatus(OnlineMediaStatus.paused, event: 'stale').pausedByPage, isTrue);
+    });
+
     test('pip and ready messages', () {
       final pip = parseBridgeMessage([{'t': token, 'k': 'pip', 'on': true, 'u': 'https://m.youtube.com/watch?v=dQw4w9WgXcQ'}], token: token);
       expect(pip, isA<BridgePipMessage>().having((m) => m.active, 'active', isTrue));
@@ -135,9 +157,11 @@ void main() {
 
     test('every command maps to a handler the script knows', () {
       // assets/web/youtube_bridge.js COMMANDS keys.
+      // focusSearch is gone (it looked for English labels); search,
+      // exitFullscreen and exitPip are new.
       const known = {
         'play', 'pause', 'seekTo', 'next', 'previous', 'setBackgroundPlay', 'setPipLayout',
-        'enterPip', 'setAutoPip', 'focusSearch', 'requestState',
+        'enterPip', 'setAutoPip', 'exitPip', 'exitFullscreen', 'search', 'requestState',
       };
       expect(BridgeCommandKind.values.map((k) => k.name).toSet(), known);
       final js = File('assets/web/youtube_bridge.js').readAsStringSync();
@@ -147,6 +171,33 @@ void main() {
       }
       expect(js, contains("var HANDLER = '$onlineBridgeHandlerName'"));
       expect(js, contains("var TOKEN = '$onlineBridgeTokenPlaceholder'"));
+    });
+
+    test('search text goes in as a JSON string literal that can never end early', () {
+      String arg(BridgeCommand c) {
+        final js = c.toJavaScript();
+        final start = js.indexOf('b.command("search",') + 'b.command("search",'.length;
+        final end = js.indexOf('):false;}catch');
+        return js.substring(start, end);
+      }
+
+      const nasty = 'lofi"); alert(1); ("\\ \n</script> \u2028\u2029 end';
+      final literal = arg(BridgeCommand.search(nasty));
+      // It decodes back to the cleaned text (control characters become
+      // spaces, runs of space collapse) and holds no raw quote, line break
+      // or line separator that could end it.
+      expect(jsonDecode(literal), 'lofi"); alert(1); ("\\ </script> end');
+      expect(literal.substring(1, literal.length - 1), isNot(contains(RegExp(r'(?<!\\)"'))));
+      expect(literal, isNot(contains('\n')));
+      expect(literal, isNot(contains('\u2028')));
+      expect(literal, isNot(contains('\u2029')));
+      expect(BridgeCommand.search('a' * 500).argument, hasLength(onlineMaxSearchQuery));
+      expect(BridgeCommand.search('  lofi\tbeats  ').argument, 'lofi beats');
+    });
+
+    test('exitFullscreen and exitPip take no argument', () {
+      expect(const BridgeCommand.exitFullscreen().toJavaScript(), contains('b.command("exitFullscreen",null)'));
+      expect(const BridgeCommand.exitPip().toJavaScript(), contains('b.command("exitPip",null)'));
     });
 
     test('equality', () {

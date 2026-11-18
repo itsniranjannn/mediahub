@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/features/music_player/music_audio_handler.dart';
 import 'package:mediahub/features/online/online_bridge_protocol.dart';
@@ -47,6 +50,8 @@ OnlineMediaState state(
   String event = 'timeupdate',
   bool hasNext = true,
   String title = 'Video',
+  bool byPage = false,
+  bool bySystem = false,
 }) =>
     OnlineMediaState(
       status: status,
@@ -58,6 +63,8 @@ OnlineMediaState state(
       hasNext: hasNext,
       pageUrl: Uri.parse(url),
       event: event,
+      pausedByPage: byPage,
+      pausedBySystemControls: bySystem,
     );
 
 void main() {
@@ -97,12 +104,39 @@ void main() {
     expect(host.log, ['set', 'update']);
   });
 
-  test('a paused page, or one that is not a video page, does not claim it', () {
+  test('a paused page, or a moment of sound on another page, does not claim it', () {
     push(state(OnlineMediaStatus.paused));
     push(state(OnlineMediaStatus.playing, url: 'https://m.youtube.com/'));
     expect(host.log, isEmpty);
     expect(session.isActive, isFalse);
     expect(session.media.value?.status, OnlineMediaStatus.playing, reason: 'the state is still tracked');
+  });
+
+  test('sound that keeps playing on any YouTube page claims it after 3 s (YouTube Music, a trailer)', () {
+    const music = 'https://music.youtube.com/';
+    push(state(OnlineMediaStatus.playing, url: music, event: 'play'));
+    now = now.add(const Duration(seconds: 2));
+    push(state(OnlineMediaStatus.playing, url: music));
+    expect(host.log, isEmpty, reason: 'a short preview never takes the notification');
+    now = now.add(const Duration(seconds: 1));
+    push(state(OnlineMediaStatus.playing, url: music));
+    expect(host.log, ['set']);
+    expect(session.isActive, isTrue);
+  });
+
+  test('a pause restarts the 3 s count on a non-video page', () {
+    const channel = 'https://m.youtube.com/@channel';
+    push(state(OnlineMediaStatus.playing, url: channel, event: 'play'));
+    now = now.add(const Duration(seconds: 2));
+    push(state(OnlineMediaStatus.paused, url: channel, event: 'pause'));
+    now = now.add(const Duration(seconds: 2));
+    push(state(OnlineMediaStatus.playing, url: channel, event: 'play'));
+    now = now.add(const Duration(seconds: 2));
+    push(state(OnlineMediaStatus.playing, url: channel));
+    expect(host.log, isEmpty);
+    now = now.add(const Duration(seconds: 1));
+    push(state(OnlineMediaStatus.playing, url: channel));
+    expect(host.log, ['set']);
   });
 
   test('notification buttons become bridge commands', () async {
@@ -134,18 +168,22 @@ void main() {
     }
   }
 
-  test('paused for long hands the session back; playing again cancels that', () {
+  test('paused for 30 minutes hands the session back; playing again cancels that', () {
     fakeAsync((async) {
       push(state(OnlineMediaStatus.playing, event: 'play'));
       push(state(OnlineMediaStatus.paused, event: 'pause'));
-      async.elapse(const Duration(minutes: 9));
+      // The lock screen keeps a paused video's controls for as long as the
+      // music player keeps a paused song's (30 minutes), not 10.
+      async.elapse(const Duration(minutes: 29));
       expect(host.log.contains('clear'), isFalse);
       push(state(OnlineMediaStatus.playing, event: 'play'));
       playFor(async, const Duration(minutes: 30));
       expect(host.log.contains('clear'), isFalse, reason: 'still playing');
       expect(sent, isNot(contains(const BridgeCommand.requestState())), reason: 'the ticks kept coming');
       push(state(OnlineMediaStatus.paused, event: 'pause'));
-      async.elapse(const Duration(minutes: 10, seconds: 1));
+      async.elapse(const Duration(minutes: 29, seconds: 59));
+      expect(host.log.contains('clear'), isFalse);
+      async.elapse(const Duration(seconds: 2));
       expect(host.log.last, 'clear');
       expect(session.isActive, isFalse);
     });
@@ -208,7 +246,7 @@ void main() {
       expect(session.media.value!.status, OnlineMediaStatus.paused);
       expect(session.media.value!.event, 'stale');
       expect(session.isActive, isTrue, reason: 'paused, so the notification can resume it');
-      async.elapse(const Duration(minutes: 10, seconds: 1));
+      async.elapse(const Duration(minutes: 30, seconds: 1));
       expect(host.log.last, 'clear');
     });
   });
@@ -274,5 +312,199 @@ void main() {
     expect(snap.buffering, isTrue);
     expect(snap.playing, isTrue);
     expect(snap.canSkipNext, isFalse);
+  });
+
+  group('headphones unplugged (ONL-6)', () {
+    late StreamController<void> noisy;
+    late OnlineMediaSession s2;
+    late List<BridgeCommand> sent2;
+
+    setUp(() {
+      noisy = StreamController<void>.broadcast();
+      sent2 = [];
+      s2 = OnlineMediaSession(host: host, clock: () => now, becomingNoisy: () => noisy.stream);
+      s2.attachSender((c) async {
+        sent2.add(c);
+        return true;
+      });
+    });
+
+    tearDown(() async {
+      s2.dispose();
+      await noisy.close();
+    });
+
+    test('pauses the video while the page owns the session, and only then', () async {
+      expect(noisy.hasListener, isFalse, reason: 'nothing to pause yet');
+      s2.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.playing, event: 'play')));
+      expect(noisy.hasListener, isTrue);
+      noisy.add(null);
+      await Future<void>.delayed(Duration.zero);
+      expect(sent2, [const BridgeCommand.pause()]);
+    });
+
+    test('the watch ends when the session is handed back', () async {
+      s2.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.playing, event: 'play')));
+      host.localMusicStarts();
+      expect(noisy.hasListener, isFalse, reason: 'local music has its own unplug pause');
+      s2.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.paused, event: 'pause')));
+      s2.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.playing, event: 'play')));
+      expect(noisy.hasListener, isTrue, reason: 'claimed again');
+      s2.detachPage();
+      expect(noisy.hasListener, isFalse);
+    });
+  });
+
+  group('keeping a background listen going (ONL-2, ONL-1)', () {
+    void leave(OnlineMediaSession s) {
+      s.appLifecycleChanged(AppLifecycleState.inactive);
+      s.appLifecycleChanged(AppLifecycleState.hidden);
+      s.appLifecycleChanged(AppLifecycleState.paused);
+    }
+
+    test('screen off: a pause the page made by itself is undone once', () {
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      leave(session);
+      now = now.add(const Duration(minutes: 50));
+      push(state(OnlineMediaStatus.paused, event: 'pause', byPage: true));
+      expect(sent, [const BridgeCommand.play()]);
+    });
+
+    test('never while the app is on screen: the user sees the prompt', () {
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      push(state(OnlineMediaStatus.paused, event: 'pause', byPage: true));
+      expect(sent, isEmpty);
+    });
+
+    test('never with Background play off', () {
+      session.backgroundPlay = false;
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      leave(session);
+      push(state(OnlineMediaStatus.paused, event: 'pause', byPage: true));
+      expect(sent, isEmpty);
+    });
+
+    test('never a pause from the notification, a headset or the lock screen', () async {
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      leave(session);
+      now = now.add(const Duration(minutes: 5));
+      await host.active!.externalPause(); // the notification's pause
+      push(state(OnlineMediaStatus.paused, event: 'pause', byPage: true));
+      expect(sent, [const BridgeCommand.pause()], reason: 'commanded: not undone');
+
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      now = now.add(const Duration(minutes: 5));
+      push(state(OnlineMediaStatus.paused, event: 'pause', bySystem: true));
+      expect(sent, [const BridgeCommand.pause()], reason: 'the iOS lock screen: the user');
+    });
+
+    test('a pause that is not the page\'s own (audio focus, a call) is left alone on Android', () {
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      leave(session);
+      push(state(OnlineMediaStatus.paused, event: 'pause'));
+      expect(sent, isEmpty);
+    });
+
+    test('at most once a minute, so it can never fight the page', () {
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      leave(session);
+      push(state(OnlineMediaStatus.paused, event: 'pause', byPage: true));
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      now = now.add(const Duration(seconds: 10));
+      push(state(OnlineMediaStatus.paused, event: 'pause', byPage: true));
+      expect(sent, [const BridgeCommand.play()]);
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      now = now.add(const Duration(minutes: 2));
+      push(state(OnlineMediaStatus.paused, event: 'pause', byPage: true));
+      expect(sent, [const BridgeCommand.play(), const BridgeCommand.play()]);
+    });
+
+    test('not while the iOS hand-off holds the page paused', () {
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      leave(session);
+      session.holdPage = true;
+      push(state(OnlineMediaStatus.paused, event: 'pause', byPage: true));
+      expect(sent, isEmpty);
+    });
+
+    test('iOS: a pause as the app leaves (WebKit) is undone once; later ones are not', () {
+      final ios = OnlineMediaSession(host: FakeHost(), clock: () => now, resumeBackgroundInterruptions: true);
+      final iosSent = <BridgeCommand>[];
+      ios.attachSender((c) async {
+        iosSent.add(c);
+        return true;
+      });
+      addTearDown(ios.dispose);
+      ios.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.playing, event: 'play')));
+      leave(ios);
+      now = now.add(const Duration(milliseconds: 600));
+      ios.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.paused, event: 'pause')));
+      expect(iosSent, [const BridgeCommand.play()]);
+
+      // The page plays again; a pause minutes later is the user's (or the
+      // end of a video) and stays.
+      ios.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.playing, event: 'play')));
+      now = now.add(const Duration(minutes: 3));
+      ios.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.paused, event: 'pause')));
+      expect(iosSent, [const BridgeCommand.play()]);
+    });
+
+    test('iOS: a pause just before the app finished leaving counts too', () {
+      final ios = OnlineMediaSession(host: FakeHost(), clock: () => now, resumeBackgroundInterruptions: true);
+      final iosSent = <BridgeCommand>[];
+      ios.attachSender((c) async {
+        iosSent.add(c);
+        return true;
+      });
+      addTearDown(ios.dispose);
+      ios.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.playing, event: 'play')));
+      ios.appLifecycleChanged(AppLifecycleState.inactive);
+      ios.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.paused, event: 'pause')));
+      expect(iosSent, isEmpty, reason: 'inactive alone is not leaving');
+      now = now.add(const Duration(milliseconds: 400));
+      ios.appLifecycleChanged(AppLifecycleState.hidden);
+      expect(iosSent, [const BridgeCommand.play()]);
+    });
+
+    test('iOS: a pause long before leaving (the user paused, then locked) stays', () {
+      final ios = OnlineMediaSession(host: FakeHost(), clock: () => now, resumeBackgroundInterruptions: true);
+      final iosSent = <BridgeCommand>[];
+      ios.attachSender((c) async {
+        iosSent.add(c);
+        return true;
+      });
+      addTearDown(ios.dispose);
+      ios.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.playing, event: 'play')));
+      ios.handleMessage(BridgeMediaMessage(state(OnlineMediaStatus.paused, event: 'pause')));
+      now = now.add(const Duration(seconds: 20));
+      leave(ios);
+      expect(iosSent, isEmpty);
+    });
+
+    test('coming back to the app ends it', () {
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      leave(session);
+      session.appLifecycleChanged(AppLifecycleState.resumed);
+      expect(session.appInForeground, isTrue);
+      push(state(OnlineMediaStatus.paused, event: 'pause', byPage: true));
+      expect(sent, isEmpty);
+    });
+  });
+
+  test('estimated position moves on with the clock while playing, and holds while paused', () {
+    push(state(OnlineMediaStatus.playing, event: 'play', pos: 30));
+    now = now.add(const Duration(milliseconds: 1500));
+    expect(session.estimatedPosition(), const Duration(milliseconds: 31500));
+    push(state(OnlineMediaStatus.paused, event: 'pause', pos: 31.8));
+    now = now.add(const Duration(seconds: 10));
+    expect(session.estimatedPosition(), const Duration(milliseconds: 31800));
+  });
+
+  test('expectPagePlay: the page reclaims at once after a hand-back', () {
+    push(state(OnlineMediaStatus.playing, event: 'play'));
+    host.localMusicStarts();
+    session.expectPagePlay();
+    push(state(OnlineMediaStatus.playing, event: 'play'));
+    expect(host.log.where((e) => e == 'set').length, 2);
   });
 }

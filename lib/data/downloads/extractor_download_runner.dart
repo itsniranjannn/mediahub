@@ -31,6 +31,10 @@ class ExtractorDownloadRunner {
   final void Function(DownloadProgressUpdate update) _publish;
   final FreeSpaceProvider _freeSpaceProvider;
 
+  /// Told how many web-link downloads run whenever that changes (Settings
+  /// keeps the yt-dlp Update and Reset buttons off while any run).
+  final void Function(int running)? _onRunningChanged;
+
   final Set<String> _running = {};
   final Set<String> _paused = {};
   final Set<String> _cancelled = {};
@@ -46,7 +50,9 @@ class ExtractorDownloadRunner {
     required void Function(DownloadProgressUpdate update) publish,
     SafeHttpClient? httpClient,
     FreeSpaceProvider? freeSpaceProvider,
+    void Function(int running)? onRunningChanged,
   })  : _db = db, // ignore: prefer_initializing_formals
+        _onRunningChanged = onRunningChanged, // ignore: prefer_initializing_formals
         _backend = backend, // ignore: prefer_initializing_formals
         _downloadDirFuture = DownloadEngine.settleDirectory(downloadDir),
         _publish = publish, // ignore: prefer_initializing_formals
@@ -95,6 +101,15 @@ class ExtractorDownloadRunner {
   }
 
   bool isRunning(String id) => _running.contains(id);
+
+  /// Web-link downloads running now.
+  int get runningCount => _running.length;
+
+  void _reportRunning() {
+    try {
+      _onRunningChanged?.call(_running.length);
+    } catch (_) {}
+  }
 
   // ---------------------------------------------------------------- enqueue
 
@@ -157,6 +172,7 @@ class ExtractorDownloadRunner {
 
   Future<void> run(String id) async {
     if (!_running.add(id)) return;
+    _reportRunning();
     _paused.remove(id);
     _cancelled.remove(id);
     try {
@@ -169,6 +185,7 @@ class ExtractorDownloadRunner {
       await _failAfterUnexpectedError(id, e);
     } finally {
       _running.remove(id);
+      _reportRunning();
     }
   }
 
@@ -400,7 +417,8 @@ class ExtractorDownloadRunner {
     var dest = File(p.join(downloadDir.path, finalName));
     var n = 1;
     while (dest.existsSync()) {
-      finalName = '$baseName ($n).$ext';
+      // Kept within the 255-byte name limit (long Devanagari titles).
+      finalName = SafeFilename.numbered(baseName, n, '.$ext');
       dest = File(p.join(downloadDir.path, finalName));
       n++;
     }
