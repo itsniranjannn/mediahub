@@ -176,9 +176,9 @@ def player():
     tap('Mini player', required=False) or dev.sh('input tap 400 2070')
     wait(2)
     shot('now_playing')
-    nodes('favou?rite')
+    nodes('favou?rite|Liked')
     # anchored so the big Now Playing body node (whose label also mentions favourites) is skipped
-    tap('(^| )(Add to|Remove from) favou?rites$', required=False)
+    tap('(^| )(Add to|Remove from) (favou?rites|Liked songs)$', required=False)
     wait(1.0)
     shot('now_playing_fav')
     wait(4.5)
@@ -371,7 +371,7 @@ def main():
         print('== step', name)
         try:
             fn()
-        except Exception as e:  # noqa: BLE001
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - a failed UI dump exits; go on with the next step
             print('  step failed:', e)
     print(dev.sh('logcat -d -b crash')[-1500:] or 'no crashes')
 
