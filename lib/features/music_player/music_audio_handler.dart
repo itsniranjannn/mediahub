@@ -10,6 +10,7 @@ import '../../core/platform_info.dart';
 import '../../core/utils/play_count_tracker.dart';
 import '../../domain/models/media_item.dart' as domain;
 import '../../domain/models/playback_state.dart' as domain;
+import 'now_playing_art.dart';
 
 /// What an external player (the Online tab's YouTube page) shows in the media
 /// notification, on the lock screen and on Bluetooth displays.
@@ -19,6 +20,7 @@ class ExternalMediaSnapshot {
     required this.id,
     required this.title,
     this.artist,
+    this.album,
     this.artUri,
     required this.playing,
     this.buffering = false,
@@ -35,6 +37,10 @@ class ExternalMediaSnapshot {
   /// Channel name.
   final String? artist;
 
+  /// The source's name in the notification's album line and on the mini
+  /// player's tag ("YouTube" when null; a local video passes its own).
+  final String? album;
+
   /// https thumbnail.
   final Uri? artUri;
   final bool playing;
@@ -48,12 +54,16 @@ class ExternalMediaSnapshot {
   /// The source has a "next" (shows the Next control).
   final bool canSkipNext;
 
+  /// [album], or "YouTube".
+  String get albumOrDefault => (album == null || album!.isEmpty) ? 'YouTube' : album!;
+
   @override
   bool operator ==(Object other) =>
       other is ExternalMediaSnapshot &&
       other.id == id &&
       other.title == title &&
       other.artist == artist &&
+      other.album == album &&
       other.artUri == artUri &&
       other.playing == playing &&
       other.buffering == buffering &&
@@ -64,7 +74,7 @@ class ExternalMediaSnapshot {
 
   @override
   int get hashCode =>
-      Object.hash(id, title, artist, artUri, playing, buffering, position, duration, speed, canSkipNext);
+      Object.hash(id, title, artist, album, artUri, playing, buffering, position, duration, speed, canSkipNext);
 }
 
 /// Receives the notification / lock screen / headset commands while it is the
@@ -95,6 +105,24 @@ abstract class ExternalPlaybackHost {
   void clearExternalSource(ExternalPlaybackDelegate delegate);
 }
 
+/// The music engine behind the app's player, the media notification, the lock
+/// screen, Bluetooth and the headset buttons.
+///
+/// ## Next / Previous
+///
+/// A press is turned into a target index at once, from where the previous
+/// presses were heading (Spotify / YT Music behaviour): the notification and
+/// the app show the target straight away, and the player seeks once to the
+/// newest target instead of loading every song on the way. Presses are
+/// "coalesced": each one bumps a generation, the serialized action of an
+/// older press finds a newer generation and returns. A Next with nowhere to
+/// go (the last track, repeat off) is ignored on the spot and changes
+/// nothing, not even the play intent. Every seek waits until the player is
+/// done loading (just_audio drops a seek while it loads).
+///
+/// Queue edits run in the same serialized chain and first apply a pending
+/// skip, so an index handed in by the UI always refers to the queue the UI
+/// showed.
 class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler implements ExternalPlaybackHost {
   final AudioPlayer _player;
   final Future<void> Function(String mediaId)? onRecordPlay;
@@ -102,6 +130,34 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// Called once per track when the player learns a duration that the library
   /// did not know yet (downloaded files are stored with duration 0).
   final Future<void> Function(String mediaId, int durationMs)? onDurationKnown;
+
+  /// Toggles a song's favourite flag (the notification's heart). With
+  /// [watchFavorite], the notification shows a Like button for local songs.
+  final Future<void> Function(String mediaId)? onToggleFavorite;
+
+  /// The live favourite flag of a song.
+  final Stream<bool> Function(String mediaId)? watchFavorite;
+
+  /// The last saved session, for Android's media resumption (the
+  /// quick-settings player after the app was closed).
+  final Future<domain.PlaybackState?> Function()? loadLastSession;
+
+  /// Paused this long, the session ends: the foreground service, its wake
+  /// lock and the notification go (docs: ONL-8). Shared with the Online tab.
+  static const Duration defaultPausedIdleTimeout = Duration(minutes: 30);
+  final Duration pausedIdleTimeout;
+
+  /// How long a seek waits for the player to finish loading.
+  static const Duration loadingWaitTimeout = Duration(seconds: 10);
+
+  /// The sleep timer lowers the volume over this time before it pauses.
+  static const Duration sleepFadeDuration = Duration(seconds: 10);
+  static const int _sleepFadeSteps = 20;
+  final Duration sleepFade;
+
+  final NowPlayingArt _art;
+  final DateTime Function() _clock;
+
   final Set<String> _durationReported = {};
   late final PlayCountTracker _playCountTracker;
   // ignore: deprecated_member_use
@@ -115,6 +171,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   List<domain.MediaItem> get playOrderQueue => List.unmodifiable(_playOrderQueue);
   bool get shuffleEnabled => _shuffleEnabled;
 
+  /// The order the player has loaded.
   List<domain.MediaItem> get _domainQueue => _playOrderQueue;
 
   /// Headphones, earbuds and other personal outputs (not the built-in speaker/earpiece).
@@ -161,13 +218,6 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// Plain file paths (downloaded media) have no scheme: ExoPlayer needs file://.
   static Uri _audioUri(String raw) => raw.contains('://') ? Uri.parse(raw) : Uri.file(raw);
 
-  static Uri? _artUri(domain.MediaItem item) {
-    final path = item.artworkPath;
-    if (path == null) return null;
-    // Online items carry the https thumbnail, downloads a local image file.
-    return path.startsWith('http://') || path.startsWith('https://') ? Uri.parse(path) : Uri.file(path);
-  }
-
   /// Removes the first element with [id]; keeps duplicates that follow.
   static void _removeFirstById(List<domain.MediaItem> list, String id) {
     final i = list.indexWhere((m) => m.id == id);
@@ -177,6 +227,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   // Custom notification actions
   static const String actionToggleShuffle = 'action_toggle_shuffle';
   static const String actionCycleRepeat = 'action_cycle_repeat';
+  static const String actionToggleFavorite = 'action_toggle_favorite';
 
   /// Previous restarts the track instead once it has played longer than this
   /// (docs/DESIGN.md 7.17).
@@ -195,9 +246,9 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return index < length - 1 || repeatMode != domain.PlaybackRepeatMode.off;
   }
 
-  /// Whether Next is enabled for the current track.
+  /// Whether Next is enabled for the current (or targeted) track.
   bool get canSkipNext =>
-      canSkipNextAt(index: _player.currentIndex ?? -1, length: _playOrderQueue.length, repeatMode: _repeatMode);
+      canSkipNextAt(index: _virtualIndex, length: _virtualQueue.length, repeatMode: _repeatMode);
 
   /// The headset's single button: one press plays / pauses, two skip to the
   /// next track, three to the previous one (Android's media session default,
@@ -234,10 +285,9 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     });
   }
 
-  // Serialized queue for actions with pending skip counter debouncing
+  // --- the serialized chain ---------------------------------------------------
+
   Future<void> _actionChain = Future.value();
-  int _pendingSkips = 0;
-  Timer? _debounceSkipPlayTimer;
 
   Future<T> _synchronized<T>(Future<T> Function() action, [String actionName = 'action']) {
     final completer = Completer<T>();
@@ -262,8 +312,137 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return completer.future;
   }
 
+  // --- coalesced skipping -----------------------------------------------------
+
+  /// Bumped by every press and by anything that settles or drops presses.
+  int _skipGeneration = 0;
+
+  /// Where the pending presses are heading (an index into [_virtualQueue]),
+  /// or null when no skip waits.
+  int? _skipTarget;
+
+  /// The reshuffled order a Next past the end (repeat + shuffle) starts;
+  /// applied together with [_skipTarget].
+  List<domain.MediaItem>? _pendingOrder;
+
+  /// The index an action is loading or seeking to right now.
+  int? _anchorIndex;
+
+  /// The index the handler itself last moved the player to. An index event
+  /// that differs is the player moving on by itself (a song ended).
+  int? _lastRequestedIndex;
+
+  void _anchor(int index) {
+    _anchorIndex = index;
+    _lastRequestedIndex = index;
+  }
+
+  /// Completes when the pending presses have been applied (or dropped).
+  Completer<void>? _batch;
+  int _batchPresses = 0;
+
+  /// Queue loads (and restores) asked for that have not started yet. A press
+  /// made meanwhile means the new queue: it waits for the load.
+  int _pendingLoads = 0;
+
+  /// Runs [press] once the pending load has started, inside the chain but
+  /// without awaiting its batch (that would wait on itself).
+  Future<void> _afterPendingLoad(Future<void> Function() press) {
+    final done = Completer<void>();
+    _synchronized(() async {
+      press().then((_) {
+        if (!done.isCompleted) done.complete();
+      }, onError: (Object e, StackTrace st) {
+        if (!done.isCompleted) done.completeError(e, st);
+      });
+    }, 'press_after_load').catchError((Object _) {});
+    return done.future;
+  }
+
+  /// The queue as the user sees it: a pending reshuffle, else the loaded order.
+  List<domain.MediaItem> get _virtualQueue => _pendingOrder ?? _playOrderQueue;
+
+  /// The index as the user sees it: the pending target, the index being
+  /// loaded, else the player's.
+  int get _virtualIndex => _skipTarget ?? _anchorIndex ?? (_player.currentIndex ?? -1);
+
+  domain.MediaItem? get _virtualCurrentItem {
+    final q = _virtualQueue;
+    final i = _virtualIndex;
+    return (i >= 0 && i < q.length) ? q[i] : null;
+  }
+
+  /// A press is waiting to be applied.
+  @visibleForTesting
+  bool get hasPendingSkip => _skipTarget != null;
+
+  // --- loading-safe seeks -----------------------------------------------------
+
+  final List<Completer<void>> _loadingWaiters = [];
+
+  void _releaseLoadingWaiters() {
+    if (_loadingWaiters.isEmpty) return;
+    for (final c in List.of(_loadingWaiters)) {
+      if (!c.isCompleted) c.complete();
+    }
+    _loadingWaiters.clear();
+  }
+
+  /// The work in hand is stale: a queue load (or replacing restore) waits behind it, or,
+  /// with a [generation], a newer press or edit came in after it was taken.
+  bool _superseded([int? generation]) =>
+      _pendingReplaces > 0 || (generation != null && generation != _skipGeneration);
+
+  /// Queue loads (and replacing restores) asked for that have not run yet:
+  /// they replace whatever an earlier action is waiting to do.
+  int _pendingReplaces = 0;
+
+  /// Waits (at most [loadingWaitTimeout]) until the player is not loading:
+  /// just_audio ignores a seek while it loads. Gives up at once when the work
+  /// is [_superseded] (a slow stream must not hold a tapped song back).
+  Future<void> _waitWhileLoading([int? generation]) async {
+    if (_player.processingState != ProcessingState.loading || _superseded(generation)) return;
+    final done = Completer<void>();
+    _loadingWaiters.add(done);
+    final poll = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (done.isCompleted) return;
+      if (_player.processingState != ProcessingState.loading || _superseded(generation)) done.complete();
+    });
+    try {
+      await done.future.timeout(loadingWaitTimeout, onTimeout: () {
+        DiagnosticsService.instance.logEvent('loading_wait_timeout');
+      });
+    } finally {
+      poll.cancel();
+      _loadingWaiters.remove(done);
+    }
+  }
+
+  /// Seeks to [index] at 0:00, waiting out a load first; tries again (twice)
+  /// if the player started loading and dropped the seek. Stops as soon as the
+  /// seek is [_superseded]: whatever replaced it does its own.
+  Future<void> _seekToIndex(int index, [int? generation]) async {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      await _waitWhileLoading(generation);
+      if (_superseded(generation)) return;
+      await _player.seek(Duration.zero, index: index);
+      if ((_player.currentIndex ?? -1) == index || _player.processingState != ProcessingState.loading) return;
+    }
+  }
+
+  /// Loads the whole [_playOrderQueue] into the player at [index].
+  Future<void> _loadSource({required int index, Duration position = Duration.zero}) async {
+    final audioSources = _playOrderQueue.map(_sourceFor).toList();
+    // TODO: Replace ConcatenatingAudioSource with direct AudioPlayer methods when available in just_audio
+    // ignore: deprecated_member_use
+    _playlistSource = ConcatenatingAudioSource(children: audioSources);
+    await _player.setAudioSource(_playlistSource!, initialIndex: index, initialPosition: position);
+  }
+
   int _consecutiveErrorSkips = 0;
   String _lastLoggedPlayerState = '';
+  ProcessingState? _lastProcessingState;
+  (int, String?)? _lastIndexEvent;
 
   // Stream controller to broadcast error messages (e.g. unplayable or missing files)
   final _errorController = StreamController<String>.broadcast();
@@ -287,14 +466,54 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// Emits on every external change, and null when the handler is back to local music.
   Stream<ExternalMediaSnapshot?> get externalMediaStream => _externalController.stream;
 
+  // --- favourite (the notification's heart) ----------------------------------
+  StreamSubscription<bool>? _favoriteSub;
+  String? _favoriteFor;
+  bool _currentFavorite = false;
+
+  // --- paused-idle stop --------------------------------------------------------
+  Timer? _idleStopTimer;
+  bool _sessionPlaying = false;
+
+  // --- sleep timer -------------------------------------------------------------
+  Timer? _sleepTimer;
+  DateTime? _sleepEndsAt;
+  bool _sleepEndOfTrack = false;
+  Timer? _fadeTimer;
+  double? _volumeBeforeFade;
+  final _sleepController = StreamController<domain.SleepTimerStatus>.broadcast();
+  Duration _lastPosition = Duration.zero;
+  int? _lastPositionIndex;
+
+  /// When the handler last moved the position itself. A jump back to the
+  /// start within [_ownSeekGrace] of it is that seek, not a repeat-one loop.
+  DateTime? _ownSeekAt;
+  static const _ownSeekGrace = Duration(seconds: 1);
+
+  void _noteOwnSeek(Duration to) {
+    _ownSeekAt = _clock();
+    _lastPosition = to;
+  }
+
   MusicAudioHandler({
     AudioPlayer? player,
     this.onRecordPlay,
     this.onDurationKnown,
+    this.onToggleFavorite,
+    this.watchFavorite,
+    this.loadLastSession,
     Duration? mediaButtonMultiClickWindow,
+    Duration? pausedIdleTimeout,
+    Duration? sleepFade,
+    NowPlayingArt? art,
+    DateTime Function()? clock,
   })  : _player = player ?? AudioPlayer(handleInterruptions: false),
         mediaButtonMultiClickWindow = mediaButtonMultiClickWindow ??
-            (PlatformInfo.isAndroid ? const Duration(milliseconds: 300) : Duration.zero) {
+            (PlatformInfo.isAndroid ? const Duration(milliseconds: 300) : Duration.zero),
+        pausedIdleTimeout = pausedIdleTimeout ?? defaultPausedIdleTimeout,
+        sleepFade = sleepFade ?? sleepFadeDuration,
+        _art = art ?? NowPlayingArt(),
+        _clock = clock ?? DateTime.now {
     _playCountTracker = PlayCountTracker(onCountPlay: (id) async {
       DiagnosticsService.instance.logEvent('track_play_counted', {'id': id});
       if (onRecordPlay != null) {
@@ -397,6 +616,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     // 2. Listen to player events and broadcast AudioService PlaybackState on EVERY change
     _player.playbackEventStream.listen(
       (_) {
+        if (_player.processingState != ProcessingState.loading) _releaseLoadingWaiters();
         _broadcastAudioServiceState();
       },
       onError: (Object e, StackTrace st) {
@@ -415,28 +635,41 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
           'playing': state.playing,
         });
       }
+      if (state.processingState != ProcessingState.loading) _releaseLoadingWaiters();
 
       if (state.processingState == ProcessingState.ready && state.playing) {
         _consecutiveErrorSkips = 0;
       }
       _broadcastAudioServiceState();
-      if (state.processingState == ProcessingState.completed) {
-        _handlePlaybackCompleted();
+      // Only the step INTO completed: the stream repeats states, and a second
+      // run would advance twice (F15).
+      final enteredCompleted = state.processingState == ProcessingState.completed &&
+          _lastProcessingState != ProcessingState.completed;
+      _lastProcessingState = state.processingState;
+      if (enteredCompleted) {
+        _synchronized(_handlePlaybackCompleted, 'completed').catchError((Object e) {
+          debugPrint('[MusicAudioHandler] completion failed: $e');
+        });
       }
       _notifyDomainState();
     });
 
     _player.currentIndexStream.listen((idx) {
       if (_suppressIndexEvents) return;
-      if (idx != null && idx >= 0 && idx < _domainQueue.length) {
-        final track = _domainQueue[idx];
-        _playCountTracker.onTrackChanged(
-          track.id,
-          Duration(milliseconds: track.durationMs),
-        );
+      final id = (idx != null && idx >= 0 && idx < _domainQueue.length) ? _domainQueue[idx].id : null;
+      final event = (idx ?? -1, id);
+      if (event == _lastIndexEvent) return; // the same index again: nothing changed
+      final previous = _lastIndexEvent;
+      _lastIndexEvent = event;
+      if (id != null) {
+        _playCountTracker.onTrackChanged(id, Duration(milliseconds: _domainQueue[idx!].durationMs));
       } else {
         _playCountTracker.onTrackChanged(null, Duration.zero);
       }
+      // The player moved on by itself (the song ended): "end of song" sleep.
+      final natural = previous != null && previous.$2 != null && idx != _lastRequestedIndex && _skipTarget == null;
+      _lastRequestedIndex = idx;
+      if (natural) _onNaturalTrackEnd();
       _syncCurrentAudioServiceMediaItem();
       _broadcastAudioServiceState();
       _notifyDomainState();
@@ -444,6 +677,28 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
     _player.positionStream.listen((pos) {
       _playCountTracker.onPositionUpdated(pos, isPlaying: _player.playing);
+      // Repeat one loops inside the player: a jump from the last seconds back
+      // to the start is the song ending.
+      // Not a seek the handler made (the user dragging to 0:00, Previous
+      // restarting the song) and not a move to another song.
+      final index = _player.currentIndex;
+      final seekAt = _ownSeekAt;
+      final justSeeked = seekAt != null && _clock().difference(seekAt) < _ownSeekGrace;
+      if (_sleepEndOfTrack &&
+          _repeatMode == domain.PlaybackRepeatMode.one &&
+          _anchorIndex == null &&
+          !justSeeked &&
+          index == _lastPositionIndex) {
+        final dur = _player.duration;
+        if (dur != null &&
+            dur > const Duration(seconds: 3) &&
+            _lastPosition > dur - const Duration(milliseconds: 1500) &&
+            pos < const Duration(milliseconds: 1500)) {
+          _onNaturalTrackEnd();
+        }
+      }
+      _lastPosition = pos;
+      _lastPositionIndex = index;
       // Position stream updates are consumed by throttledPositionStreamProvider;
       // Do not broadcast domain state at 5 Hz to save CPU/battery.
     });
@@ -486,7 +741,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _errorController.add('Playback error on "$trackName"');
     _consecutiveErrorSkips++;
     if (_consecutiveErrorSkips < _domainQueue.length && _domainQueue.length > 1) {
-      _skipToNextLocalImpl(fromUser: false);
+      _scheduleAutoNext('error_skip');
     } else {
       _consecutiveErrorSkips = 0;
       _pauseLocalImpl(reason: 'error_loop_guard');
@@ -494,11 +749,18 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     }
   }
 
+  // --- the media session ---------------------------------------------------------
+
+  /// The notification's heart is offered for local songs when the app gave
+  /// the callbacks for it.
+  bool get _likeAvailable => onToggleFavorite != null && watchFavorite != null && _favoriteFor != null;
+
   void _broadcastAudioServiceState() {
     // While an external source owns the session, local player events (the
     // pause that handed over, buffering, ...) must not overwrite its state.
     if (_external != null) return;
     final playing = _player.playing;
+    final pending = _skipTarget != null;
     final processingState = const {
       ProcessingState.idle: AudioProcessingState.idle,
       ProcessingState.loading: AudioProcessingState.loading,
@@ -540,99 +802,131 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       name: actionCycleRepeat,
     );
 
-    final currIdx = _player.currentIndex ?? -1;
+    final currIdx = _virtualIndex;
     final canNext = canSkipNext;
 
-    playbackState.add(
-      playbackState.value.copyWith(
-        // Transport first, so the compact (collapsed) notification shows
-        // previous, play / pause and next. audio_service counts the compact
-        // indices over the standard controls only (shuffle and repeat are
-        // custom actions, drawn by Android 13+ in their own slots), and with
-        // shuffle first the old [1, 2, 3] showed play / pause, next and a
-        // slot past the end, never previous. Next is left out of these
-        // controls where the app shows it disabled: the last track with
-        // repeat off.
-        controls: [
-          MediaControl.skipToPrevious,
-          if (playing) MediaControl.pause else MediaControl.play,
-          if (canNext) MediaControl.skipToNext,
-          shuffleAction,
-          repeatAction,
-        ],
-        systemActions: {
-          MediaAction.seek,
-          MediaAction.seekForward,
-          MediaAction.seekBackward,
-          MediaAction.setRepeatMode,
-          MediaAction.setShuffleMode,
-          MediaAction.setSpeed,
-          MediaAction.skipToPrevious,
-          // Always advertised, even where the controls above leave Next out:
-          // Android 13+ draws the shade and lock-screen controls from these
-          // session actions and, with no ACTION_SKIP_TO_NEXT (audio_service
-          // cannot reserve the slot), moves the first custom action
-          // (Shuffle) into Next's place, where a reach for Next would toggle
-          // shuffle. At the end of the queue a Next from there is ignored
-          // (skipToNext), like the app's disabled button.
-          MediaAction.skipToNext,
-        },
-        androidCompactActionIndices: canNext ? const [0, 1, 2] : const [0, 1],
-        // Lock screen, Bluetooth (AVRCP), Wear OS and Android Auto read the
-        // modes from the session itself.
-        repeatMode: switch (_repeatMode) {
-          domain.PlaybackRepeatMode.off => AudioServiceRepeatMode.none,
-          domain.PlaybackRepeatMode.all => AudioServiceRepeatMode.all,
-          domain.PlaybackRepeatMode.one => AudioServiceRepeatMode.one,
-        },
-        shuffleMode: _shuffleEnabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
-        processingState: processingState,
-        playing: playing,
-        updatePosition: _player.position,
-        bufferedPosition: _player.bufferedPosition,
-        speed: _player.speed,
-        queueIndex: currIdx >= 0 ? currIdx : null,
-      ),
+    final next = playbackState.value.copyWith(
+      // Transport first, so the compact (collapsed) notification shows
+      // previous, play / pause and next. audio_service counts the compact
+      // indices over the standard controls only (like, shuffle and repeat
+      // are custom actions, drawn by Android 13+ in their own slots: the
+      // first two of them), and with shuffle first the old [1, 2, 3] showed
+      // play / pause, next and a slot past the end, never previous. Next is
+      // left out of these controls where the app shows it disabled: the last
+      // track with repeat off.
+      controls: [
+        MediaControl.skipToPrevious,
+        if (playing) MediaControl.pause else MediaControl.play,
+        if (canNext) MediaControl.skipToNext,
+        if (_likeAvailable)
+          MediaControl.custom(
+            androidIcon: _currentFavorite ? 'drawable/ic_action_favorite_on' : 'drawable/ic_action_favorite_off',
+            label: _currentFavorite ? 'Remove from Liked songs' : 'Add to Liked songs',
+            name: actionToggleFavorite,
+          ),
+        shuffleAction,
+        repeatAction,
+      ],
+      systemActions: {
+        MediaAction.seek,
+        MediaAction.seekForward,
+        MediaAction.seekBackward,
+        MediaAction.setRepeatMode,
+        MediaAction.setShuffleMode,
+        MediaAction.setSpeed,
+        MediaAction.skipToPrevious,
+        // Always advertised, even where the controls above leave Next out:
+        // Android 13+ draws the shade and lock-screen controls from these
+        // session actions and, with no ACTION_SKIP_TO_NEXT (audio_service
+        // cannot reserve the slot), moves the first custom action into
+        // Next's place, where a reach for Next would toggle something else.
+        // At the end of the queue a Next from there is ignored
+        // (skipToNext), like the app's disabled button.
+        MediaAction.skipToNext,
+        MediaAction.skipToQueueItem,
+        MediaAction.playFromMediaId,
+        MediaAction.prepareFromMediaId,
+      },
+      androidCompactActionIndices: canNext ? const [0, 1, 2] : const [0, 1],
+      // Lock screen, Bluetooth (AVRCP), Wear OS and Android Auto read the
+      // modes from the session itself.
+      repeatMode: switch (_repeatMode) {
+        domain.PlaybackRepeatMode.off => AudioServiceRepeatMode.none,
+        domain.PlaybackRepeatMode.all => AudioServiceRepeatMode.all,
+        domain.PlaybackRepeatMode.one => AudioServiceRepeatMode.one,
+      },
+      shuffleMode: _shuffleEnabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
+      processingState: processingState,
+      playing: playing,
+      // A skip on its way: the target starts at 0:00 (the old song's time
+      // would show under the new title for a moment).
+      updatePosition: pending ? Duration.zero : _player.position,
+      bufferedPosition: pending ? Duration.zero : _player.bufferedPosition,
+      speed: _player.speed,
+      queueIndex: currIdx >= 0 ? currIdx : null,
     );
+    if (!_sameSessionState(playbackState.value, next)) {
+      playbackState.add(next);
+    }
+    _onSessionPlaying(playing);
   }
 
-  void _notifyDomainState() {
-    final currIdx = _player.currentIndex ?? -1;
-    domain.MediaItem? currentItem;
-    if (currIdx >= 0 && currIdx < _domainQueue.length) {
-      currentItem = _domainQueue[currIdx];
-    }
+  /// The same state apart from its time stamp: sending it again would only
+  /// make the system redraw the notification.
+  static bool _sameSessionState(PlaybackState a, PlaybackState b) =>
+      a.processingState == b.processingState &&
+      a.playing == b.playing &&
+      listEquals(a.controls, b.controls) &&
+      listEquals(a.controls.map((c) => c.customAction?.name).toList(),
+          b.controls.map((c) => c.customAction?.name).toList()) &&
+      listEquals(a.androidCompactActionIndices, b.androidCompactActionIndices) &&
+      setEquals(a.systemActions, b.systemActions) &&
+      a.updatePosition == b.updatePosition &&
+      a.bufferedPosition == b.bufferedPosition &&
+      a.speed == b.speed &&
+      a.errorCode == b.errorCode &&
+      a.errorMessage == b.errorMessage &&
+      a.repeatMode == b.repeatMode &&
+      a.shuffleMode == b.shuffleMode &&
+      a.captioningEnabled == b.captioningEnabled &&
+      a.queueIndex == b.queueIndex;
 
-    _domainStateController.add(
-      domain.PlaybackState(
-        currentItemId: currentItem?.id,
-        queue: _domainQueue,
-        originalQueue: _originalQueue,
-        queueIndex: currIdx,
-        position: _player.position,
-        duration: _player.duration ?? Duration.zero,
-        isPlaying: _player.playing,
-        repeatMode: _repeatMode,
-        shuffle: _shuffleEnabled,
-        speed: _player.speed,
-        updatedAt: DateTime.now(),
-      ),
-    );
+  List<domain.MediaItem>? _queueSnapshot;
+  List<domain.MediaItem>? _originalSnapshot;
+
+  /// An unmodifiable copy of [source], the previous one when nothing in it
+  /// changed: the app's state keeps the same list, so screens that select
+  /// the queue do not rebuild on every player event.
+  static List<domain.MediaItem> _snapshot(List<domain.MediaItem> source, List<domain.MediaItem>? previous) {
+    if (previous != null && previous.length == source.length) {
+      var same = true;
+      for (var i = 0; i < source.length; i++) {
+        if (!identical(previous[i], source[i])) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return previous;
+    }
+    return List.unmodifiable(source);
   }
 
-  domain.PlaybackState getCurrentDomainState() {
-    final currIdx = _player.currentIndex ?? -1;
-    domain.MediaItem? currentItem;
-    if (currIdx >= 0 && currIdx < _domainQueue.length) {
-      currentItem = _domainQueue[currIdx];
-    }
+  domain.PlaybackState _buildDomainState() {
+    final q = _virtualQueue;
+    final idx = _virtualIndex;
+    final currentItem = (idx >= 0 && idx < q.length) ? q[idx] : null;
+    // While a skip is on its way (or loading) the player still reports the
+    // old song's time and length.
+    final settling = _skipTarget != null || _anchorIndex != null;
     return domain.PlaybackState(
       currentItemId: currentItem?.id,
-      queue: _domainQueue,
-      originalQueue: _originalQueue,
-      queueIndex: currIdx,
-      position: _player.position,
-      duration: _player.duration ?? Duration.zero,
+      queue: _queueSnapshot = _snapshot(q, _queueSnapshot),
+      originalQueue: _originalSnapshot = _snapshot(_originalQueue, _originalSnapshot),
+      queueIndex: idx,
+      position: settling ? Duration.zero : _player.position,
+      duration: settling
+          ? Duration(milliseconds: currentItem?.durationMs ?? 0)
+          : (_player.duration ?? Duration.zero),
       isPlaying: _player.playing,
       repeatMode: _repeatMode,
       shuffle: _shuffleEnabled,
@@ -641,77 +935,179 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     );
   }
 
-  // Restore session
-  Future<void> restoreSession(domain.PlaybackState restored) async {
+  void _notifyDomainState() {
+    if (_domainStateController.isClosed) return;
+    _domainStateController.add(_buildDomainState());
+  }
+
+  domain.PlaybackState getCurrentDomainState() => _buildDomainState();
+
+  MediaItem _sessionItem(domain.MediaItem item, Uri? artUri) => MediaItem(
+        id: item.id,
+        album: item.album ?? '',
+        title: item.title,
+        artist: item.artist,
+        duration: Duration(milliseconds: item.durationMs),
+        // Never the audio file URI itself: an image the system can open
+        // (download thumbnail, online thumbnail, or the cached cover).
+        artUri: artUri,
+      );
+
+  /// Sends [item] unless the notification already shows exactly that.
+  void _emitMediaItem(MediaItem? item) {
+    final last = mediaItem.value;
+    if (item == null) {
+      if (last != null) mediaItem.add(null);
+      return;
+    }
+    if (last != null &&
+        last.id == item.id &&
+        last.title == item.title &&
+        last.artist == item.artist &&
+        last.album == item.album &&
+        last.duration == item.duration &&
+        last.artUri == item.artUri) {
+      return;
+    }
+    mediaItem.add(item);
+  }
+
+  void _syncAudioServiceQueue() {
+    final q = _virtualQueue;
+    final idx = _virtualIndex;
+    queue.add([for (final item in q) _sessionItem(item, _art.peek(item))]);
+    // Only the current and the next song are looked up.
+    if (idx >= 0 && idx < q.length) {
+      _resolveArt(q[idx]);
+      if (q.length > 1) _resolveArt(q[(idx + 1) % q.length]);
+    }
+  }
+
+  void _syncCurrentAudioServiceMediaItem() {
+    if (_external != null) return; // the external source's item stays on show
+    final item = _virtualCurrentItem;
+    _followFavorite(item);
+    if (item == null) {
+      _emitMediaItem(null);
+      return;
+    }
+    _emitMediaItem(_sessionItem(item, _art.peek(item)));
+    _resolveArt(item);
+    final q = _virtualQueue;
+    if (q.length > 1) _resolveArt(q[(_virtualIndex + 1) % q.length]);
+  }
+
+  /// Looks up [item]'s cover for the session and sends it once found, if the
+  /// item is still on show (or next in line).
+  void _resolveArt(domain.MediaItem item) {
+    if (_art.peek(item) != null) return;
+    _art.resolve(item).then((uri) {
+      if (uri == null || _external != null) return;
+      final q = _virtualQueue;
+      final idx = _virtualIndex;
+      if (idx < 0 || idx >= q.length) return;
+      if (q[idx].id == item.id) _syncCurrentAudioServiceMediaItem();
+      final isNext = q.length > 1 && q[(idx + 1) % q.length].id == item.id;
+      if ((q[idx].id == item.id || isNext) && q.length <= 500) {
+        queue.add([for (final m in q) _sessionItem(m, _art.peek(m))]);
+      }
+    });
+  }
+
+  // --- favourite ------------------------------------------------------------------
+
+  void _followFavorite(domain.MediaItem? item) {
+    final watch = watchFavorite;
+    if (watch == null || onToggleFavorite == null) return;
+    final id = (item == null || item.source == 'online') ? null : item.id;
+    if (id == _favoriteFor) return;
+    _favoriteSub?.cancel();
+    _favoriteSub = null;
+    _favoriteFor = id;
+    _currentFavorite = item?.isFavorite ?? false;
+    if (id == null) return;
+    try {
+      _favoriteSub = watch(id).listen((fav) {
+        if (_favoriteFor != id || fav == _currentFavorite) return;
+        _currentFavorite = fav;
+        _broadcastAudioServiceState();
+      }, onError: (Object _) {});
+    } catch (_) {
+      // no live flag: the heart keeps the queued snapshot
+    }
+  }
+
+  // --- restore / load -------------------------------------------------------------
+
+  /// Brings back the last session (paused). Does nothing when a queue is
+  /// already loaded (media resumption got there first, or the user started
+  /// something while the database was read), unless [replace] is set: then
+  /// [restored] takes the place of whatever is loaded (the iOS Online
+  /// hand-off giving the user's own queue back after its YouTube stream).
+  Future<void> restoreSession(domain.PlaybackState restored, {bool replace = false}) {
+    _pendingLoads++;
+    if (replace) {
+      _skipGeneration++;
+      _pendingReplaces++;
+      _releaseLoadingWaiters();
+    }
+    return _synchronized(() {
+      _pendingLoads--;
+      if (replace) _pendingReplaces--;
+      return _restoreSessionImpl(restored, replace: replace);
+    }, 'restoreSession');
+  }
+
+  Future<void> _restoreSessionImpl(domain.PlaybackState restored, {bool replace = false}) async {
+    if (!replace && _playOrderQueue.isNotEmpty) return;
+    _dropPendingSkip();
+    if (replace) {
+      _wantPlaying = false;
+      if (_player.playing) await _player.pause();
+    }
     _originalQueue = List.from(restored.originalQueue.isNotEmpty ? restored.originalQueue : restored.queue);
     _playOrderQueue = List.from(restored.queue);
     _shuffleEnabled = restored.shuffle;
     _repeatMode = restored.repeatMode;
     await _player.setSpeed(restored.speed);
 
-    _syncAudioServiceQueue();
     if (_domainQueue.isNotEmpty) {
-      final audioSources = _domainQueue.map((item) {
-        return AudioSource.uri(_audioUri(item.uri), tag: item.id);
-      }).toList();
-
       final initialIdx = (restored.queueIndex >= 0 && restored.queueIndex < _domainQueue.length)
           ? restored.queueIndex
           : 0;
-
+      _anchor(initialIdx);
+      _syncAudioServiceQueue();
       try {
-        // TODO: Replace ConcatenatingAudioSource with direct AudioPlayer methods when available in just_audio
-        // ignore: deprecated_member_use
-        _playlistSource = ConcatenatingAudioSource(children: audioSources);
-        await _player.setAudioSource(
-          _playlistSource!,
-          initialIndex: initialIdx,
-          initialPosition: restored.position,
-        );
+        await _loadSource(index: initialIdx, position: restored.position);
         _applyLoopMode();
       } catch (e) {
         DiagnosticsService.instance.logEvent('player_error', {'source': 'restore_session'});
         debugPrint('Failed to set source on restore: $e');
+      } finally {
+        _anchorIndex = null;
       }
+    } else {
+      _syncAudioServiceQueue();
     }
     _syncCurrentAudioServiceMediaItem();
     _broadcastAudioServiceState();
     _notifyDomainState();
   }
 
-  void _syncAudioServiceQueue() {
-    final asQueue = _domainQueue.map((item) {
-      return MediaItem(
-        id: item.id,
-        album: item.album ?? '',
-        title: item.title,
-        artist: item.artist,
-        duration: Duration(milliseconds: item.durationMs),
-        // Never the audio file URI itself; only a real image file (downloads).
-        artUri: _artUri(item),
-      );
-    }).toList();
-    queue.add(asQueue);
-  }
-
-  void _syncCurrentAudioServiceMediaItem() {
-    if (_external != null) return; // the external source's item stays on show
-    final currIdx = _player.currentIndex ?? -1;
-    if (currIdx >= 0 && currIdx < _domainQueue.length) {
-      final item = _domainQueue[currIdx];
-      mediaItem.add(
-        MediaItem(
-          id: item.id,
-          album: item.album ?? '',
-          title: item.title,
-          artist: item.artist,
-          duration: Duration(milliseconds: item.durationMs),
-          artUri: _artUri(item),
-        ),
-      );
-    } else {
-      mediaItem.add(null);
+  /// Restores the last session when nothing is loaded (media resumption: the
+  /// system's player calls play / prepare after the app was closed).
+  Future<void> _ensureRestored() async {
+    if (_playOrderQueue.isNotEmpty || _external != null) return;
+    final load = loadLastSession;
+    if (load == null) return;
+    domain.PlaybackState? saved;
+    try {
+      saved = await load();
+    } catch (_) {
+      return;
     }
+    if (saved == null || saved.queue.isEmpty) return;
+    await restoreSession(saved);
   }
 
   Future<void> loadQueue(
@@ -719,28 +1115,51 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     int startIndex = 0,
     bool autoPlay = true,
     bool shuffle = false,
-  }) async {
+  }) {
     _userInteractedSinceNoisy = true;
+    // Presses made before this load meant the old queue: drop them now, so
+    // none of them seeks the old source first.
+    _skipGeneration++;
+    // Starting local music hands the session back from YouTube (which pauses).
+    if (autoPlay && items.isNotEmpty) _releaseExternal(reason: 'local_queue');
+    _pendingLoads++;
+    // A skip or seek waiting on a slow load stands down now (it meant the old
+    // queue), so the new one starts at once.
+    _pendingReplaces++;
+    _releaseLoadingWaiters();
+    return _synchronized(() {
+      _pendingLoads--;
+      _pendingReplaces--;
+      return _loadQueueImpl(items, startIndex: startIndex, autoPlay: autoPlay, shuffle: shuffle);
+    }, 'loadQueue');
+  }
+
+  Future<void> _loadQueueImpl(
+    List<domain.MediaItem> items, {
+    int startIndex = 0,
+    bool autoPlay = true,
+    bool shuffle = false,
+  }) async {
+    _dropPendingSkip();
     if (items.isEmpty) {
       await _stopLocalImpl(reason: 'empty_queue_load');
       _originalQueue = [];
       _playOrderQueue = [];
       _shuffleEnabled = false;
       _syncAudioServiceQueue();
-      if (_external == null) mediaItem.add(null);
+      if (_external == null) _emitMediaItem(null);
       _broadcastAudioServiceState();
       _notifyDomainState();
       return;
     }
-    // Starting local music hands the session back from YouTube (which pauses).
     if (autoPlay) _releaseExternal(reason: 'local_queue');
 
     _originalQueue = List.from(items);
     _shuffleEnabled = shuffle;
+    final safeStart = (startIndex >= 0 && startIndex < items.length) ? startIndex : 0;
 
     if (shuffle) {
       // Start at startIndex as first item, shuffle the rest
-      final safeStart = (startIndex >= 0 && startIndex < items.length) ? startIndex : 0;
       final startItem = items[safeStart];
       final remaining = List<domain.MediaItem>.from(items)..removeAt(safeStart);
       _fisherYatesShuffle(remaining);
@@ -748,25 +1167,19 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     } else {
       _playOrderQueue = List.from(items);
     }
+    final initialIndex = shuffle ? 0 : safeStart;
 
+    _anchor(initialIndex);
     _syncAudioServiceQueue();
-
-    final audioSources = _domainQueue.map((item) {
-      return AudioSource.uri(_audioUri(item.uri), tag: item.id);
-    }).toList();
-
+    _syncCurrentAudioServiceMediaItem();
     try {
-      // ignore: deprecated_member_use
-      _playlistSource = ConcatenatingAudioSource(children: audioSources);
-      await _player.setAudioSource(
-        _playlistSource!,
-        initialIndex: shuffle ? 0 : startIndex,
-        initialPosition: Duration.zero,
-      );
+      await _loadSource(index: initialIndex);
       _applyLoopMode();
     } catch (e) {
       DiagnosticsService.instance.logEvent('player_error', {'source': 'load_queue'});
       debugPrint('Error setting queue source: $e');
+    } finally {
+      _anchorIndex = null;
     }
 
     _syncCurrentAudioServiceMediaItem();
@@ -798,7 +1211,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       // Local music pauses (it stays queued and resumes from its own controls).
       _wantPlaying = false;
       _resumeOnFocusGain = false;
-      _debounceSkipPlayTimer?.cancel();
+      _stopSleepFade(restoreVolume: true);
       if (_player.playing) {
         _player.pause().catchError((Object e) {
           debugPrint('[MusicAudioHandler] pause for external source failed: $e');
@@ -863,9 +1276,9 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
     final item = MediaItem(
       id: s.id,
-      title: s.title.isEmpty ? 'YouTube' : s.title,
+      title: s.title.isEmpty ? s.albumOrDefault : s.title,
       artist: (s.artist == null || s.artist!.isEmpty) ? null : s.artist,
-      album: 'YouTube',
+      album: s.albumOrDefault,
       duration: s.duration,
       artUri: s.artUri,
     );
@@ -877,6 +1290,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
         last.id != item.id ||
         last.title != item.title ||
         last.artist != item.artist ||
+        last.album != item.album ||
         last.artUri != item.artUri ||
         last.duration != item.duration) {
       _externalItem = item;
@@ -910,6 +1324,11 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       ));
     }
     _externalController.add(s);
+    _onSessionPlaying(s.playing);
+    // "End of song" for a video: the page moved on to another one.
+    if (_sleepEndOfTrack && previous != null && previous.id != s.id && s.playing) {
+      _onNaturalTrackEnd();
+    }
   }
 
   /// True when the system's own extrapolation (position + speed x elapsed)
@@ -926,6 +1345,166 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     // Ticks arrive about once a second; anything else is a seek.
     final drift = (b.position - a.position).inMilliseconds.abs();
     return drift > 2500 || (!b.playing && drift > 0);
+  }
+
+  // --- paused-idle stop (ONL-8) ----------------------------------------------------
+
+  /// The foreground service stays up while paused (androidStopForegroundOnPause
+  /// is false, for YouTube's gaps between videos), so after
+  /// [pausedIdleTimeout] of pause the session ends, local or external.
+  void _onSessionPlaying(bool playing) {
+    if (playing) {
+      _sessionPlaying = true;
+      _idleStopTimer?.cancel();
+      _idleStopTimer = null;
+    } else if (_sessionPlaying) {
+      _sessionPlaying = false;
+      _idleStopTimer?.cancel();
+      _idleStopTimer = Timer(pausedIdleTimeout, () {
+        _idleStopTimer = null;
+        DiagnosticsService.instance.logEvent('paused_idle_stop', {'minutes': pausedIdleTimeout.inMinutes});
+        stop(reason: 'paused_idle').catchError((Object e) {
+          debugPrint('[MusicAudioHandler] idle stop failed: $e');
+        });
+      });
+    }
+  }
+
+  /// True while the session waits out [pausedIdleTimeout].
+  @visibleForTesting
+  bool get idleStopArmed => _idleStopTimer != null;
+
+  // --- sleep timer (F9) --------------------------------------------------------------
+
+  /// The sleep timer right now.
+  domain.SleepTimerStatus get sleepTimer {
+    final endsAt = _sleepEndsAt;
+    if (endsAt == null && !_sleepEndOfTrack && _fadeTimer == null) return domain.SleepTimerStatus.off;
+    Duration? remaining;
+    if (endsAt != null) {
+      final left = endsAt.difference(_clock());
+      remaining = left.isNegative ? Duration.zero : left;
+    }
+    return domain.SleepTimerStatus(
+      endsAt: endsAt,
+      remaining: remaining,
+      endOfTrack: _sleepEndOfTrack,
+      fading: _fadeTimer != null,
+    );
+  }
+
+  /// Emits whenever the sleep timer is set, changes or ends.
+  Stream<domain.SleepTimerStatus> get sleepTimerStream => _sleepController.stream;
+
+  void _emitSleep() {
+    if (!_sleepController.isClosed) _sleepController.add(sleepTimer);
+  }
+
+  /// Pauses everything (local music or the YouTube page) after [duration],
+  /// fading the music out over its last [sleepFade].
+  void setSleepTimer(Duration duration) {
+    _clearSleep(restoreVolume: true);
+    if (duration <= Duration.zero) {
+      _emitSleep();
+      return;
+    }
+    _sleepEndsAt = _clock().add(duration);
+    final fadeStartsIn = duration > sleepFade ? duration - sleepFade : Duration.zero;
+    _sleepTimer = Timer(fadeStartsIn, _startSleepFade);
+    DiagnosticsService.instance.logEvent('sleep_timer_set', {'minutes': duration.inMinutes});
+    _emitSleep();
+  }
+
+  /// Pauses when the song that is playing ends.
+  void setSleepTimerAtEndOfTrack() {
+    _clearSleep(restoreVolume: true);
+    _sleepEndOfTrack = true;
+    DiagnosticsService.instance.logEvent('sleep_timer_set', {'mode': 'end_of_track'});
+    _emitSleep();
+  }
+
+  void cancelSleepTimer() {
+    final wasActive = sleepTimer.isActive;
+    _clearSleep(restoreVolume: true);
+    if (wasActive) DiagnosticsService.instance.logEvent('sleep_timer_cancelled');
+    _emitSleep();
+  }
+
+  void _clearSleep({required bool restoreVolume}) {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepEndsAt = null;
+    _sleepEndOfTrack = false;
+    _stopSleepFade(restoreVolume: restoreVolume);
+  }
+
+  void _stopSleepFade({required bool restoreVolume}) {
+    _fadeTimer?.cancel();
+    _fadeTimer = null;
+    final volume = _volumeBeforeFade;
+    _volumeBeforeFade = null;
+    if (restoreVolume && volume != null) {
+      _player.setVolume(volume).catchError((Object _) {});
+    }
+  }
+
+  void _startSleepFade() {
+    _sleepTimer = null;
+    if (_external != null || !_player.playing) {
+      // YouTube (its own volume) or nothing playing: pause when the time is up.
+      final endsAt = _sleepEndsAt;
+      final left = endsAt == null ? Duration.zero : endsAt.difference(_clock());
+      if (left > Duration.zero) {
+        _sleepTimer = Timer(left, _finishSleep);
+      } else {
+        _finishSleep();
+      }
+      return;
+    }
+    final start = _player.volume;
+    _volumeBeforeFade = start;
+    var step = 0;
+    _fadeTimer = Timer.periodic(sleepFade ~/ _sleepFadeSteps, (timer) {
+      step++;
+      if (step >= _sleepFadeSteps) {
+        timer.cancel();
+        _finishSleep();
+        return;
+      }
+      _player.setVolume(start * (1 - step / _sleepFadeSteps)).catchError((Object _) {});
+    });
+    _emitSleep();
+  }
+
+  void _finishSleep() {
+    final volume = _volumeBeforeFade;
+    _fadeTimer?.cancel();
+    _fadeTimer = null;
+    _volumeBeforeFade = null;
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepEndsAt = null;
+    _sleepEndOfTrack = false;
+    DiagnosticsService.instance.logEvent('sleep_timer_fired');
+    _emitSleep();
+    pause(reason: 'sleep').whenComplete(() {
+      if (volume != null) _player.setVolume(volume).catchError((Object _) {});
+    }).catchError((Object _) {});
+  }
+
+  /// A song ended by itself. With "end of song" set, playback pauses here.
+  void _onNaturalTrackEnd() {
+    if (!_sleepEndOfTrack) return;
+    _sleepEndOfTrack = false;
+    DiagnosticsService.instance.logEvent('sleep_timer_fired', {'mode': 'end_of_track'});
+    _emitSleep();
+    if (_external != null) {
+      pause(reason: 'sleep');
+      return;
+    }
+    _wantPlaying = false;
+    // The next song waits at its start.
+    _pauseLocalImpl(reason: 'sleep').then((_) => _player.seek(Duration.zero)).catchError((Object _) {});
   }
 
   // --- transport: system entry points route to the external source -------
@@ -945,13 +1524,13 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// In-app "next" for the local queue (starts local playback).
   Future<void> skipToNextLocal() {
     _releaseExternal(reason: 'local_next');
-    return _skipToNextLocalImpl();
+    return _requestNext();
   }
 
   /// In-app "previous" for the local queue (starts local playback).
   Future<void> skipToPreviousLocal() {
     _releaseExternal(reason: 'local_previous');
-    return _skipToPreviousLocalImpl();
+    return _requestPrevious();
   }
 
   /// A headset, Bluetooth or notification media button. Next and previous
@@ -992,18 +1571,61 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       playbackState.value.playing ? pause(reason: 'media_button') : play(caller: 'media_button');
 
   @override
-  Future<void> play({String? caller}) {
+  Future<void> play({String? caller}) async {
     final ext = _external;
     if (ext != null) {
       DiagnosticsService.instance.logEvent('play', {'caller': caller ?? 'system', 'target': 'external'});
       return ext.externalPlay();
     }
+    // Media resumption: the system's player after the app was closed.
+    if (_playOrderQueue.isEmpty) await _ensureRestored();
     return _playLocalImpl(caller: caller);
+  }
+
+  @override
+  Future<void> prepare() => _ensureRestored();
+
+  @override
+  Future<void> prepareFromMediaId(String mediaId, [Map<String, dynamic>? extras]) => _ensureRestored();
+
+  @override
+  Future<void> playFromMediaId(String mediaId, [Map<String, dynamic>? extras]) async {
+    if (_external == null) await _ensureRestored();
+    final q = _virtualQueue;
+    final index = q.indexWhere((m) => m.id == mediaId);
+    if (index >= 0 && index != _virtualIndex) {
+      return skipToQueueItem(index, expectedId: mediaId);
+    }
+    return play(caller: 'play_from_media_id');
+  }
+
+  /// The quick-settings player asks for the "recent" root after the app was
+  /// closed: the current (or last saved) song, with its cover.
+  @override
+  Future<List<MediaItem>> getChildren(String parentMediaId, [Map<String, dynamic>? options]) async {
+    if (parentMediaId != AudioService.recentRootId) return const [];
+    domain.MediaItem? item = _virtualCurrentItem;
+    if (item == null && loadLastSession != null) {
+      try {
+        item = (await loadLastSession!())?.currentItem;
+      } catch (_) {
+        item = null;
+      }
+    }
+    if (item == null) return const [];
+    Uri? art;
+    try {
+      art = await _art.resolve(item).timeout(const Duration(seconds: 3), onTimeout: () => null);
+    } catch (_) {
+      art = null;
+    }
+    return [_sessionItem(item, art)];
   }
 
   Future<void> _playLocalImpl({String? caller}) async {
     _userInteractedSinceNoisy = true;
     _wantPlaying = true;
+    if (_fadeTimer != null) cancelSleepTimer(); // pressing play during the fade keeps the music
     final callSource = caller ?? _formatCaller();
     DiagnosticsService.instance.logEvent('play', {'caller': callSource});
     debugPrint('[MusicAudioHandler] play() called by: $callSource');
@@ -1029,6 +1651,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   Future<void> _pauseLocalImpl({String? reason}) async {
     _wantPlaying = false;
+    if (reason != 'sleep' && _fadeTimer != null) cancelSleepTimer();
     final stopReason = reason ?? 'user';
     DiagnosticsService.instance.logEvent('pause', {'reason': stopReason});
     debugPrint('[MusicAudioHandler] pause(reason: $stopReason)');
@@ -1051,6 +1674,15 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   Future<void> _stopLocalImpl({String? reason}) async {
     _wantPlaying = false;
+    _idleStopTimer?.cancel();
+    _idleStopTimer = null;
+    _sessionPlaying = false;
+    // The session is over: a sleep timer left running would keep its chip
+    // counting and later fade a stopped player.
+    if (sleepTimer.isActive) {
+      _clearSleep(restoreVolume: true);
+      _emitSleep();
+    }
     final stopReason = reason ?? 'user';
     DiagnosticsService.instance.logEvent('stop', {'reason': stopReason});
     debugPrint('[MusicAudioHandler] stop(reason: $stopReason)');
@@ -1066,12 +1698,20 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return _seekLocalImpl(position);
   }
 
-  Future<void> _seekLocalImpl(Duration position) async {
+  /// A seek in the song on show: after any pending skip (it is that song's
+  /// time), and never while the player loads (it would be dropped).
+  Future<void> _seekLocalImpl(Duration position) {
     _userInteractedSinceNoisy = true;
     DiagnosticsService.instance.logEvent('seek');
     debugPrint('[MusicAudioHandler] seek($position) called by: ${_formatCaller()}');
-    await _player.seek(position);
-    _broadcastAudioServiceState();
+    return _synchronized(() async {
+      await _applyPendingSkip();
+      await _waitWhileLoading();
+      _noteOwnSeek(position);
+      await _player.seek(position);
+      _noteOwnSeek(position);
+      _broadcastAudioServiceState();
+    }, 'seek');
   }
 
   @override
@@ -1154,6 +1794,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   Future<void> toggleShuffle() async {
     _userInteractedSinceNoisy = true;
     return _synchronized(() async {
+      await _applyPendingSkip();
       final nextVal = !_shuffleEnabled;
       _shuffleEnabled = nextVal;
       final currentPos = _player.position;
@@ -1185,23 +1826,22 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
         if (newIndex == -1) newIndex = 0;
       }
 
-      final src = _playlistSource;
-      if (src != null && currentItem != null && src.length == _playOrderQueue.length) {
-        // Seamless: the playing track keeps playing, only its neighbours change.
-        await _reorderAroundCurrent(src, currIdx, newIndex);
-        // The player moves its own index along; this only fires if it did not.
-        if ((_player.currentIndex ?? -1) != newIndex) {
-          await _player.seek(currentPos, index: newIndex);
+      _anchor(newIndex);
+      try {
+        final src = _playlistSource;
+        if (src != null && currentItem != null && src.length == _playOrderQueue.length) {
+          // Seamless: the playing track keeps playing, only its neighbours change.
+          await _reorderAroundCurrent(src, currIdx, newIndex);
+          // The player moves its own index along; this only fires if it did not.
+          if ((_player.currentIndex ?? -1) != newIndex) {
+            await _waitWhileLoading();
+            await _player.seek(currentPos, index: newIndex);
+          }
+        } else {
+          await _loadSource(index: newIndex, position: currentPos);
         }
-      } else {
-        final audioSources = _playOrderQueue.map(_sourceFor).toList();
-        // ignore: deprecated_member_use
-        _playlistSource = ConcatenatingAudioSource(children: audioSources);
-        await _player.setAudioSource(
-          _playlistSource!,
-          initialIndex: newIndex,
-          initialPosition: currentPos,
-        );
+      } finally {
+        _anchorIndex = null;
       }
 
       DiagnosticsService.instance.logEvent('shuffle_mode_changed', {
@@ -1219,277 +1859,390 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   @override
   Future<void> customAction(String name, [Map<String, dynamic>? extras]) async {
-    if (_external != null) return; // shuffle / repeat are not shown for YouTube
+    if (_external != null) return; // shuffle / repeat / like are not shown for YouTube
     if (name == actionToggleShuffle) {
       toggleShuffle();
     } else if (name == actionCycleRepeat) {
       cycleRepeatMode();
-    }
-  }
-
-  /// A track picked from the queue (the app's queue sheet, or a car / watch
-  /// queue view) plays, like a tapped song row: it used to jump there and
-  /// stay paused. Local music takes the session back from YouTube first, as
-  /// every other local start does.
-  @override
-  Future<void> skipToQueueItem(int index) async {
-    _userInteractedSinceNoisy = true;
-    if (index < 0 || index >= _domainQueue.length) return;
-    _releaseExternal(reason: 'local_queue_item');
-    _wantPlaying = true;
-    try {
-      await _player.seek(Duration.zero, index: index);
-    } catch (e) {
-      DiagnosticsService.instance.logEvent('player_error', {'source': 'skip_to_queue_item'});
-      final item = _domainQueue[index];
-      _errorController.add('Unable to play "${item.title}": file missing or unsupported');
-      await _skipToNextLocalImpl(fromUser: false);
-      return;
-    }
-    _syncCurrentAudioServiceMediaItem();
-    _broadcastAudioServiceState();
-    _notifyDomainState();
-    _schedulePlayAfterSkips('skip_to_queue_item');
-  }
-
-  void _schedulePlayAfterSkips(String caller) {
-    _debounceSkipPlayTimer?.cancel();
-    if (_pendingSkips <= 0) {
-      if (_wantPlaying) {
-        _safeStartPlayerPlay(caller);
+    } else if (name == actionToggleFavorite) {
+      final id = _favoriteFor;
+      final toggle = onToggleFavorite;
+      if (id == null || toggle == null) return;
+      // Shown at once; the live flag confirms it.
+      _currentFavorite = !_currentFavorite;
+      _broadcastAudioServiceState();
+      DiagnosticsService.instance.logEvent('favorite_from_notification', {'id': id});
+      try {
+        await toggle(id);
+      } catch (_) {
+        _currentFavorite = !_currentFavorite;
+        _broadcastAudioServiceState();
       }
-    } else {
-      _debounceSkipPlayTimer = Timer(const Duration(milliseconds: 150), () {
-        if (_pendingSkips <= 0 && _wantPlaying) {
-          _safeStartPlayerPlay(caller);
-        }
-      });
     }
   }
+
+  // --- next / previous / queue item: coalesced presses ---------------------------
 
   @override
   Future<void> skipToNext() {
     final ext = _external;
     if (ext != null) return ext.externalSkipToNext();
-    return _skipToNextLocalImpl();
-  }
-
-  /// Next. [fromUser] is a press (app, notification, headset): on the last
-  /// track with repeat off it does nothing, as the disabled buttons show.
-  /// Otherwise (a track that cannot play) the queue stops there, paused at
-  /// its start.
-  ///
-  /// The neighbours come from the handler's own play order, not from the
-  /// player's `hasNext` / `seekToNext`: with repeat one the player loops the
-  /// current item, so those only restarted the same track.
-  Future<void> _skipToNextLocalImpl({bool fromUser = true}) {
-    _userInteractedSinceNoisy = true;
-    final wantedBefore = _wantPlaying;
-    _wantPlaying = true; // Match Spotify: skipping starts playing
-    _pendingSkips++;
-    final caller = _formatCaller();
-
-    return _synchronized(() async {
-      try {
-        if (_domainQueue.isEmpty) return;
-
-        final beforeIdx = _player.currentIndex ?? -1;
-        final beforeId = (beforeIdx >= 0 && beforeIdx < _domainQueue.length) ? _domainQueue[beforeIdx].id : null;
-        DiagnosticsService.instance.logEvent('skip_start', {
-          'action': 'skipToNext',
-          'caller': caller,
-          'beforeTrackId': beforeId,
-          'beforeQueuePosition': beforeIdx,
-        });
-
-        final lastIdx = _domainQueue.length - 1;
-        if (beforeIdx >= 0 && beforeIdx < lastIdx) {
-          await _player.seek(Duration.zero, index: beforeIdx + 1);
-        } else if (fromUser && _repeatMode == domain.PlaybackRepeatMode.off) {
-          // Disabled: the last track with repeat off has no next. A paused
-          // track stays paused.
-          _wantPlaying = wantedBefore;
-          DiagnosticsService.instance.logEvent('skip_ignored', {'action': 'skipToNext', 'reason': 'queue_end'});
-          return;
-        } else {
-          // At the end of queue
-          if (_repeatMode != domain.PlaybackRepeatMode.off) {
-            if (_shuffleEnabled && _domainQueue.length > 1) {
-              // Reshuffle at wrap: ensure the new cycle does not start with the track that just played
-              final lastPlayedItem = (beforeIdx >= 0 && beforeIdx < _domainQueue.length)
-                  ? _domainQueue[beforeIdx]
-                  : null;
-              final reshuffled = List<domain.MediaItem>.from(_originalQueue);
-              _fisherYatesShuffle(reshuffled);
-
-              // If the first item matches the last played item, swap with another item
-              if (lastPlayedItem != null && reshuffled.first.id == lastPlayedItem.id && reshuffled.length > 1) {
-                final temp = reshuffled[0];
-                reshuffled[0] = reshuffled[1];
-                reshuffled[1] = temp;
-              }
-
-              _playOrderQueue = reshuffled;
-              final audioSources = _playOrderQueue.map((item) {
-                return AudioSource.uri(_audioUri(item.uri), tag: item.id);
-              }).toList();
-              // ignore: deprecated_member_use
-              _playlistSource = ConcatenatingAudioSource(children: audioSources);
-              await _player.setAudioSource(
-                _playlistSource!,
-                initialIndex: 0,
-                initialPosition: Duration.zero,
-              );
-            } else {
-              // Wrap around to start of queue
-              await _player.seek(Duration.zero, index: 0);
-            }
-          } else {
-            // Repeat off -> stop at last track and show paused state at start of queue
-            _wantPlaying = false;
-            DiagnosticsService.instance.logEvent('queue_ended', {'action': 'paused_at_start'});
-            await _player.pause();
-            await _player.seek(Duration.zero, index: 0);
-          }
-        }
-
-        final afterIdx = _player.currentIndex ?? -1;
-        final afterId = (afterIdx >= 0 && afterIdx < _domainQueue.length) ? _domainQueue[afterIdx].id : null;
-        DiagnosticsService.instance.logEvent('skip_complete', {
-          'action': 'skipToNext',
-          'afterTrackId': afterId,
-          'afterQueuePosition': afterIdx,
-        });
-
-        _syncCurrentAudioServiceMediaItem();
-        _broadcastAudioServiceState();
-        _notifyDomainState();
-      } catch (e) {
-        DiagnosticsService.instance.logEvent('player_error', {'source': 'skipToNext'});
-        debugPrint('Error in skipToNext: $e');
-      } finally {
-        _pendingSkips = (_pendingSkips - 1).clamp(0, 9999);
-        _schedulePlayAfterSkips('skip_to_next');
-      }
-    }, 'skipToNext');
+    return _requestNext();
   }
 
   @override
   Future<void> skipToPrevious() {
     final ext = _external;
     if (ext != null) return ext.externalSkipToPrevious();
-    return _skipToPreviousLocalImpl();
+    return _requestPrevious();
   }
 
-  Future<void> _skipToPreviousLocalImpl() {
+  /// A track picked from the queue (the app's queue sheet, or a car / watch
+  /// queue view) plays, like a tapped song row. Local music takes the session
+  /// back from YouTube first, as every other local start does. With
+  /// [expectedId] (the queue sheet passes it) a row that moved since it was
+  /// drawn is found by its id; one that is gone is ignored.
+  @override
+  Future<void> skipToQueueItem(int index, {String? expectedId}) {
     _userInteractedSinceNoisy = true;
-    _wantPlaying = true; // Match Spotify: skipping starts playing
-    _pendingSkips++;
-    final caller = _formatCaller();
-
-    return _synchronized(() async {
-      try {
-        if (_domainQueue.isEmpty) return;
-
-        final beforeIdx = _player.currentIndex ?? -1;
-        final beforeId = (beforeIdx >= 0 && beforeIdx < _domainQueue.length) ? _domainQueue[beforeIdx].id : null;
-        DiagnosticsService.instance.logEvent('skip_start', {
-          'action': 'skipToPrevious',
-          'caller': caller,
-          'beforeTrackId': beforeId,
-          'beforeQueuePosition': beforeIdx,
-        });
-
-        // Past the first seconds Previous restarts the track (DESIGN.md
-        // 7.17); before that it goes to the previous item. As with Next, the
-        // neighbour comes from the play order: under repeat one the player's
-        // own seekToPrevious only restarted the current track.
-        if (_player.position > restartThreshold) {
-          await _seekLocalImpl(Duration.zero);
-          return;
-        }
-
-        final lastIdx = _domainQueue.length - 1;
-        if (beforeIdx > 0 && beforeIdx <= lastIdx) {
-          await _player.seek(Duration.zero, index: beforeIdx - 1);
-        } else if (_repeatMode != domain.PlaybackRepeatMode.off && lastIdx > 0) {
-          // At the start of the queue with repeat on: round to the last item.
-          await _player.seek(Duration.zero, index: lastIdx);
-        } else {
-          // At the start with repeat off: the first track starts again.
-          await _seekLocalImpl(Duration.zero);
-        }
-
-        final afterIdx = _player.currentIndex ?? -1;
-        final afterId = (afterIdx >= 0 && afterIdx < _domainQueue.length) ? _domainQueue[afterIdx].id : null;
-        DiagnosticsService.instance.logEvent('skip_complete', {
-          'action': 'skipToPrevious',
-          'afterTrackId': afterId,
-          'afterQueuePosition': afterIdx,
-        });
-
-        _syncCurrentAudioServiceMediaItem();
-        _broadcastAudioServiceState();
-        _notifyDomainState();
-      } catch (e) {
-        DiagnosticsService.instance.logEvent('player_error', {'source': 'skipToPrevious'});
-        debugPrint('Error in skipToPrevious: $e');
-      } finally {
-        _pendingSkips = (_pendingSkips - 1).clamp(0, 9999);
-        _schedulePlayAfterSkips('skip_to_previous');
+    if (_pendingLoads > 0) return _afterPendingLoad(() => skipToQueueItem(index, expectedId: expectedId));
+    final q = _virtualQueue;
+    var target = index;
+    if (expectedId != null && (target < 0 || target >= q.length || q[target].id != expectedId)) {
+      target = _nearestIndexOf(q, expectedId, index);
+      if (target < 0) {
+        DiagnosticsService.instance.logEvent('skip_ignored', {'action': 'skipToQueueItem', 'reason': 'id_gone'});
+        return Future.value();
       }
-    }, 'skipToPrevious');
+    }
+    if (target < 0 || target >= q.length) return Future.value();
+    _releaseExternal(reason: 'local_queue_item');
+    return _requestSkip(target, action: 'skipToQueueItem');
   }
 
-  void _handlePlaybackCompleted() async {
+  /// The occurrence of [id] in [list] closest to [hint], or -1.
+  static int _nearestIndexOf(List<domain.MediaItem> list, String id, int hint) {
+    var best = -1;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id != id) continue;
+      if (best < 0 || (i - hint).abs() < (best - hint).abs()) best = i;
+    }
+    return best;
+  }
+
+  /// Next, from where the pending presses are heading. The neighbours come
+  /// from the handler's own play order, not from the player's `hasNext` /
+  /// `seekToNext`: with repeat one the player loops the current item, so
+  /// those only restarted the same track.
+  Future<void> _requestNext() {
+    _userInteractedSinceNoisy = true;
+    if (_pendingLoads > 0) return _afterPendingLoad(_requestNext);
+    final q = _virtualQueue;
+    if (q.isEmpty) return _batch?.future ?? Future.value();
+    final from = _virtualIndex;
+    final last = q.length - 1;
+    if (from >= 0 && from < last) {
+      return _requestSkip(from + 1, action: 'skipToNext');
+    }
+    if (_repeatMode == domain.PlaybackRepeatMode.off) {
+      // Disabled: the last track with repeat off has no next. Nothing
+      // changes, not even the play intent: a paused track stays paused.
+      DiagnosticsService.instance.logEvent('skip_ignored', {'action': 'skipToNext', 'reason': 'queue_end'});
+      return _batch?.future ?? Future.value();
+    }
+    if (_shuffleEnabled && _originalQueue.length > 1) {
+      // Reshuffle at wrap: the new round does not start with the track that just played.
+      final lastPlayed = (from >= 0 && from < q.length) ? q[from] : null;
+      return _requestSkip(0, order: _reshuffled(avoidFirst: lastPlayed), action: 'skipToNext');
+    }
+    return _requestSkip(0, action: 'skipToNext');
+  }
+
+  List<domain.MediaItem> _reshuffled({domain.MediaItem? avoidFirst}) {
+    final reshuffled = List<domain.MediaItem>.from(_originalQueue);
+    _fisherYatesShuffle(reshuffled);
+    if (avoidFirst != null && reshuffled.length > 1 && reshuffled.first.id == avoidFirst.id) {
+      final temp = reshuffled[0];
+      reshuffled[0] = reshuffled[1];
+      reshuffled[1] = temp;
+    }
+    return reshuffled;
+  }
+
+  /// Previous: past the first seconds it restarts the track (DESIGN.md 7.17),
+  /// judged by the position at the first press of a run of presses; the
+  /// presses after it go back one track each.
+  Future<void> _requestPrevious() {
+    _userInteractedSinceNoisy = true;
+    if (_pendingLoads > 0) return _afterPendingLoad(_requestPrevious);
+    final q = _virtualQueue;
+    if (q.isEmpty) return _batch?.future ?? Future.value();
+    final from = _virtualIndex;
+    final settling = _skipTarget != null || _anchorIndex != null;
+    final position = settling ? Duration.zero : _player.position;
+    final last = q.length - 1;
+    final int target;
+    if (position > restartThreshold && from >= 0 && from <= last) {
+      target = from; // restart
+    } else if (from > 0 && from <= last) {
+      target = from - 1;
+    } else if (_repeatMode != domain.PlaybackRepeatMode.off && last > 0) {
+      // At the start of the queue with repeat on: round to the last item.
+      target = last;
+    } else {
+      // At the start with repeat off: the first track starts again.
+      target = (from >= 0 && from <= last) ? from : 0;
+    }
+    return _requestSkip(target, action: 'skipToPrevious');
+  }
+
+  /// Records a press heading for [target] (in [_virtualQueue], or in [order]
+  /// when given) and shows it at once; the serialized action seeks once to
+  /// the newest target. Skipping starts playing (Spotify).
+  Future<void> _requestSkip(int target, {List<domain.MediaItem>? order, required String action}) {
+    _wantPlaying = true;
+    final firstPress = _skipTarget == null;
+    if (firstPress) {
+      DiagnosticsService.instance.logEvent('skip_start', {
+        'action': action,
+        'caller': _formatCaller(),
+        'beforeTrackId': _virtualCurrentItem?.id,
+        'beforeQueuePosition': _virtualIndex,
+      });
+    }
+    if (order != null) _pendingOrder = order;
+    _skipTarget = target;
+    _batchPresses++;
+    final batch = _batch ??= Completer<void>();
+    final generation = ++_skipGeneration;
+
+    // The target shows everywhere right away.
+    if (order != null) _syncAudioServiceQueue();
+    _syncCurrentAudioServiceMediaItem();
+    _broadcastAudioServiceState();
+    _notifyDomainState();
+
+    _synchronized(() async {
+      if (generation != _skipGeneration) return; // a newer press or a queue edit took over
+      await _applyPendingSkip();
+    }, action).catchError((Object e) {
+      debugPrint('[MusicAudioHandler] $action failed: $e');
+    });
+    return batch.future;
+  }
+
+  /// Drops presses that meant a queue which is being replaced.
+  void _dropPendingSkip() {
+    _skipGeneration++;
+    _skipTarget = null;
+    _pendingOrder = null;
+    _batchPresses = 0;
+    final batch = _batch;
+    _batch = null;
+    if (batch != null && !batch.isCompleted) batch.complete();
+  }
+
+  /// Applies the pending presses: one seek (or, past the end with shuffle, one
+  /// reload in the new order), then play if wanted. Runs inside the chain.
+  Future<void> _applyPendingSkip() async {
+    final target = _skipTarget;
+    if (target == null) return;
+    final order = _pendingOrder;
+    final batch = _batch;
+    final presses = _batchPresses;
+    _skipTarget = null;
+    _pendingOrder = null;
+    _batch = null;
+    _batchPresses = 0;
+    _anchor(target);
+    // A newer press or a queue load from here on takes over: this one stops
+    // waiting and leaves the seek (and the play) to it.
+    final generation = _skipGeneration;
+    var failed = false;
+    try {
+      if (order != null) {
+        _playOrderQueue = order;
+        _syncAudioServiceQueue(); // F7: the session queue follows the new order
+        // The new order must reach the player even when a newer press came
+        // in (its target is in that order); only a queue load replaces it.
+        await _waitWhileLoading();
+        if (!_superseded()) await _loadSource(index: target);
+      } else if (target == (_player.currentIndex ?? -1)) {
+        // Previous within the first seconds of a track, or presses that
+        // came back to where they started: the track restarts.
+        await _waitWhileLoading(generation);
+        if (!_superseded(generation)) {
+          _noteOwnSeek(Duration.zero);
+          await _player.seek(Duration.zero);
+          _noteOwnSeek(Duration.zero);
+        }
+      } else {
+        await _seekToIndex(target, generation);
+      }
+    } catch (e) {
+      failed = true;
+      DiagnosticsService.instance.logEvent('player_error', {'source': 'skip'});
+      debugPrint('Error while skipping: $e');
+    } finally {
+      _anchorIndex = null;
+    }
+
+    final afterIdx = _player.currentIndex ?? -1;
+    DiagnosticsService.instance.logEvent('skip_complete', {
+      'afterTrackId': (afterIdx >= 0 && afterIdx < _domainQueue.length) ? _domainQueue[afterIdx].id : null,
+      'afterQueuePosition': afterIdx,
+      'presses': presses,
+    });
+
+    _syncCurrentAudioServiceMediaItem();
+    _broadcastAudioServiceState();
+    _notifyDomainState();
+
+    if (failed && target >= 0 && target < _domainQueue.length) {
+      _errorController.add('Unable to play "${_domainQueue[target].title}": file missing or unsupported');
+      _scheduleAutoNext('skip_failed');
+    } else if (_skipTarget == null && _wantPlaying && !_superseded()) {
+      // Only once the presses have settled (a newer one plays when it lands).
+      _safeStartPlayerPlay('skip');
+    }
+    if (batch != null && !batch.isCompleted) batch.complete();
+  }
+
+  /// Moves on by itself (an unplayable track, a failed skip).
+  void _scheduleAutoNext(String reason) {
+    _synchronized(() => _autoNext(reason), reason).catchError((Object e) {
+      debugPrint('[MusicAudioHandler] $reason failed: $e');
+    });
+  }
+
+  /// Next without a press: the queue stops paused at its start after the last
+  /// track with repeat off. A press waiting in the meantime wins.
+  Future<void> _autoNext(String reason) async {
+    if (_skipTarget != null) {
+      await _applyPendingSkip();
+      return;
+    }
+    final q = _playOrderQueue;
+    if (q.isEmpty) return;
     final idx = _player.currentIndex ?? -1;
-    if (_repeatMode == domain.PlaybackRepeatMode.one) {
-      await _seekLocalImpl(Duration.zero);
+    final last = q.length - 1;
+    try {
+      if (idx >= 0 && idx < last) {
+        _wantPlaying = true;
+        _anchor(idx + 1);
+        await _seekToIndex(idx + 1);
+      } else if (_repeatMode != domain.PlaybackRepeatMode.off) {
+        _wantPlaying = true;
+        _anchor(0);
+        if (_shuffleEnabled && _originalQueue.length > 1) {
+          _playOrderQueue = _reshuffled(avoidFirst: (idx >= 0 && idx <= last) ? q[idx] : null);
+          _syncAudioServiceQueue();
+          await _loadSource(index: 0);
+        } else {
+          await _seekToIndex(0);
+        }
+      } else {
+        // Repeat off -> stop at last track and show paused state at start of queue
+        _wantPlaying = false;
+        DiagnosticsService.instance.logEvent('queue_ended', {'action': 'paused_at_start', 'reason': reason});
+        _lastRequestedIndex = 0;
+        await _player.pause();
+        await _waitWhileLoading();
+        await _player.seek(Duration.zero, index: 0);
+      }
+    } catch (e) {
+      DiagnosticsService.instance.logEvent('player_error', {'source': reason});
+      debugPrint('Error in $reason: $e');
+    } finally {
+      _anchorIndex = null;
+    }
+    _syncCurrentAudioServiceMediaItem();
+    _broadcastAudioServiceState();
+    _notifyDomainState();
+    if (_wantPlaying) _safeStartPlayerPlay(reason);
+  }
+
+  Future<void> _handlePlaybackCompleted() async {
+    if (_skipTarget != null) {
+      // The user already moved on.
+      await _applyPendingSkip();
+      return;
+    }
+    final sleepNow = _sleepEndOfTrack;
+    if (sleepNow) _onNaturalTrackEnd();
+    final idx = _player.currentIndex ?? -1;
+    if (_repeatMode == domain.PlaybackRepeatMode.one && !sleepNow) {
+      await _waitWhileLoading();
+      await _player.seek(Duration.zero);
       _wantPlaying = true;
       _safeStartPlayerPlay('repeat_one_completed');
     } else if (idx >= 0 && idx < _domainQueue.length - 1) {
-      await _skipToNextLocalImpl(fromUser: false);
-    } else if (_repeatMode == domain.PlaybackRepeatMode.all) {
-      await _player.seek(Duration.zero, index: 0);
+      _anchor(idx + 1);
+      try {
+        await _seekToIndex(idx + 1);
+      } finally {
+        _anchorIndex = null;
+      }
+      if (!sleepNow) {
+        _wantPlaying = true;
+        _safeStartPlayerPlay('completed_next');
+      }
+      _syncCurrentAudioServiceMediaItem();
+      _broadcastAudioServiceState();
+      _notifyDomainState();
+    } else if (_repeatMode == domain.PlaybackRepeatMode.all && !sleepNow) {
+      _lastRequestedIndex = 0;
+      await _seekToIndex(0);
       _wantPlaying = true;
       _safeStartPlayerPlay('repeat_all_restart');
+      _syncCurrentAudioServiceMediaItem();
+      _broadcastAudioServiceState();
+      _notifyDomainState();
     } else {
       // Repeat off -> show paused state at start of queue, not silent stop
       _wantPlaying = false;
       DiagnosticsService.instance.logEvent('queue_ended', {'action': 'completed_paused_at_start'});
+      _lastRequestedIndex = 0;
       await _player.pause();
+      await _waitWhileLoading();
       await _player.seek(Duration.zero, index: 0);
+      _syncCurrentAudioServiceMediaItem();
       _broadcastAudioServiceState();
       _notifyDomainState();
     }
   }
 
-  // Queue mutations
-  Future<void> playNext(domain.MediaItem item) {
+  // --- queue edits ------------------------------------------------------------------
+  // Each runs in the chain and first applies a pending skip: the indexes the
+  // UI hands in refer to the queue it showed, which includes those presses.
+
+  Future<void> playNext(domain.MediaItem item) => playNextAll([item]);
+
+  /// [items] play right after the current song, in this order.
+  Future<void> playNextAll(List<domain.MediaItem> items) {
     _userInteractedSinceNoisy = true;
-    if (_domainQueue.isEmpty) {
-      return loadQueue([item]);
-    }
+    if (items.isEmpty) return Future.value();
     return _synchronized(() async {
+      await _applyPendingSkip();
+      if (_domainQueue.isEmpty) {
+        await _loadQueueImpl(items);
+        return;
+      }
       final currIdx = _player.currentIndex ?? 0;
-      int insertIndex = currIdx + 1;
-      _playOrderQueue.insert(insertIndex, item);
+      final insertIndex = currIdx + 1;
+      _playOrderQueue.insertAll(insertIndex, items);
       // Keep the original (un-shuffled) order in step, duplicates included.
       final currentItem = currIdx < _playOrderQueue.length ? _playOrderQueue[currIdx] : null;
       final origIdx = currentItem == null ? -1 : _originalQueue.indexWhere((m) => m.id == currentItem.id);
       if (origIdx >= 0) {
-        _originalQueue.insert(origIdx + 1, item);
+        _originalQueue.insertAll(origIdx + 1, items);
       } else {
-        _originalQueue.add(item);
+        _originalQueue.addAll(items);
       }
-      final source = AudioSource.uri(_audioUri(item.uri), tag: item.id);
       if (_playlistSource != null) {
-        await _playlistSource!.insert(insertIndex, source);
+        await _playlistSource!.insertAll(insertIndex, items.map(_sourceFor).toList());
       } else {
-        final audioSources = _domainQueue.map((m) => AudioSource.uri(_audioUri(m.uri), tag: m.id)).toList();
-        // ignore: deprecated_member_use
-        _playlistSource = ConcatenatingAudioSource(children: audioSources);
-        await _player.setAudioSource(_playlistSource!, initialIndex: currIdx, initialPosition: _player.position);
+        await _loadSource(index: currIdx, position: _player.position);
       }
 
       _syncAudioServiceQueue();
@@ -1498,23 +2251,25 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     }, 'playNext');
   }
 
-  Future<void> addToQueue(domain.MediaItem item) {
+  Future<void> addToQueue(domain.MediaItem item) => addAllToQueue([item]);
+
+  /// [items] go to the end of the queue.
+  Future<void> addAllToQueue(List<domain.MediaItem> items) {
     _userInteractedSinceNoisy = true;
-    if (_domainQueue.isEmpty) {
-      return loadQueue([item]);
-    }
+    if (items.isEmpty) return Future.value();
     return _synchronized(() async {
+      await _applyPendingSkip();
+      if (_domainQueue.isEmpty) {
+        await _loadQueueImpl(items);
+        return;
+      }
       final currIdx = _player.currentIndex ?? 0;
-      _playOrderQueue.add(item);
-      _originalQueue.add(item);
-      final source = AudioSource.uri(_audioUri(item.uri), tag: item.id);
+      _playOrderQueue.addAll(items);
+      _originalQueue.addAll(items);
       if (_playlistSource != null) {
-        await _playlistSource!.add(source);
+        await _playlistSource!.addAll(items.map(_sourceFor).toList());
       } else {
-        final audioSources = _domainQueue.map((m) => AudioSource.uri(_audioUri(m.uri), tag: m.id)).toList();
-        // ignore: deprecated_member_use
-        _playlistSource = ConcatenatingAudioSource(children: audioSources);
-        await _player.setAudioSource(_playlistSource!, initialIndex: currIdx, initialPosition: _player.position);
+        await _loadSource(index: currIdx, position: _player.position);
       }
 
       _syncAudioServiceQueue();
@@ -1524,87 +2279,119 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   }
 
   @override
-  Future<void> removeQueueItemAt(int index) {
+  Future<void> removeQueueItemAt(int index, {String? expectedId}) {
     _userInteractedSinceNoisy = true;
-    if (index < 0 || index >= _domainQueue.length) return Future.value();
+    if (expectedId == null && (index < 0 || index >= _virtualQueue.length)) return Future.value();
 
     return _synchronized(() async {
-      final currIdx = _player.currentIndex ?? 0;
-      final isRemovingCurrent = (index == currIdx);
-      final removedItem = _playOrderQueue.removeAt(index);
-      if (!_shuffleEnabled && index < _originalQueue.length && _originalQueue[index].id == removedItem.id) {
-        _originalQueue.removeAt(index); // both lists are index-aligned when not shuffled
-      } else {
-        _removeFirstById(_originalQueue, removedItem.id);
+      await _applyPendingSkip();
+      var at = index;
+      if (expectedId != null && (at < 0 || at >= _domainQueue.length || _domainQueue[at].id != expectedId)) {
+        at = _nearestIndexOf(_domainQueue, expectedId, index);
       }
+      if (at < 0 || at >= _domainQueue.length) return;
+      await _removeAtImpl(at);
+    }, 'removeQueueItemAt');
+  }
 
-      if (_domainQueue.isEmpty) {
-        await _player.stop();
-        _playlistSource = null;
-        if (_external == null) mediaItem.add(null);
-      } else {
+  /// Takes every copy of [mediaId] out of the queue (a deleted file). When it
+  /// is the current song, the next one takes its place. No-op when absent.
+  Future<void> removeFromQueueById(String mediaId) {
+    return _synchronized(() async {
+      await _applyPendingSkip();
+      for (var i = _domainQueue.length - 1; i >= 0; i--) {
+        if (_domainQueue[i].id == mediaId) await _removeAtImpl(i);
+      }
+    }, 'removeFromQueueById');
+  }
+
+  Future<void> _removeAtImpl(int index) async {
+    final currIdx = _player.currentIndex ?? 0;
+    final isRemovingCurrent = (index == currIdx);
+    final removedItem = _playOrderQueue.removeAt(index);
+    if (!_shuffleEnabled && index < _originalQueue.length && _originalQueue[index].id == removedItem.id) {
+      _originalQueue.removeAt(index); // both lists are index-aligned when not shuffled
+    } else {
+      _removeFirstById(_originalQueue, removedItem.id);
+    }
+
+    if (_domainQueue.isEmpty) {
+      await _player.stop();
+      _playlistSource = null;
+      if (_external == null) _emitMediaItem(null);
+    } else {
+      int newIdx = currIdx;
+      if (index < currIdx) {
+        newIdx = currIdx - 1;
+      } else if (isRemovingCurrent && newIdx >= _domainQueue.length) {
+        newIdx = _domainQueue.length - 1;
+      }
+      _anchor(newIdx);
+      try {
         if (_playlistSource != null && _playlistSource!.length > index) {
           await _playlistSource!.removeAt(index);
           if (isRemovingCurrent) {
             // When removing current item, reload next track from Duration.zero
+            await _waitWhileLoading();
             await _player.seek(Duration.zero);
           }
         } else {
-          int newIdx = currIdx;
-          if (index < currIdx) {
-            newIdx = currIdx - 1;
-          } else if (index == currIdx && newIdx >= _domainQueue.length) {
-            newIdx = _domainQueue.length - 1;
-          }
-          final audioSources = _domainQueue.map((m) => AudioSource.uri(_audioUri(m.uri), tag: m.id)).toList();
-          // ignore: deprecated_member_use
-          _playlistSource = ConcatenatingAudioSource(children: audioSources);
-          await _player.setAudioSource(
-            _playlistSource!,
-            initialIndex: newIdx,
-            initialPosition: isRemovingCurrent ? Duration.zero : _player.position,
+          await _loadSource(
+            index: newIdx,
+            position: isRemovingCurrent ? Duration.zero : _player.position,
           );
         }
+      } finally {
+        _anchorIndex = null;
       }
+    }
 
-      _syncAudioServiceQueue();
-      _broadcastAudioServiceState();
-      _notifyDomainState();
-    }, 'removeQueueItemAt');
+    _syncAudioServiceQueue();
+    _syncCurrentAudioServiceMediaItem();
+    _broadcastAudioServiceState();
+    _notifyDomainState();
   }
 
-  Future<void> reorderQueue(int oldIndex, int newIndex) {
+  Future<void> reorderQueue(int oldIndex, int newIndex, {String? expectedId}) {
     _userInteractedSinceNoisy = true;
-    if (oldIndex < 0 || oldIndex >= _domainQueue.length || newIndex < 0 || newIndex >= _domainQueue.length) {
+    final length = _virtualQueue.length;
+    if (expectedId == null && (oldIndex < 0 || oldIndex >= length || newIndex < 0 || newIndex >= length)) {
       return Future.value();
     }
 
     return _synchronized(() async {
-      final item = _playOrderQueue.removeAt(oldIndex);
+      await _applyPendingSkip();
+      var from = oldIndex;
+      if (expectedId != null && (from < 0 || from >= _domainQueue.length || _domainQueue[from].id != expectedId)) {
+        from = _nearestIndexOf(_domainQueue, expectedId, oldIndex);
+      }
+      if (from < 0 || from >= _domainQueue.length || newIndex < 0 || newIndex >= _domainQueue.length) return;
+      final item = _playOrderQueue.removeAt(from);
       _playOrderQueue.insert(newIndex, item);
 
       if (!_shuffleEnabled) {
-        final origItem = _originalQueue.removeAt(oldIndex);
+        final origItem = _originalQueue.removeAt(from);
         _originalQueue.insert(newIndex, origItem);
       }
 
-      if (_playlistSource != null && _playlistSource!.length > oldIndex) {
-        await _playlistSource!.move(oldIndex, newIndex);
-      } else {
-        final currIdx = _player.currentIndex ?? 0;
-        int updatedIdx = currIdx;
-        if (currIdx == oldIndex) {
-          updatedIdx = newIndex;
-        } else if (currIdx > oldIndex && currIdx <= newIndex) {
-          updatedIdx = currIdx - 1;
-        } else if (currIdx < oldIndex && currIdx >= newIndex) {
-          updatedIdx = currIdx + 1;
+      final currIdx = _player.currentIndex ?? 0;
+      int updatedIdx = currIdx;
+      if (currIdx == from) {
+        updatedIdx = newIndex;
+      } else if (currIdx > from && currIdx <= newIndex) {
+        updatedIdx = currIdx - 1;
+      } else if (currIdx < from && currIdx >= newIndex) {
+        updatedIdx = currIdx + 1;
+      }
+      _anchor(updatedIdx);
+      try {
+        if (_playlistSource != null && _playlistSource!.length > from) {
+          await _playlistSource!.move(from, newIndex);
+        } else {
+          await _loadSource(index: updatedIdx, position: _player.position);
         }
-
-        final audioSources = _domainQueue.map((m) => AudioSource.uri(_audioUri(m.uri), tag: m.id)).toList();
-        // ignore: deprecated_member_use
-        _playlistSource = ConcatenatingAudioSource(children: audioSources);
-        await _player.setAudioSource(_playlistSource!, initialIndex: updatedIdx, initialPosition: _player.position);
+      } finally {
+        _anchorIndex = null;
       }
 
       _syncAudioServiceQueue();
@@ -1617,10 +2404,17 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     DiagnosticsService.instance.logEvent('service_stop');
     _external = null;
     _mediaButtonTimer?.cancel();
-    _debounceSkipPlayTimer?.cancel();
+    _idleStopTimer?.cancel();
+    _sleepTimer?.cancel();
+    _fadeTimer?.cancel();
+    _favoriteSub?.cancel();
+    _releaseLoadingWaiters();
+    final batch = _batch;
+    if (batch != null && !batch.isCompleted) batch.complete();
     await _player.dispose();
     await _errorController.close();
     await _domainStateController.close();
     await _externalController.close();
+    await _sleepController.close();
   }
 }

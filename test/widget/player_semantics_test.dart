@@ -32,6 +32,15 @@ class _FakePlayback extends PlaybackNotifier {
 
   @override
   Future<void> skipToQueueItem(int index) async => skippedTo.add(index);
+
+  // The queue sheet names the row's song too (F6).
+  final List<String> skippedToIds = [];
+
+  @override
+  Future<void> skipToQueueEntry(int index, String expectedId) async {
+    skippedTo.add(index);
+    skippedToIds.add(expectedId);
+  }
 }
 
 /// Records swipe-to-remove from the queue.
@@ -42,6 +51,14 @@ class _RemovingPlayback extends _FakePlayback {
 
   @override
   Future<void> removeQueueItemAt(int index) async => removed.add(index);
+
+  final List<String> removedIds = [];
+
+  @override
+  Future<void> removeQueueEntry(int index, String expectedId) async {
+    removed.add(index);
+    removedIds.add(expectedId);
+  }
 }
 
 const _channel = MethodChannel('mediahub/media_store');
@@ -146,24 +163,24 @@ void main() {
       final handle = tester.ensureSemantics();
       await pumpRows(tester, [MediaSongRow(item: _song(1, title: _fileTitle))]);
 
-      final heart = find.semantics.byLabel('Add to favorites');
+      final heart = find.semantics.byLabel('Add to Liked songs');
       expect(heart, findsOne);
       expect(heart, isSemantics(isButton: true, hasTapAction: true));
       expect(_data(heart).tooltip, isEmpty, reason: 'VoiceOver would read the label and the tooltip');
-      expect(find.semantics.byPredicate((n) => n.tooltip == 'Add to favorites'), findsNothing);
+      expect(find.semantics.byPredicate((n) => n.tooltip == 'Add to Liked songs'), findsNothing);
 
       final more = find.semantics.byPredicate((n) => n.tooltip == 'More actions');
       expect(more, findsOne);
       expect(more, isSemantics(isButton: true, hasTapAction: true));
 
       expect(
-        find.semantics.byPredicate((n) => n.label.contains(_fileTitle) && n.label.contains('Add to favorites')),
+        find.semantics.byPredicate((n) => n.label.contains(_fileTitle) && n.label.contains('Add to Liked songs')),
         findsNothing,
       );
       // The tooltip still shows to sighted users on a long press.
       await tester.longPress(find.byType(FavoriteFeedbackButton));
       await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text('Add to favorites'), findsOneWidget);
+      expect(find.text('Add to Liked songs'), findsOneWidget);
       await tester.pumpAndSettle(const Duration(seconds: 2));
       handle.dispose();
     });
@@ -326,7 +343,7 @@ void main() {
       final handle = tester.ensureSemantics();
       await pumpMini(tester, _song(1, title: _fileTitle, artist: null));
 
-      final card = find.semantics.byLabel('Mini player: $_fileTitle by Unknown Artist');
+      final card = find.semantics.byLabel('Mini player: $_fileTitle by Unknown artist');
       expect(card, findsOne);
       expect(card, isSemantics(hint: 'Opens Now Playing', isButton: true, hasTapAction: true));
       final data = _data(card);
@@ -396,7 +413,7 @@ void main() {
       await pumpSheet(tester, queue);
 
       expect(
-        find.semantics.byPredicate((n) => n.label.contains(_fileTitle) && n.label.contains('Add to favorites')),
+        find.semantics.byPredicate((n) => n.label.contains(_fileTitle) && n.label.contains('Add to Liked songs')),
         findsNothing,
       );
       expect(
@@ -412,8 +429,8 @@ void main() {
       expect(find.semantics.byLabel('Now Playing\n1 of 3'), isSemantics(isHeader: true));
       final track = _labelled(_fileTitle);
       expect(track, findsOne);
-      expect(_data(track).label, '$_fileTitle\nUnknown Artist');
-      expect(_labelled('Unknown Artist'), findsOne);
+      expect(_data(track).label, '$_fileTitle\nUnknown artist');
+      expect(_labelled('Unknown artist'), findsOne);
       handle.dispose();
     });
 
@@ -421,7 +438,7 @@ void main() {
       final handle = tester.ensureSemantics();
       await pumpSheet(tester, [_song(1, title: _fileTitle), _song(2), _song(3)]);
 
-      final heart = find.semantics.byLabel('Add to favorites');
+      final heart = find.semantics.byLabel('Add to Liked songs');
       expect(heart, findsOne);
       expect(heart, isSemantics(isButton: true, hasTapAction: true));
       expect(_data(heart).tooltip, isEmpty);
@@ -498,7 +515,7 @@ void main() {
       final queue = [_song(1, title: _fileTitle, artist: null), _song(2), _song(3)];
       await pumpQueue(tester, queue);
 
-      final current = find.semantics.byLabel('Song: $_fileTitle by Unknown Artist');
+      final current = find.semantics.byLabel('Song: $_fileTitle by Unknown artist');
       expect(current, findsOne);
       expect(current, isSemantics(isButton: true, isSelected: true, hasTapAction: true));
       expect(_labelled(_fileTitle), findsOne);
@@ -527,6 +544,7 @@ void main() {
       tester.semantics.tap(find.semantics.byLabel('Song: Song 3 by Test Artist'));
       await tester.pump();
       expect(playback.skippedTo, [2]);
+      expect(playback.skippedToIds, ['song_3'], reason: 'the row names its song (F6)');
       handle.dispose();
     });
 
@@ -587,6 +605,7 @@ void main() {
       await tester.drag(find.text('Song 2'), const Offset(-500, 0));
       await tester.pumpAndSettle();
       expect(playback.removed, [1]);
+      expect(playback.removedIds, ['song_2']);
     });
   });
 }

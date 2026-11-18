@@ -102,3 +102,43 @@ class PlaybackState {
       );
 }
 
+/// The sleep timer (docs/DESIGN.md 7.8): off, a countdown to [endsAt], or
+/// "end of song". [remaining] is the time left when this status was taken;
+/// [fading] while the volume goes down before the pause.
+@immutable
+class SleepTimerStatus {
+  final DateTime? endsAt;
+  final Duration? remaining;
+  final bool endOfTrack;
+  final bool fading;
+
+  const SleepTimerStatus({this.endsAt, this.remaining, this.endOfTrack = false, this.fading = false});
+
+  /// No timer.
+  static const SleepTimerStatus off = SleepTimerStatus();
+
+  /// The presets the sleep timer sheet offers, besides "end of song".
+  static const List<Duration> presets = [
+    Duration(minutes: 5),
+    Duration(minutes: 15),
+    Duration(minutes: 30),
+    Duration(minutes: 45),
+    Duration(minutes: 60),
+  ];
+
+  bool get isActive => endsAt != null || endOfTrack || fading;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SleepTimerStatus &&
+      other.endsAt == endsAt &&
+      other.remaining == remaining &&
+      other.endOfTrack == endOfTrack &&
+      other.fading == fading;
+
+  @override
+  int get hashCode => Object.hash(endsAt, remaining, endOfTrack, fading);
+
+  @override
+  String toString() => 'SleepTimerStatus(endsAt: $endsAt, remaining: $remaining, endOfTrack: $endOfTrack, fading: $fading)';
+}

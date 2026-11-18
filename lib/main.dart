@@ -9,6 +9,7 @@ import 'core/storage/settings_store.dart';
 import 'core/logging/diagnostics_service.dart';
 import 'data/database/app_database.dart';
 import 'data/repositories/library_repository_impl.dart';
+import 'data/repositories/playback_repository_impl.dart';
 import 'features/downloads/downloads_notifier.dart';
 import 'features/music_player/music_audio_handler.dart';
 import 'features/music_player/playback_notifier.dart';
@@ -55,11 +56,25 @@ Future<void> _bootstrap() async {
 
   final db = AppDatabase();
   final libraryRepo = LibraryRepositoryImpl(db);
+  final playbackRepo = PlaybackRepositoryImpl(db);
 
   final audioHandler = await AudioService.init(
     builder: () => MusicAudioHandler(
       onRecordPlay: (id) => libraryRepo.recordPlay(id),
       onDurationKnown: (id, ms) => libraryRepo.updateDurationIfUnknown(id, ms),
+      // The notification's heart (Like), live from the database like the
+      // app's own heart.
+      onToggleFavorite: (id) => libraryRepo.toggleFavorite(id),
+      watchFavorite: (id) => (db.select(db.mediaItemsTable)..where((t) => t.id.equals(id)))
+          .watchSingleOrNull()
+          .map((row) => row?.isFavorite ?? false),
+      // Media resumption (the quick-settings player after the app was
+      // closed): the last saved session, without online items.
+      loadLastSession: () async {
+        final saved = await playbackRepo.loadLastPlaybackState();
+        if (saved == null) return null;
+        return PlaybackNotifier.alignIndexWithCurrentItem(PlaybackNotifier.withoutOnlineItems(saved));
+      },
     ),
     // The same session carries local music and, while it plays, the Online
     // tab's YouTube video (MusicAudioHandler.setExternalSource). audio_service
@@ -67,12 +82,16 @@ Future<void> _bootstrap() async {
     // the broadcast state turns to playing, whichever source it comes from, so
     // YouTube audio keeps the process alive with the screen off. It stays in
     // the foreground while paused (androidStopForegroundOnPause: false) and
-    // stops once the state goes idle.
+    // stops once the state goes idle: after 30 minutes of pause the handler
+    // ends the session itself (MusicAudioHandler.defaultPausedIdleTimeout).
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.mediahub.app.audio',
       androidNotificationChannelName: 'MediaHub Playback',
       androidNotificationOngoing: false,
       androidStopForegroundOnPause: false,
+      // A white-on-transparent status bar glyph (the launcher icon shows as a
+      // grey square there).
+      androidNotificationIcon: 'drawable/ic_stat_mediahub',
     ),
   );
 

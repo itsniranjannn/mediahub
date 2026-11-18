@@ -70,14 +70,14 @@ void main() {
       await tester.pumpAndSettle();
 
       // Semantic label initial: "Add to favorites"
-      expect(find.bySemanticsLabel('Add to favorites'), findsOneWidget);
+      expect(find.bySemanticsLabel('Add to Liked songs'), findsOneWidget);
 
       // Tap favorite button
-      await tester.tap(find.bySemanticsLabel('Add to favorites'));
+      await tester.tap(find.bySemanticsLabel('Add to Liked songs'));
       await tester.pump(); // Start animation & trigger toggle
 
       // Verify floating snackbar
-      expect(find.text('Added to Favorites'), findsOneWidget);
+      expect(find.text('Added to Liked songs'), findsOneWidget);
       expect(find.text('Undo'), findsOneWidget);
 
       final snackBarFinder = find.byType(SnackBar);
@@ -126,13 +126,13 @@ void main() {
         ),
       );
       await settleFavorite(tester);
-      expect(find.bySemanticsLabel('Add to favorites'), findsOneWidget);
+      expect(find.bySemanticsLabel('Add to Liked songs'), findsOneWidget);
 
       // The song becomes a favorite somewhere else (context menu, another screen ...)
       await tester.runAsync(() => repo.toggleFavorite('test_song_1'));
       await settleFavorite(tester);
 
-      expect(find.bySemanticsLabel('Remove from favorites'), findsOneWidget);
+      expect(find.bySemanticsLabel('Remove from Liked songs'), findsOneWidget);
       // The filled heart is favourite pink, not the (coral) error colour.
       final heart = tester.widget<Icon>(find.byIcon(Icons.favorite_rounded));
       expect(heart.color, AppPalette.dark.favorite);

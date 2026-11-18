@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -48,11 +50,26 @@ class MiniPlayer extends ConsumerStatefulWidget {
   ConsumerState<MiniPlayer> createState() => _MiniPlayerState();
 }
 
+/// How long after a swipe a song change still counts as its result (and
+/// slides in); later changes (the song ending) just appear.
+const Duration _kSwipeResultWindow = Duration(seconds: 2);
+
 class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProviderStateMixin {
   DateTime _lastTapTime = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Runs the row's horizontal offset from [_animateFrom] back to 0: the
+  /// spring back after a swipe, or the new song sliding in.
   late AnimationController _slideController;
-  late Animation<Offset> _slideAnimation;
-  double _dragExtent = 0.0;
+  double _animateFrom = 0.0;
+
+  /// The finger's offset while dragging (null when not dragging).
+  double? _dragExtent;
+
+  /// A committed swipe waiting for its song change: the side the new song
+  /// comes in from (-1 left, 1 right), the song it left and when.
+  int _pendingDirection = 0;
+  String? _swipedFromId;
+  DateTime _swipedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -60,14 +77,15 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
     _slideController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 220),
+      value: 1,
     );
-    _slideAnimation = Tween<Offset>(
-      begin: Offset.zero,
-      end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _slideController,
-      curve: Curves.easeOut,
-    ));
+  }
+
+  /// The row's horizontal offset right now, in logical pixels.
+  double get _offsetX {
+    final drag = _dragExtent;
+    if (drag != null) return drag;
+    return _animateFrom * (1 - Curves.easeOutCubic.transform(_slideController.value));
   }
 
   @override
@@ -96,8 +114,9 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
 
     MiniPlayer.isNowPlayingOpen = true;
     final sheetDuration = MotionTokens.duration(context, MotionTokens.sheet);
+    final sheetContext = _sheetContext(context);
     showModalBottomSheet(
-      context: _sheetContext(context),
+      context: sheetContext,
       isScrollControlled: true,
       // Full height, under the status bar too, so the stage's light status
       // bar icons apply (DESIGN.md 7.8); Now Playing keeps its own content
@@ -110,7 +129,9 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
         duration: sheetDuration,
         reverseDuration: sheetDuration,
       ),
-      builder: (_) => const NowPlayingSheet(),
+      // useSafeArea: false also strips the top inset from MediaQuery, which
+      // put the header under the status bar; give the real inset back.
+      builder: (_) => RestoreTopInset(source: sheetContext, child: const NowPlayingSheet()),
     ).whenComplete(() {
       MiniPlayer.isNowPlayingOpen = false;
     });
@@ -123,45 +144,69 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
     MediaContextMenu.show(_sheetContext(context), ref, item, anchorContext: context);
   }
 
+  void _handleHorizontalDragStart(DragStartDetails details) {
+    _slideController.stop();
+    setState(() => _dragExtent = _offsetX);
+  }
+
   void _handleHorizontalDragUpdate(DragUpdateDetails details) {
     setState(() {
-      _dragExtent += details.primaryDelta ?? 0.0;
+      _dragExtent = (_dragExtent ?? 0.0) + (details.primaryDelta ?? 0.0);
     });
   }
 
   void _handleHorizontalDragEnd(DragEndDetails details, double screenWidth) {
     final threshold = screenWidth * 0.3;
     final velocity = details.primaryVelocity ?? 0.0;
+    final drag = _dragExtent ?? 0.0;
     final notifier = ref.read(playbackNotifierProvider.notifier);
     final canNext = ref.read(canSkipNextProvider);
 
-    if ((_dragExtent < -threshold || velocity < -500) && canNext) {
-      // Swiped left -> skip to next
+    if ((drag < -threshold || velocity < -500) && canNext) {
+      // Swiped left -> skip to next; the next song comes in from the right.
       HapticFeedback.selectionClick();
-      _animateAndCommit(() => notifier.skipToNext(), fromLeft: false);
-    } else if (_dragExtent > threshold || velocity > 500) {
-      // Swiped right -> skip to previous
+      _commitSwipe(() => notifier.skipToNext(), enterFrom: 1);
+    } else if (drag > threshold || velocity > 500) {
+      // Swiped right -> previous (or a restart); it comes in from the left.
       HapticFeedback.selectionClick();
-      _animateAndCommit(() => notifier.skipToPrevious(), fromLeft: true);
+      _commitSwipe(() => notifier.skipToPrevious(), enterFrom: -1);
     } else {
       // Spring back (also a swipe towards a disabled Next).
-      setState(() {
-        _dragExtent = 0.0;
-      });
+      _springBack();
     }
   }
 
-  void _animateAndCommit(VoidCallback action, {required bool fromLeft}) {
+  void _handleHorizontalDragCancel() => _springBack();
+
+  /// The row returns from wherever it is to its place.
+  void _springBack() {
+    setState(() {
+      _animateFrom = _offsetX;
+      _dragExtent = null;
+    });
+    _slideController.forward(from: 0.0);
+  }
+
+  /// The row springs back at once; if the song really changes (a Previous
+  /// past the first seconds only restarts it), the new one slides in.
+  void _commitSwipe(VoidCallback action, {required int enterFrom}) {
+    _pendingDirection = enterFrom;
+    _swipedFromId = ref.read(currentMediaItemProvider)?.id;
+    _swipedAt = DateTime.now();
+    _springBack();
     action();
-    _dragExtent = 0.0;
-    // Animate title/card sliding in
-    _slideAnimation = Tween<Offset>(
-      begin: Offset(fromLeft ? -1.0 : 1.0, 0.0),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _slideController,
-      curve: Curves.easeOutCubic,
-    ));
+  }
+
+  void _onSongChanged(MediaItem? previous, MediaItem? next) {
+    if (_pendingDirection == 0 || next == null || next.id == _swipedFromId) return;
+    final direction = _pendingDirection;
+    _pendingDirection = 0;
+    if (DateTime.now().difference(_swipedAt) > _kSwipeResultWindow || !mounted) return;
+    final width = MediaQuery.sizeOf(context).width;
+    setState(() {
+      _dragExtent = null;
+      _animateFrom = direction * width;
+    });
     _slideController.forward(from: 0.0);
   }
 
@@ -170,6 +215,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
     // While the Online tab's YouTube page owns the media session, the row
     // shows (and controls) it instead of the paused local track.
     final external = ref.watch(externalMediaProvider);
+    ref.listen<MediaItem?>(currentMediaItemProvider, _onSongChanged);
     final Widget Function(BuildContext context) row;
     if (external != null) {
       if (widget.hideExternal) return const SizedBox.shrink();
@@ -199,7 +245,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
     final palette = context.palette;
     final type = context.typography;
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final artist = currentItem.artist ?? 'Unknown Artist';
+    final artist = currentItem.artist ?? 'Unknown artist';
 
     // One node for the row, read once: what is playing, a tap that opens Now
     // Playing and a long press for the song's sheet. The cover, texts and
@@ -221,8 +267,10 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
         excludeFromSemantics: true,
         onTap: () => _openNowPlaying(context),
         onLongPress: () => _openMediaSheet(context, currentItem),
+        onHorizontalDragStart: _handleHorizontalDragStart,
         onHorizontalDragUpdate: _handleHorizontalDragUpdate,
         onHorizontalDragEnd: (details) => _handleHorizontalDragEnd(details, screenWidth),
+        onHorizontalDragCancel: _handleHorizontalDragCancel,
         onVerticalDragEnd: (details) {
           if (details.primaryVelocity != null && details.primaryVelocity! < -100) {
             _openNowPlaying(context);
@@ -234,10 +282,14 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
             constraints: const BoxConstraints(minHeight: _kRowHeight),
             child: Stack(
               children: [
-                Transform.translate(
-                  offset: Offset(_dragExtent, 0),
-                  child: SlideTransition(
-                    position: _slideAnimation,
+                AnimatedBuilder(
+                  animation: _slideController,
+                  builder: (context, child) => Transform.translate(
+                    key: const ValueKey('mini_player_slide'),
+                    offset: Offset(_offsetX, 0),
+                    child: child,
+                  ),
+                  child: RepaintBoundary(
                     child: Padding(
                       padding: const EdgeInsetsDirectional.fromSTEB(
                         AppSpacing.md12,
@@ -330,6 +382,37 @@ TextStyle _titleStyle(AppTextStyles type, AppPalette palette) =>
 
 TextStyle _artistStyle(AppTextStyles type, AppPalette palette) =>
     type.metadata.copyWith(fontSize: 13, height: 18 / 13, color: palette.onDockMuted);
+
+/// Puts the status bar inset back for a sheet shown with
+/// `showModalBottomSheet(useSafeArea: false)`.
+///
+/// That flag lets the sheet paint under the status bar, but Flutter also
+/// removes the top padding from the sheet's MediaQuery, so a SafeArea inside
+/// it reads 0 and the header lands under the clock. [source] is a context
+/// above the sheet route (the navigator's), whose MediaQuery still has the
+/// real inset. Reading it does not register a dependency there; the sheet's
+/// own MediaQuery changes with it (rotation, cutout), so this rebuilds then.
+class RestoreTopInset extends StatelessWidget {
+  const RestoreTopInset({super.key, required this.source, required this.child});
+
+  final BuildContext source;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final inner = MediaQuery.of(context);
+    final outer = source.mounted ? source.getInheritedWidgetOfExactType<MediaQuery>()?.data : null;
+    // Always the same tree shape (no early return), so an inset that comes
+    // and goes never rebuilds Now Playing from scratch.
+    return MediaQuery(
+      data: inner.copyWith(
+        padding: inner.padding.copyWith(top: math.max(inner.padding.top, outer?.padding.top ?? 0)),
+        viewPadding: inner.viewPadding.copyWith(top: math.max(inner.viewPadding.top, outer?.viewPadding.top ?? 0)),
+      ),
+      child: child,
+    );
+  }
+}
 
 class _TitleLines extends StatelessWidget {
   final Widget title;
@@ -450,17 +533,21 @@ class _ExternalMiniPlayer extends ConsumerWidget {
     final type = context.typography;
     final channel = media.artist;
     final art = media.artUri;
+    final source = media.albumOrDefault;
+    final fromOnline = media.id.startsWith('online:') || media.album == null;
     return Semantics(
       container: true,
       button: true,
-      label: 'Mini player: YouTube: ${media.title}${channel == null ? '' : ' by $channel'}',
-      hint: 'Opens Online',
-      onTap: () => _openOnline(context),
+      label: 'Mini player: $source: ${media.title}${channel == null ? '' : ' by $channel'}',
+      // Only the Online tab's page is opened from here; another source (a
+      // video in picture-in-picture) is on screen already.
+      hint: fromOnline ? 'Opens Online' : null,
+      onTap: fromOnline ? () => _openOnline(context) : null,
       child: GestureDetector(
         key: const ValueKey('mini_player_external'),
         behavior: HitTestBehavior.opaque,
         excludeFromSemantics: true,
-        onTap: () => _openOnline(context),
+        onTap: fromOnline ? () => _openOnline(context) : null,
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: _kRowHeight),
           child: Padding(
@@ -495,7 +582,7 @@ class _ExternalMiniPlayer extends ConsumerWidget {
                       ),
                       subtitle: Row(
                         children: [
-                          PillTag(text: 'YOUTUBE', color: palette.accent),
+                          PillTag(text: source.toUpperCase(), color: palette.accent),
                           if (channel != null) ...[
                             const SizedBox(width: AppSpacing.xs4 + 2),
                             Expanded(

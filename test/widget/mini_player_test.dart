@@ -207,6 +207,18 @@ void main() {
       expect(find.text('Online page'), findsOneWidget);
     });
 
+    testWidgets('another external source (a video) shows its own name and does not open Online', (tester) async {
+      await pump(
+        tester,
+        external: const ExternalMediaSnapshot(id: 'video:a', title: 'Holiday', album: 'Video', playing: true),
+      );
+      expect(find.text('VIDEO'), findsOneWidget);
+      expect(find.text('YOUTUBE'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('mini_player_external')));
+      await tester.pumpAndSettle();
+      expect(find.text('Online page'), findsNothing);
+    });
+
     testWidgets('on the Online tab itself the card is hidden', (tester) async {
       await pump(tester, external: yt, hideExternal: true);
       expect(find.text('Never Gonna Give You Up'), findsNothing);
@@ -252,6 +264,7 @@ void main() {
       bool inDock = true,
       double width = 360,
       double textScale = 1,
+      bool moveOnSkip = false,
     }) async {
       tester.view.physicalSize = Size(width * 3, 800 * 3);
       tester.view.devicePixelRatio = 3;
@@ -260,7 +273,7 @@ void main() {
         tester.platformDispatcher.textScaleFactorTestValue = textScale;
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       }
-      final playback = _RecordingPlayback(state);
+      final playback = _RecordingPlayback(state, moveOnSkip: moveOnSkip);
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -336,6 +349,52 @@ void main() {
       expect(last.calls, isEmpty);
     });
 
+    // F2: the row stayed shifted about 130 px after a swipe that did not
+    // change the song (Previous restarting it, Previous on the first song).
+    testWidgets('a swipe that does not change the song leaves the row where it was', (tester) async {
+      final playback = await pumpRow(tester, at(1));
+      final row = find.byKey(const ValueKey('mini_player_gesture_detector'));
+      final home = tester.getTopLeft(find.text('Song 2'));
+
+      await tester.fling(row, const Offset(200, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(playback.calls, ['previous']);
+      expect(tester.getTopLeft(find.text('Song 2')), home);
+
+      // A drag below the threshold, released slowly: back in place too.
+      await tester.drag(row, const Offset(60, 0));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(find.text('Song 2')), home);
+
+      // While the finger is down the row follows it.
+      final gesture = await tester.startGesture(tester.getCenter(row));
+      await gesture.moveBy(const Offset(30, 0));
+      await gesture.moveBy(const Offset(50, 0));
+      await tester.pump();
+      expect(tester.getTopLeft(find.text('Song 2')).dx, greaterThan(home.dx + 40));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(find.text('Song 2')), home);
+    });
+
+    testWidgets('a swipe that changes the song slides the new one in, ending in place', (tester) async {
+      final playback = await pumpRow(tester, at(1), moveOnSkip: true);
+      final row = find.byKey(const ValueKey('mini_player_gesture_detector'));
+      final home = tester.getTopLeft(find.text('Song 2'));
+
+      await tester.fling(row, const Offset(-200, 0), 1000);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(tester.getTopLeft(find.text('Song 3')).dx, greaterThan(home.dx), reason: 'coming in from the right');
+      await tester.pumpAndSettle();
+      expect(playback.calls, ['next']);
+      expect(tester.getTopLeft(find.text('Song 3')), home);
+
+      await tester.fling(row, const Offset(200, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(find.text('Song 2')), home);
+    });
+
     testWidgets('ink in the light theme: dock colours and Volt on the dock', (tester) async {
       await pumpRow(tester, at(0), theme: AppTheme.lightTheme);
       const ink = AppPalette.dark;
@@ -374,20 +433,33 @@ void main() {
 }
 
 /// Local playback that records the transport calls instead of playing.
+/// With [moveOnSkip] Next / Previous change the song, like the engine.
 class _RecordingPlayback extends PlaybackNotifier {
-  _RecordingPlayback(this._initial);
+  _RecordingPlayback(this._initial, {this.moveOnSkip = false});
 
   final PlaybackState _initial;
+  final bool moveOnSkip;
   final List<String> calls = [];
 
   @override
   PlaybackState build() => _initial;
 
-  @override
-  Future<void> skipToNext() async => calls.add('next');
+  void _move(int by) {
+    final i = (state.queueIndex + by).clamp(0, state.queue.length - 1);
+    state = state.copyWith(queueIndex: i, currentItemId: state.queue[i].id);
+  }
 
   @override
-  Future<void> skipToPrevious() async => calls.add('previous');
+  Future<void> skipToNext() async {
+    calls.add('next');
+    if (moveOnSkip) _move(1);
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    calls.add('previous');
+    if (moveOnSkip) _move(-1);
+  }
 
   @override
   Future<void> togglePlayPause() async => calls.add(state.isPlaying ? 'pause' : 'play');

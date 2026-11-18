@@ -116,10 +116,23 @@ class ArtworkService {
     _currentByteSize += bytes.lengthInBytes;
   }
 
+  /// Bumped whenever the "no artwork" answers are forgotten, so callers that
+  /// remembered a placeholder for a song (the media notification) look again.
+  int get negativeGeneration => _negativeGeneration;
+  int _negativeGeneration = 0;
+
+  /// Forgets which songs had no artwork, keeping the covers already loaded.
+  /// Call after a library rescan: a song may have gained a cover since.
+  void clearNegativeCache() {
+    _negativeCache.clear();
+    _negativeGeneration++;
+  }
+
   void clearCache() {
     _cache.clear();
     _negativeCache.clear();
     _inFlight.clear();
     _currentByteSize = 0;
+    _negativeGeneration++;
   }
 }

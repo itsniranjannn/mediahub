@@ -331,6 +331,11 @@ void main() {
         }
 
         await handler.skipToNext();
+        // F7: the media session's queue (Android Auto, Wear, the lock
+        // screen's queue) follows the reshuffle at the wrap.
+        expect(handler.queue.value.map((m) => m.id).toList(), handler.playOrderQueue.map((m) => m.id).toList(),
+            reason: 'skip $i: session queue in play order');
+        expect(handler.playbackState.value.queueIndex, handler.currentIndex);
       }
     });
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -16,6 +17,7 @@ import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/playback_state.dart' as domain;
+import '../../domain/models/playback_state.dart' show SleepTimerStatus;
 import '../../shared/widgets/artwork_placeholder.dart';
 import '../../shared/widgets/favorite_feedback_button.dart';
 import '../../shared/widgets/ui_kit.dart';
@@ -80,6 +82,20 @@ const double _kBackdropBlurSigma = 3;
 const double _kBackdropMaxLuma = 0.40;
 
 const List<double> _kSpeeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+/// After a seek bar release the thumb stays where it was let go until the
+/// player reports a time this close to it, or for at most [_kSeekHoldMax]
+/// (the position stream still carries the old time for a moment).
+const Duration _kSeekSettleTolerance = Duration(milliseconds: 500);
+const Duration _kSeekHoldMax = Duration(milliseconds: 600);
+
+/// A sideways swipe on the cover skips past this share of its width, or
+/// faster than [_kCoverFlingVelocity] (logical px per second).
+const double _kCoverSwipeShare = 0.3;
+const double _kCoverFlingVelocity = 500;
+
+/// How long after a cover swipe the song change still slides in.
+const Duration _kCoverSwipeResultWindow = Duration(seconds: 2);
 
 /// Opacity of a transport control with nowhere to go.
 const double _kDisabledAlpha = 0.38;
@@ -147,6 +163,8 @@ class NowPlayingSheet extends ConsumerWidget {
     final duration = playbackState.duration.inMilliseconds > 0
         ? playbackState.duration
         : Duration(milliseconds: currentItem?.durationMs ?? 0);
+
+    final sleepActive = ref.watch(sleepTimerProvider.select((s) => s.isActive));
 
     final queueLength = playbackState.queue.length;
     // Read as before the kicker: "Now Playing", then "3 of 24".
@@ -244,7 +262,12 @@ class NowPlayingSheet extends ConsumerWidget {
                         child: _NowPlayingBody(
                           item: currentItem,
                           onClose: close,
+                          sleepActive: sleepActive,
+                          canSkipNext: canSkipNextIn(playbackState),
+                          onNext: () => notifier.skipToNext(),
+                          onPrevious: () => notifier.skipToPrevious(),
                           seekBar: _SeekBar(
+                            key: ValueKey('seek_${currentItem?.id}'),
                             fallbackPosition: playbackState.position,
                             duration: duration,
                           ),
@@ -269,6 +292,7 @@ class NowPlayingSheet extends ConsumerWidget {
                             speed: playbackState.speed,
                             onSpeed: (speed) => notifier.setSpeed(speed),
                             onQueue: () => _openQueue(sheetContext),
+                            onSleep: () => showSleepTimerSheet(sheetContext),
                           ),
                         ),
                       ),
@@ -678,13 +702,31 @@ class _NowPlayingBody extends StatelessWidget {
   final Widget controls;
   final Widget footer;
 
+  /// The sleep chip shows under the artist (the info row is taller).
+  final bool sleepActive;
+
+  /// The cover's sideways swipe: Next (when there is one) and Previous.
+  final bool canSkipNext;
+  final VoidCallback onNext;
+  final VoidCallback onPrevious;
+
   const _NowPlayingBody({
     required this.item,
     required this.onClose,
     required this.seekBar,
     required this.controls,
     required this.footer,
+    this.sleepActive = false,
+    this.canSkipNext = false,
+    required this.onNext,
+    required this.onPrevious,
   });
+
+  /// Height the sleep chip adds under the artist.
+  static double _sleepChipHeight(TextScaler scaler, AppTextStyles type) {
+    final badge = type.badge;
+    return AppSpacing.sm8 + 6 + scaler.scale(badge.fontSize!) * (badge.height ?? 1);
+  }
 
   /// Distance from the bottom of the body to just above the title row in the
   /// regular layout, so the favourite confirmation never covers the heart.
@@ -713,9 +755,19 @@ class _NowPlayingBody extends StatelessWidget {
     // Never higher than half the screen: the root messenger also lays the
     // snackbar out in the app shell behind this sheet.
     final snackMargin = math.min(
-      _snackMarginAboveInfo(textScaler, context.typography),
+      _snackMarginAboveInfo(textScaler, context.typography) +
+          (sleepActive ? _sleepChipHeight(textScaler, context.typography) : 0),
       MediaQuery.sizeOf(context).height / 2,
     );
+
+    Widget cover(double size) => _SwipeToSkip(
+          itemId: item?.id,
+          width: size,
+          canSkipNext: canSkipNext,
+          onNext: onNext,
+          onPrevious: onPrevious,
+          child: _NowPlayingArtwork(item: item, size: size),
+        );
 
     Widget info(double snackBottomMargin) => _TrackInfo(
           item: item,
@@ -744,7 +796,7 @@ class _NowPlayingBody extends StatelessWidget {
               child: _WidthLimit(
                 child: Column(
                   children: [
-                    _NowPlayingArtwork(item: item, size: artSize),
+                    cover(artSize),
                     const SizedBox(height: _kArtworkGap),
                     info(_kScrollingSnackMargin),
                     const SizedBox(height: _kSectionGap),
@@ -777,7 +829,7 @@ class _NowPlayingBody extends StatelessWidget {
                         0.0,
                         math.min(_kArtworkMaxSize, math.min(box.maxWidth, box.maxHeight - AppSpacing.lg16)),
                       );
-                      return Center(child: _NowPlayingArtwork(item: item, size: size));
+                      return Center(child: cover(size));
                     },
                   ),
                 ),
@@ -945,11 +997,12 @@ class _TrackInfo extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSpacing.xs4),
                 Text(
-                  item?.artist ?? 'Unknown Artist',
+                  item?.artist ?? 'Unknown artist',
                   style: type.body.copyWith(color: palette.textSecondary),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                const _SleepChip(),
               ],
             ),
           ),
@@ -979,7 +1032,7 @@ class _TrackInfo extends StatelessWidget {
 /// [FavoriteFeedbackButton] names itself twice: a Semantics label around an
 /// IconButton whose tooltip says the same thing. That label is not a node of
 /// its own, so it merged into whatever held the button (here the sheet-sized
-/// node read "title / artist / Add to favorites / 1:46 / 5:00"). Merged into
+/// node read "title / artist / Add to Liked songs / 1:46 / 5:00"). Merged into
 /// the button's node here, with the tooltip kept out of semantics (it still
 /// shows on long-press), the heart is one button that is read once.
 class _SingleNodeHeart extends StatelessWidget {
@@ -1008,14 +1061,34 @@ class _SeekBar extends ConsumerStatefulWidget {
   final Duration fallbackPosition;
   final Duration duration;
 
-  const _SeekBar({required this.fallbackPosition, required this.duration});
+  const _SeekBar({super.key, required this.fallbackPosition, required this.duration});
 
   @override
   ConsumerState<_SeekBar> createState() => _SeekBarState();
 }
 
 class _SeekBarState extends ConsumerState<_SeekBar> {
+  /// Where the finger is (dragging), or where it let go (until the player
+  /// catches up): the thumb never jumps back to the old time.
   double? _dragValue;
+  bool _dragging = false;
+  Timer? _holdTimer;
+
+  @override
+  void dispose() {
+    _holdTimer?.cancel();
+    super.dispose();
+  }
+
+  void _release(double value) {
+    _dragging = false;
+    _holdTimer?.cancel();
+    _holdTimer = Timer(_kSeekHoldMax, () {
+      if (mounted && !_dragging) setState(() => _dragValue = null);
+    });
+    ref.read(playbackNotifierProvider.notifier).seek(Duration(milliseconds: value.toInt()));
+    setState(() => _dragValue = value);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1025,12 +1098,21 @@ class _SeekBarState extends ConsumerState<_SeekBar> {
     final position = positionAsync.value ?? widget.fallbackPosition;
     final duration = widget.duration;
 
+    // Released: hold the thumb until the player reports a nearby time.
+    final held = _dragValue;
+    if (held != null &&
+        !_dragging &&
+        (position.inMilliseconds - held).abs() <= _kSeekSettleTolerance.inMilliseconds) {
+      _dragValue = null;
+      _holdTimer?.cancel();
+    }
+
     final currentPositionMs = _dragValue ?? position.inMilliseconds.toDouble();
     final maxDurationMs = duration.inMilliseconds > 0
         ? duration.inMilliseconds.toDouble()
         : 1.0;
     final sliderValue = currentPositionMs.clamp(0.0, maxDurationMs);
-    final isDragging = _dragValue != null;
+    final isDragging = _dragging;
     final elapsed = Duration(milliseconds: sliderValue.toInt());
     final remaining = duration.inMilliseconds > 0 ? '-${formatClock(duration - elapsed)}' : formatClock(Duration.zero);
 
@@ -1056,17 +1138,20 @@ class _SeekBarState extends ConsumerState<_SeekBar> {
                   final at = formatClock(Duration(milliseconds: value.toInt()));
                   return duration.inMilliseconds > 0 ? '$at of ${formatClock(duration)}' : at;
                 },
-                onChanged: (val) {
+                onChangeStart: (val) {
+                  _holdTimer?.cancel();
                   setState(() {
+                    _dragging = true;
                     _dragValue = val;
                   });
                 },
-                onChangeEnd: (val) {
-                  ref.read(playbackNotifierProvider.notifier).seek(Duration(milliseconds: val.toInt()));
+                onChanged: (val) {
                   setState(() {
-                    _dragValue = null;
+                    _dragging = true;
+                    _dragValue = val;
                   });
                 },
+                onChangeEnd: _release,
               ),
             ),
           ),
@@ -1260,8 +1345,9 @@ class _StageFooter extends StatelessWidget {
   final double speed;
   final ValueChanged<double> onSpeed;
   final VoidCallback onQueue;
+  final VoidCallback onSleep;
 
-  const _StageFooter({required this.speed, required this.onSpeed, required this.onQueue});
+  const _StageFooter({required this.speed, required this.onSpeed, required this.onQueue, required this.onSleep});
 
   @override
   Widget build(BuildContext context) {
@@ -1272,6 +1358,7 @@ class _StageFooter extends StatelessWidget {
         children: [
           _SpeedMenu(speed: speed, onSelected: onSpeed),
           const Spacer(),
+          _SleepButton(onPressed: onSleep),
           IconButton(
             tooltip: 'View Queue',
             icon: const Icon(Icons.queue_music_rounded),
@@ -1360,6 +1447,312 @@ class _SpeedChip extends StatelessWidget {
           // the footer has a fixed height; grow only a little with the text
           textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.2),
           style: context.typography.tabularFigures.copyWith(color: palette.primary),
+        ),
+      ),
+    );
+  }
+}
+
+/// A sideways swipe on the big cover skips (docs/DESIGN.md 7.17): left for
+/// Next (only where Next is enabled), right for Previous. The cover follows
+/// the finger, springs back, and when the song really changes the new cover
+/// comes in a short way from the side it was pushed to. A shortcut for the
+/// transport buttons, so it adds nothing to the semantics tree.
+class _SwipeToSkip extends StatefulWidget {
+  final String? itemId;
+
+  /// The cover's edge: the swipe threshold and the slide are shares of it.
+  final double width;
+  final bool canSkipNext;
+  final VoidCallback onNext;
+  final VoidCallback onPrevious;
+  final Widget child;
+
+  const _SwipeToSkip({
+    required this.itemId,
+    required this.width,
+    required this.canSkipNext,
+    required this.onNext,
+    required this.onPrevious,
+    required this.child,
+  });
+
+  @override
+  State<_SwipeToSkip> createState() => _SwipeToSkipState();
+}
+
+class _SwipeToSkipState extends State<_SwipeToSkip> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+    value: 1,
+  );
+  double _from = 0;
+  double? _drag;
+  int _pendingDirection = 0;
+  String? _swipedFromId;
+  DateTime _swipedAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  double get _offset => _drag ?? _from * (1 - Curves.easeOutCubic.transform(_controller.value));
+
+  double get _width => widget.width > 0 ? widget.width : MediaQuery.sizeOf(context).width;
+
+  @override
+  void didUpdateWidget(_SwipeToSkip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final changed = widget.itemId != oldWidget.itemId && widget.itemId != _swipedFromId;
+    if (_pendingDirection != 0 && changed) {
+      final direction = _pendingDirection;
+      _pendingDirection = 0;
+      if (DateTime.now().difference(_swipedAt) <= _kCoverSwipeResultWindow) {
+        _drag = null;
+        _from = direction * _width * 0.25;
+        _animate();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _animate() {
+    _controller.duration = MotionTokens.duration(context, const Duration(milliseconds: 220));
+    if (_controller.duration == Duration.zero) {
+      _controller.value = 1;
+    } else {
+      _controller.forward(from: 0);
+    }
+  }
+
+  void _springBack() {
+    setState(() {
+      _from = _offset;
+      _drag = null;
+    });
+    _animate();
+  }
+
+  void _onEnd(DragEndDetails details) {
+    final drag = _drag ?? 0;
+    final velocity = details.primaryVelocity ?? 0;
+    final threshold = _width * _kCoverSwipeShare;
+    if ((drag < -threshold || velocity < -_kCoverFlingVelocity) && widget.canSkipNext) {
+      _commit(widget.onNext, enterFrom: 1);
+    } else if (drag > threshold || velocity > _kCoverFlingVelocity) {
+      _commit(widget.onPrevious, enterFrom: -1);
+    } else {
+      _springBack();
+    }
+  }
+
+  void _commit(VoidCallback action, {required int enterFrom}) {
+    HapticFeedback.selectionClick();
+    _pendingDirection = enterFrom;
+    _swipedFromId = widget.itemId;
+    _swipedAt = DateTime.now();
+    _springBack();
+    action();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      key: const ValueKey('now_playing_cover_swipe'),
+      behavior: HitTestBehavior.opaque,
+      excludeFromSemantics: true,
+      onHorizontalDragStart: (_) {
+        _controller.stop();
+        setState(() => _drag = _offset);
+      },
+      onHorizontalDragUpdate: (details) => setState(() => _drag = (_drag ?? 0) + (details.primaryDelta ?? 0)),
+      onHorizontalDragEnd: _onEnd,
+      onHorizontalDragCancel: _springBack,
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) {
+          final x = _offset;
+          final width = math.max(1.0, _width);
+          final fade = (1 - (x.abs() / width) * 0.8).clamp(0.4, 1.0);
+          return Transform.translate(
+            offset: Offset(x, 0),
+            child: Opacity(opacity: fade, child: child),
+          );
+        },
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// "12:30" (or "1:02:30") for the sleep timer's time left.
+@visibleForTesting
+String sleepCountdown(Duration remaining) {
+  final total = remaining.inSeconds < 0 ? 0 : (remaining.inMilliseconds + 999) ~/ 1000;
+  final h = total ~/ 3600;
+  final m = (total % 3600) ~/ 60;
+  final s = total % 60;
+  final ss = s.toString().padLeft(2, '0');
+  if (h > 0) return '$h:${m.toString().padLeft(2, '0')}:$ss';
+  return '$m:$ss';
+}
+
+/// The overline chip under the artist while the sleep timer runs:
+/// "SLEEP 12:30", or "SLEEP · END OF SONG" (docs/DESIGN.md 7.8).
+class _SleepChip extends ConsumerWidget {
+  const _SleepChip();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(sleepTimerProvider);
+    if (!status.isActive) return const SizedBox.shrink();
+    final remaining = status.remaining;
+    final text = status.endOfTrack
+        ? 'SLEEP · END OF SONG'
+        : remaining != null
+            ? 'SLEEP ${sleepCountdown(remaining)}'
+            : 'SLEEP';
+    final spoken = status.endOfTrack
+        ? 'Sleep timer: at the end of this song'
+        : 'Sleep timer: ${remaining == null ? 'on' : sleepCountdown(remaining)} left';
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.sm8),
+      child: Semantics(
+        label: spoken,
+        excludeSemantics: true,
+        child: PillTag(key: const ValueKey('sleep_chip'), text: text, icon: Icons.bedtime_rounded),
+      ),
+    );
+  }
+}
+
+/// The footer's moon: the sleep timer sheet. Primary while a timer runs.
+class _SleepButton extends ConsumerWidget {
+  final VoidCallback onPressed;
+
+  const _SleepButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    final active = ref.watch(sleepTimerProvider.select((s) => s.isActive));
+    return IconButton(
+      tooltip: active ? 'Sleep timer on' : 'Sleep timer',
+      icon: Icon(active ? Icons.bedtime_rounded : Icons.bedtime_outlined),
+      color: active ? palette.primary : palette.textSecondary,
+      onPressed: onPressed,
+    );
+  }
+}
+
+/// The sleep timer sheet, in the app theme: the time left in `figureLarge`
+/// while a timer runs, the presets, "End of song" and "Turn off".
+Future<void> showSleepTimerSheet(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => const SleepTimerSheet(),
+  );
+}
+
+class SleepTimerSheet extends ConsumerWidget {
+  const SleepTimerSheet({super.key});
+
+  static String presetLabel(Duration d) =>
+      d.inMinutes >= 60 && d.inMinutes % 60 == 0 ? (d.inMinutes == 60 ? '1 hour' : '${d.inMinutes ~/ 60} hours') : '${d.inMinutes} minutes';
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    final type = context.typography;
+    final status = ref.watch(sleepTimerProvider);
+    final notifier = ref.read(playbackNotifierProvider.notifier);
+    final remaining = status.remaining;
+    void done() => Navigator.of(context).maybePop();
+
+    Widget option(String label, IconData icon, VoidCallback onTap, {bool selected = false}) {
+      return Semantics(
+        button: true,
+        selected: selected,
+        child: InkWell(
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 56),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.sm8),
+              child: Row(
+                children: [
+                  Icon(icon, size: 24, color: selected ? palette.primary : palette.textSecondary),
+                  const SizedBox(width: AppSpacing.lg16),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: type.body.copyWith(color: selected ? palette.primary : palette.textPrimary),
+                    ),
+                  ),
+                  if (selected) Icon(Icons.check_rounded, size: 20, color: palette.primary),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: AppSpacing.lg16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.sm8),
+              child: Semantics(
+                header: true,
+                child: Text('Sleep timer', style: type.sectionTitle),
+              ),
+            ),
+            if (status.isActive)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.sm8, AppSpacing.sm8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: status.endOfTrack
+                          ? Text('Stops at the end of this song', style: type.body)
+                          : Text(
+                              remaining == null ? '' : sleepCountdown(remaining),
+                              key: const ValueKey('sleep_countdown'),
+                              style: type.figureLarge,
+                              semanticsLabel:
+                                  remaining == null ? null : '${sleepCountdown(remaining)} left',
+                            ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        notifier.cancelSleepTimer();
+                        done();
+                      },
+                      child: const Text('Turn off'),
+                    ),
+                  ],
+                ),
+              ),
+            const Divider(height: 1),
+            for (final preset in SleepTimerStatus.presets)
+              option(presetLabel(preset), Icons.timer_outlined, () {
+                notifier.setSleepTimer(preset);
+                done();
+              }),
+            option('End of song', Icons.music_note_rounded, () {
+              notifier.setSleepTimerAtEndOfTrack();
+              done();
+            }, selected: status.endOfTrack),
+          ],
         ),
       ),
     );

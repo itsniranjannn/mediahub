@@ -54,8 +54,11 @@ class QueueSheet extends ConsumerWidget {
                   ),
                   itemCount: queue.length,
                   proxyDecorator: _liftedRow,
+                  // Each row action names its song: if an earlier edit or a
+                  // skip moved the rows meanwhile, it still reaches that song.
                   onReorderItem: (oldIndex, newIndex) {
-                    notifier.reorderQueue(oldIndex, newIndex);
+                    if (oldIndex < 0 || oldIndex >= queue.length) return;
+                    notifier.moveQueueEntry(oldIndex, newIndex, queue[oldIndex].id);
                   },
                   itemBuilder: (context, index) {
                     final item = queue[index];
@@ -72,17 +75,17 @@ class QueueSheet extends ConsumerWidget {
                           : DismissDirection.endToStart,
                       background: const _RemoveBackground(),
                       onDismissed: (_) {
-                        notifier.removeQueueItemAt(index);
+                        notifier.removeQueueEntry(index, item.id);
                       },
                       child: _QueueRow(
                         item: item,
                         index: index,
                         isCurrent: isCurrent,
                         onTap: () {
-                          notifier.skipToQueueItem(index);
+                          notifier.skipToQueueEntry(index, item.id);
                         },
                         onRemove: () {
-                          notifier.removeQueueItemAt(index);
+                          notifier.removeQueueEntry(index, item.id);
                         },
                       ),
                     );
@@ -306,7 +309,7 @@ class _QueueRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final type = context.typography;
-    final artist = item.artist ?? 'Unknown Artist';
+    final artist = item.artist ?? 'Unknown artist';
     final radius = BorderRadius.circular(_kRowRadius);
     return Padding(
       padding: _kRowInset,
