@@ -40,6 +40,10 @@ cp -r "$SRC/lib" "$A/lib"
 cp -r "$SRC/assets" "$A/assets"
 mkdir -p "$A/android/app/src"
 cp -r "$SRC/android/app/src/main" "$A/android/app/src/main"
+# pubspec.yaml overrides video_player_android with the patched copy in third_party/ (a path
+# dependency): refresh it too, or pub get fails on an older build copy and patch edits are lost.
+rm -rf "$A/third_party"
+if [ -d "$SRC/third_party" ]; then cp -r "$SRC/third_party" "$A/third_party"; fi
 cp "$SRC/pubspec.yaml" "$SRC/pubspec.lock" "$A/"
 cp "$SRC/android/app/build.gradle.kts" "$SRC/android/app/proguard-rules.pro" "$A/android/app/"
 # gradle.properties carries android.r8.proguardAndroidTxt.disallowed=false, which AGP 9 needs for

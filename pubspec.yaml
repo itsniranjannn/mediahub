@@ -59,6 +59,13 @@ dev_dependencies:
   mocktail: ^1.0.5
   flutter_launcher_icons: ^0.14.4
 
+# video_player_android 2.12.2 with a small patch that lets the app find a
+# video's audio session (the video volume boost) and pauses on headphone
+# unplug. What changed and why: third_party/video_player_android/README.md.
+dependency_overrides:
+  video_player_android:
+    path: third_party/video_player_android
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
