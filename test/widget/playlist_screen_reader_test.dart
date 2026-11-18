@@ -50,6 +50,10 @@ void main() {
     ArtworkService.instance.clearCache();
     repo = _MockLibraryRepository();
     when(() => repo.watchPlaylistSongs(_playlist.id)).thenAnswer((_) => Stream.value(_songs));
+    when(() => repo.watchPlaylistTracks(_playlist.id)).thenAnswer(
+      (_) => Stream.value([for (var i = 0; i < _songs.length; i++) PlaylistTrack(position: i, item: _songs[i])]),
+    );
+    when(() => repo.watchPlaylist(_playlist.id)).thenAnswer((_) => Stream.value(_playlist));
     when(() => repo.removeSongFromPlaylist(any(), any(), any())).thenAnswer((_) async {});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_channel, (call) async => null);

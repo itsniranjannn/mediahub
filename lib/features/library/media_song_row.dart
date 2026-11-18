@@ -9,8 +9,10 @@ import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../domain/models/media_item.dart';
 import '../../shared/widgets/favorite_feedback_button.dart';
+import '../../domain/models/playlist_and_groups.dart' show ArtistGroup, isUnknownArtistName;
 import '../library/media_context_menu.dart';
 import '../music_player/playback_notifier.dart';
+import 'playable.dart';
 
 /// One song in a list (docs/DESIGN.md 7.6): 48 dp art at radius 10 (or a
 /// 32 dp track number in album and playlist lists, [index]), the title, then
@@ -21,6 +23,9 @@ import '../music_player/playback_notifier.dart';
 /// 1.15x). A narrower row keeps its width for the artist: favourites show a
 /// 16 dp Flare heart before the meta line instead, and the media sheet
 /// toggles it.
+///
+/// An Online (YouTube) item saved to Liked songs or a playlist shows an
+/// "Online" marker before its artist; tapping it opens it in the Online tab.
 ///
 /// The row that is playing right now is marked three ways, never by colour
 /// alone: a 3 dp primary bar on the leading edge, an equaliser glyph (Volt on
@@ -43,6 +48,14 @@ class MediaSongRow extends ConsumerWidget {
   /// row (playlists).
   final bool longPressOpensMenu;
 
+  /// Keeps the ⋮ next to [trailing] (before it) instead of [trailing]
+  /// replacing it: a playlist row has its menu and then its drag handle.
+  final bool keepMenu;
+
+  /// The playlist entry this row shows, so its menu offers "Remove from this
+  /// playlist".
+  final PlaylistEntryRef? playlistEntry;
+
   static const double artworkSize = 48;
   static const double artworkRadius = AppSpacing.radiusArtSmall;
   static const double minHeight = 64;
@@ -62,7 +75,10 @@ class MediaSongRow extends ConsumerWidget {
 
   static const double _iconSize = 24;
 
-  static const String _unknownArtist = 'Unknown artist';
+  static const String _unknownArtist = ArtistGroup.unknownArtist;
+
+  /// The artist line's name: "Unknown artist" for an untagged song.
+  static String artistOf(MediaItem item) => isUnknownArtistName(item.artist) ? _unknownArtist : item.artist!;
 
   const MediaSongRow({
     super.key,
@@ -73,6 +89,8 @@ class MediaSongRow extends ConsumerWidget {
     this.index,
     this.menuWithout = const {},
     this.longPressOpensMenu = true,
+    this.keepMenu = false,
+    this.playlistEntry,
   });
 
   @override
@@ -82,7 +100,7 @@ class MediaSongRow extends ConsumerWidget {
     // Only rebuild this row when *its* "now playing" state flips.
     final isSelected = ref.watch(currentMediaItemProvider.select((current) => current?.id == item.id));
     final isMissing = item.availability == MediaAvailability.missing;
-    final artist = item.artist ?? _unknownArtist;
+    final artist = artistOf(item);
 
     final titleColor = isMissing
         ? palette.textMuted
@@ -107,13 +125,37 @@ class MediaSongRow extends ConsumerWidget {
               const SnackBar(content: Text('File is missing or unavailable on storage')),
             );
           }
-        : (onTap ??
-            () {
-              ref.read(playbackNotifierProvider.notifier).loadQueue([item]);
-            });
+        : item.isOnline
+            // A watch link is not a file the player can open: the Online
+            // tab plays it.
+            ? () => openOnlineItem(context, ProviderScope.containerOf(context, listen: false), item)
+            : (onTap ??
+                () {
+                  final playback = ref.read(playbackNotifierProvider.notifier);
+                  // A queue of one keeps the user's shuffle mode for the next list.
+                  playback.loadQueue([item], shuffle: playback.shuffleMode);
+                });
 
-    void openMenu(BuildContext anchor) =>
-        MediaContextMenu.show(context, ref, item, anchorContext: anchor, without: menuWithout);
+    void openMenu(BuildContext anchor) => MediaContextMenu.show(
+          context,
+          ref,
+          item,
+          anchorContext: anchor,
+          without: menuWithout,
+          playlistEntry: playlistEntry,
+        );
+    Widget menuButton() => Builder(
+          builder: (buttonContext) => IconButton(
+            icon: const Icon(Icons.more_vert_rounded, size: _iconSize),
+            color: palette.textSecondary,
+            tooltip: 'More actions',
+            constraints: const BoxConstraints(
+              minWidth: AppSpacing.minTouchTarget,
+              minHeight: AppSpacing.minTouchTarget,
+            ),
+            onPressed: () => openMenu(buttonContext),
+          ),
+        );
     final VoidCallback? handleLongPress = longPressOpensMenu ? () => openMenu(context) : null;
 
     final int? number = index;
@@ -205,19 +247,8 @@ class MediaSongRow extends ConsumerWidget {
                             ),
                           ),
                         ),
-                      trailing ??
-                          Builder(
-                            builder: (buttonContext) => IconButton(
-                              icon: const Icon(Icons.more_vert_rounded, size: _iconSize),
-                              color: palette.textSecondary,
-                              tooltip: 'More actions',
-                              constraints: const BoxConstraints(
-                                minWidth: AppSpacing.minTouchTarget,
-                                minHeight: AppSpacing.minTouchTarget,
-                              ),
-                              onPressed: () => openMenu(buttonContext),
-                            ),
-                          ),
+                      if (trailing != null && keepMenu) menuButton(),
+                      trailing ?? menuButton(),
                     ],
                   ),
                 ),
@@ -256,8 +287,9 @@ class MediaSongRow extends ConsumerWidget {
   /// before the label.
   @visibleForTesting
   static String semanticsLabelFor(MediaItem item, {required bool isMissing}) {
-    final parts = ['Song: ${item.title} by ${item.artist ?? _unknownArtist}'];
+    final parts = ['Song: ${item.title} by ${artistOf(item)}'];
     if (item.source == 'download') parts.add('Downloaded');
+    if (item.isOnline) parts.add('Online');
     final duration = _trackDuration(item.durationMs);
     if (duration != null) parts.add(duration);
     final label = parts.join(', ');
@@ -268,7 +300,7 @@ class MediaSongRow extends ConsumerWidget {
 /// [FavoriteFeedbackButton] names itself twice: a Semantics label around an
 /// IconButton whose tooltip says the same thing. That label is not a node of
 /// its own, so it merged into whatever held the button (a song row read "...
-/// 5:00 / Add to favorites"). Merged into the button's node here, with the
+/// 5:00 / Add to Liked songs"). Merged into the button's node here, with the
 /// tooltip kept out of semantics (it still shows on long-press), the heart is
 /// one button that is read once.
 class _SingleNodeHeart extends StatelessWidget {
@@ -440,14 +472,19 @@ class _MetaLine extends StatelessWidget {
           );
 
     final isDownload = item.source == 'download';
-    final lead = isDownload ? _downloadedLead(context, style, artistText) : artistText;
+    final isOnline = item.isOnline;
+    final lead = isDownload
+        ? _markerLead(context, style, artistText, icon: Icons.download_done_rounded, word: 'Downloaded')
+        : isOnline
+            ? _markerLead(context, style, artistText, icon: Icons.smart_display_rounded, word: 'Online')
+            : artistText;
 
     final duration = MediaSongRow._trackDuration(item.durationMs);
     if (duration == null) return lead;
 
     // What the lead needs even when the artist is squeezed to nothing: the
     // download icon and its gap.
-    final leadMinWidth = isDownload
+    final leadMinWidth = (isDownload || isOnline)
         ? MediaQuery.textScalerOf(context).scale(_markerIconSize) + AppSpacing.xs4
         : 0.0;
 
@@ -492,16 +529,22 @@ class _MetaLine extends StatelessWidget {
     );
   }
 
-  /// Download marker (icon, and the word when there is room) before the
-  /// artist.
-  Widget _downloadedLead(BuildContext context, TextStyle style, Widget artistText) {
+  /// The "Downloaded" or "Online" marker (icon, and the word when there is
+  /// room) before the artist.
+  Widget _markerLead(
+    BuildContext context,
+    TextStyle style,
+    Widget artistText, {
+    required IconData icon,
+    required String word,
+  }) {
     // Text is never scaled down: the marker either fits at the user's text
     // size or falls back to its icon, and the artist always keeps the rest.
     final scaler = MediaQuery.textScalerOf(context);
     final direction = Directionality.of(context);
     final markerWidth = scaler.scale(_markerIconSize) +
         AppSpacing.xs4 +
-        _textWidth('Downloaded', style, scaler, direction) +
+        _textWidth(word, style, scaler, direction) +
         _textWidth(_separator, style, scaler, direction);
     final labelMinWidth = markerWidth + scaler.scale(_minArtistWidth);
     // Ice, like the "Downloaded" badge on video covers: primary means "now
@@ -517,16 +560,16 @@ class _MetaLine extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.download_done_rounded,
+              icon,
               size: _markerIconSize,
               applyTextScaling: true,
               color: markerColor,
-              semanticLabel: showLabel ? null : 'Downloaded',
+              semanticLabel: showLabel ? null : word,
             ),
             const SizedBox(width: AppSpacing.xs4),
             if (showLabel) ...[
               Text(
-                'Downloaded',
+                word,
                 style: style.copyWith(color: markerColor),
                 maxLines: 1,
               ),

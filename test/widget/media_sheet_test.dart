@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:drift/drift.dart' as d;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,12 +19,15 @@ import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/domain/models/playback_state.dart' as domain;
 import 'package:mediahub/domain/models/playlist_and_groups.dart';
 import 'package:mediahub/domain/repositories/library_repository.dart';
+import 'package:mediahub/features/downloads/download_providers.dart';
 import 'package:mediahub/features/library/detail_screens.dart';
 import 'package:mediahub/features/library/media_context_menu.dart';
 import 'package:mediahub/features/library/media_song_row.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
 import 'package:mocktail/mocktail.dart';
+
+import '../helpers/app_fonts.dart';
 
 class _MockRepo extends Mock implements LibraryRepository {}
 
@@ -53,6 +57,9 @@ class _FakePlayback extends PlaybackNotifier {
 
   @override
   Future<void> removeQueueItemAt(int index) async => calls.add('remove:$index');
+
+  @override
+  Future<void> removeFromQueueById(String mediaId) async => calls.add('removeById:$mediaId');
 }
 
 class _FakePlatform extends MediaMenuPlatform {
@@ -80,6 +87,23 @@ class _FakePlatform extends MediaMenuPlatform {
 
   @override
   Future<void> copyText(String text) async => copied.add(text);
+
+  final List<String> shared = [];
+
+  @override
+  bool get shareSupported => true;
+
+  @override
+  Future<bool> shareFile({required String uriOrPath, required String mimeType, String? title}) async {
+    shared.add('file:$uriOrPath:$mimeType');
+    return true;
+  }
+
+  @override
+  Future<bool> shareText(String text) async {
+    shared.add('text:$text');
+    return true;
+  }
 }
 
 class _FakeDeleter implements MediaFileDeleter {
@@ -122,6 +146,21 @@ MediaItem _song({
       source: source,
     );
 
+/// A YouTube video saved from (or shown in) the Online tab, as the watch
+/// strip passes it: a stream-ish id and the page link.
+MediaItem _online({String id = 'yt_dQw4w9WgXcQ', String uri = 'https://m.youtube.com/watch?v=dQw4w9WgXcQ&si=x'}) =>
+    MediaItem(
+      id: id,
+      uri: uri,
+      mediaType: MediaType.audio,
+      title: 'Online Song',
+      artist: 'Channel',
+      durationMs: 213000,
+      sizeBytes: 0,
+      dateAdded: DateTime(2026, 6, 1),
+      source: 'online',
+    );
+
 MediaItem _video({String source = 'device'}) => MediaItem(
       id: 'video_1',
       uri: 'content://media/external/video/media/1',
@@ -154,6 +193,8 @@ Future<_Harness> _pump(
   bool favorite = false,
   MediaItem? playing,
   bool inkWrapper = false,
+  PlaylistEntryRef? playlistEntry,
+  Set<String> playlistsHolding = const {},
 }) async {
   tester.view.physicalSize = size * 3;
   tester.view.devicePixelRatio = 3;
@@ -172,7 +213,22 @@ Future<_Harness> _pump(
   when(() => h.repo.watchPlaylists()).thenAnswer((_) => Stream.value([
         Playlist(id: 'pl_1', name: 'Road trip', createdAt: DateTime(2026), updatedAt: DateTime(2026), songCount: 3),
       ]));
-  when(() => h.repo.addSongToPlaylist(any(), any())).thenAnswer((_) async {});
+  when(() => h.repo.addSongToPlaylist(any(), any())).thenAnswer((_) async => true);
+  when(() => h.repo.addSongToPlaylist(any(), any(), allowDuplicate: any(named: 'allowDuplicate')))
+      .thenAnswer((_) async => true);
+  when(() => h.repo.watchPlaylistIdsContaining(any())).thenAnswer((_) => Stream.value(playlistsHolding));
+  when(() => h.repo.removeSongFromPlaylist(any(), any(), any())).thenAnswer((_) async {});
+  when(() => h.repo.insertSongIntoPlaylist(any(), any(), any())).thenAnswer((_) async {});
+  when(() => h.repo.saveOnlineItem(any())).thenAnswer((inv) async => inv.positionalArguments.first as MediaItem);
+  when(() => h.repo.findAlbumOf(any())).thenAnswer(
+    (_) async => const AlbumGroup(
+      album: 'Lok Geet',
+      artist: 'Bipana Thapa',
+      songCount: 1,
+      totalDurationMs: 245000,
+      key: 'id:42',
+    ),
+  );
   when(() => h.repo.createPlaylist(any())).thenAnswer(
     (inv) async => Playlist(
       id: 'pl_new',
@@ -194,7 +250,7 @@ Future<_Harness> _pump(
   Widget opener = Center(
     child: Consumer(
       builder: (context, ref, _) => TextButton(
-        onPressed: () => MediaContextMenu.show(context, ref, item),
+        onPressed: () => MediaContextMenu.show(context, ref, item, playlistEntry: playlistEntry),
         child: const Text('open'),
       ),
     ),
@@ -243,6 +299,7 @@ Future<void> _choose(WidgetTester tester, String label) async {
 void main() {
   setUpAll(() {
     registerFallbackValue(MediaSortOption.title);
+    registerFallbackValue(_song());
   });
 
   setUp(() {
@@ -256,7 +313,7 @@ void main() {
   });
 
   group('which actions an item gets', () {
-    test('a song on the phone: queue, playlist, favourite, album, artist, details; no delete, no share', () {
+    test('a song on the phone: queue, playlist, like, album, artist, share, details; no delete', () {
       expect(
         MediaContextMenu.actionsFor(_song(), canDelete: false, pipSupported: true),
         [
@@ -266,15 +323,26 @@ void main() {
           MediaAction.favorite,
           MediaAction.goToAlbum,
           MediaAction.goToArtist,
+          MediaAction.share,
           MediaAction.details,
         ],
       );
+      expect(
+        MediaContextMenu.actionsFor(_song(), canDelete: false, pipSupported: true, shareSupported: false),
+        isNot(contains(MediaAction.share)),
+        reason: 'no share sheet (iOS for now)',
+      );
+    });
+
+    test('a song opened on a playlist page can be removed from that playlist', () {
+      final actions = MediaContextMenu.actionsFor(_song(), canDelete: false, pipSupported: false, inPlaylist: true);
+      expect(actions.indexOf(MediaAction.removeFromPlaylist), actions.indexOf(MediaAction.addToPlaylist) + 1);
     });
 
     test('a download can be deleted; an unknown artist and no album hide the "Go to" rows', () {
       final song = _song(source: 'download', artist: 'Unknown Artist', album: null);
       expect(
-        MediaContextMenu.actionsFor(song, canDelete: true, pipSupported: false),
+        MediaContextMenu.actionsFor(song, canDelete: true, pipSupported: false, shareSupported: false),
         [
           MediaAction.playNext,
           MediaAction.addToQueue,
@@ -289,7 +357,7 @@ void main() {
     test('a video: play, as audio, picture-in-picture where supported, details', () {
       expect(
         MediaContextMenu.actionsFor(_video(), canDelete: false, pipSupported: true),
-        [MediaAction.play, MediaAction.playAsAudio, MediaAction.pictureInPicture, MediaAction.details],
+        [MediaAction.play, MediaAction.playAsAudio, MediaAction.pictureInPicture, MediaAction.share, MediaAction.details],
       );
       expect(
         MediaContextMenu.actionsFor(_video(), canDelete: false, pipSupported: false),
@@ -297,16 +365,56 @@ void main() {
       );
     });
 
-    test('an online item: download, copy link, details', () {
+    test('an online item without a video id: download, copy link, share, details', () {
       final online = _song().copyWith(source: 'online', uri: 'https://youtu.be/abc123');
       expect(
         MediaContextMenu.actionsFor(online, canDelete: false, pipSupported: false),
-        [MediaAction.download, MediaAction.copyLink, MediaAction.details],
+        [MediaAction.download, MediaAction.copyLink, MediaAction.share, MediaAction.details],
       );
       expect(
         MediaContextMenu.actionsFor(online, canDelete: false, pipSupported: false, downloadsSupported: false),
-        [MediaAction.copyLink, MediaAction.details],
+        [MediaAction.copyLink, MediaAction.share, MediaAction.details],
       );
+    });
+
+    // LIB-12 probe: an online YouTube item could not be liked or put in a
+    // playlist at all.
+    test('a YouTube video can be liked and put in a playlist, then downloaded, copied, shared', () {
+      final record = MediaContextMenu.onlineRecordOf(_online());
+      expect(
+        MediaContextMenu.actionsFor(record, canDelete: false, pipSupported: false),
+        [
+          MediaAction.favorite,
+          MediaAction.addToPlaylist,
+          MediaAction.download,
+          MediaAction.copyLink,
+          MediaAction.share,
+          MediaAction.details,
+        ],
+      );
+      expect(MediaContextMenu.actionsFor(record, canDelete: false, pipSupported: false), isNot(contains(MediaAction.playNext)),
+          reason: 'a watch link never goes into the music queue');
+    });
+
+    test('an online item is kept as yt_<id> with the clean watch link and its https thumbnail', () {
+      final record = MediaContextMenu.onlineRecordOf(_online(id: 'stream_77'));
+      expect(record.id, 'yt_dQw4w9WgXcQ');
+      expect(record.uri, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+      expect(record.artworkPath, 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg');
+      expect(record.source, 'online');
+      // A stream URL from the queue still finds its video through the id.
+      final fromQueue = MediaContextMenu.onlineRecordOf(
+        _online(uri: 'https://rr1---sn.googlevideo.com/videoplayback?id=1'),
+      );
+      expect(fromQueue.uri, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+      // Songs on the phone are not touched.
+      expect(MediaContextMenu.onlineRecordOf(_song()), _song());
+    });
+
+    test('share types: a phone song keeps its MIME subtype, a download goes by its extension', () {
+      expect(MediaContextMenu.shareMimeType(_song()), 'audio/mpeg');
+      expect(MediaContextMenu.shareMimeType(_song(source: 'download').copyWith(uri: '/data/user/0/app/files/a.m4a')), 'audio/mp4');
+      expect(MediaContextMenu.shareMimeType(_video()), 'video/*');
     });
 
     test('details list the figures in DM Mono rows', () {
@@ -334,14 +442,14 @@ void main() {
         'Play next',
         'Add to queue',
         'Add to playlist…',
-        'Remove from favorites',
+        'Remove from Liked songs',
         'Go to album',
         'Go to artist',
+        'Share',
         'Details',
       ]);
       final heart = tester.widget<Icon>(find.byIcon(Icons.favorite_rounded));
       expect(heart.color, AppPalette.dark.favorite);
-      expect(find.text('Share'), findsNothing, reason: 'no share sheet in the app yet');
       expect(find.text('Delete from phone'), findsNothing, reason: 'only downloads can be deleted');
     });
 
@@ -395,35 +503,91 @@ void main() {
       expect(find.text('Created playlist "Dashain"'), findsOneWidget);
     });
 
-    testWidgets('Add to favorites toggles it, and Undo toggles it back', (tester) async {
+    testWidgets('Add to Liked songs toggles it, and Undo toggles it back', (tester) async {
       final h = await _pump(tester, _song());
       await _open(tester);
       expect(find.byIcon(Icons.favorite_border_rounded), findsOneWidget);
-      await _choose(tester, 'Add to favorites');
+      await _choose(tester, 'Add to Liked songs');
 
       verify(() => h.repo.toggleFavorite('song_1')).called(1);
-      expect(find.text('Added to Favorites'), findsOneWidget);
+      expect(find.text('Added to Liked songs'), findsOneWidget);
       await tester.tap(find.text('Undo'));
       await tester.pumpAndSettle();
       verify(() => h.repo.toggleFavorite('song_1')).called(1);
     });
 
-    testWidgets('Remove from favorites says so', (tester) async {
+    testWidgets('Remove from Liked songs says so', (tester) async {
       final h = await _pump(tester, _song(isFavorite: true), favorite: true);
       await _open(tester);
-      await _choose(tester, 'Remove from favorites');
+      await _choose(tester, 'Remove from Liked songs');
       verify(() => h.repo.toggleFavorite('song_1')).called(1);
-      expect(find.text('Removed from Favorites'), findsOneWidget);
+      expect(find.text('Removed from Liked songs'), findsOneWidget);
     });
 
-    testWidgets('Go to album opens the album page', (tester) async {
-      await _pump(tester, _song());
+    testWidgets('Go to album opens that very album (by its key), not a same-named one', (tester) async {
+      final h = await _pump(tester, _song());
       await _open(tester);
       await _choose(tester, 'Go to album');
 
       final page = tester.widget<AlbumDetailScreen>(find.byType(AlbumDetailScreen));
       expect(page.album.album, 'Lok Geet');
+      expect(page.album.key, 'id:42');
+      verify(() => h.repo.watchAlbumSongs('id:42')).called(1);
       expect(find.text('Play all'), findsOneWidget);
+    });
+
+    testWidgets('Share hands the song file to the share sheet', (tester) async {
+      final h = await _pump(tester, _song());
+      await _open(tester);
+      await _choose(tester, 'Share');
+      expect(h.platform.shared, ['file:content://media/external/audio/media/song_1:audio/mpeg']);
+    });
+
+    // LIB-08 probe: a song in a playlist had no "remove" in its menu, and a
+    // removal could not be undone.
+    testWidgets('Remove from this playlist takes out that entry, and Undo puts it back in its place', (tester) async {
+      final h = await _pump(
+        tester,
+        _song(),
+        playlistEntry: const PlaylistEntryRef(playlistId: 'pl_1', playlistName: 'Road trip', position: 4),
+      );
+      await _open(tester);
+      await _choose(tester, 'Remove from this playlist');
+      verify(() => h.repo.removeSongFromPlaylist('pl_1', 'song_1', 4)).called(1);
+      expect(find.text('Removed from Road trip'), findsOneWidget);
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle();
+      verify(() => h.repo.insertSongIntoPlaylist('pl_1', 'song_1', 4)).called(1);
+    });
+
+    // LIB-10 probe: the same song could be added to a playlist again and
+    // again without a word.
+    testWidgets('a playlist that already has the song is ticked, says so, and offers "Add anyway"', (tester) async {
+      final h = await _pump(tester, _song(), playlistsHolding: {'pl_1'});
+      await _open(tester);
+      await _choose(tester, 'Add to playlist…');
+      expect(find.text('3 songs · Added'), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle_rounded), findsOneWidget);
+      await _choose(tester, 'Road trip');
+      verifyNever(() => h.repo.addSongToPlaylist('pl_1', 'song_1'));
+      expect(find.text('Already in Road trip'), findsOneWidget);
+      await tester.tap(find.text('Add anyway'));
+      await tester.pumpAndSettle();
+      verify(() => h.repo.addSongToPlaylist('pl_1', 'song_1', allowDuplicate: true)).called(1);
+    });
+
+    testWidgets('"Liked songs" is pinned first in Add to playlist, and likes the song', (tester) async {
+      final h = await _pump(tester, _song());
+      await _open(tester);
+      await _choose(tester, 'Add to playlist…');
+      final titles = [
+        for (final tile in tester.widgetList<ListTile>(find.byType(ListTile))) (tile.title as Text?)?.data,
+      ].whereType<String>().toList();
+      expect(titles.first, 'Liked songs');
+      expect(titles, contains('Road trip'));
+      await _choose(tester, 'Liked songs');
+      verify(() => h.repo.toggleFavorite('song_1')).called(1);
+      expect(find.text('Added to Liked songs'), findsOneWidget);
     });
 
     testWidgets('Go to artist opens the artist page', (tester) async {
@@ -524,7 +688,7 @@ void main() {
     testWidgets('Play opens the player', (tester) async {
       final h = await _pump(tester, _video());
       await _open(tester);
-      expect(_sheetLabels(tester), ['Play', 'Play as audio', 'Picture-in-picture', 'Details']);
+      expect(_sheetLabels(tester), ['Play', 'Play as audio', 'Picture-in-picture', 'Share', 'Details']);
       expect(find.text('12:48 · 49.6 MB'), findsOneWidget, reason: 'the meta line');
       await _choose(tester, 'Play');
       expect(h.platform.openedVideos, ['video_1']);
@@ -581,6 +745,36 @@ void main() {
       expect(h.platform.copied, ['https://youtu.be/abc123']);
       expect(find.text('Link copied'), findsOneWidget);
     });
+
+    testWidgets('Like saves the video to the library first, then likes that row', (tester) async {
+      final h = await _pump(tester, _online(id: 'stream_77'));
+      await _open(tester);
+      expect(find.text('Channel · 3:33 · Online'), findsOneWidget, reason: 'the meta line says it is online');
+      await _choose(tester, 'Add to Liked songs');
+
+      final saved = verify(() => h.repo.saveOnlineItem(captureAny())).captured.single as MediaItem;
+      expect(saved.id, 'yt_dQw4w9WgXcQ');
+      expect(saved.uri, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+      expect(saved.source, 'online');
+      verify(() => h.repo.toggleFavorite('yt_dQw4w9WgXcQ')).called(1);
+      expect(find.text('Added to Liked songs'), findsOneWidget);
+    });
+
+    testWidgets('Add to playlist saves the video, then files it under its saved id', (tester) async {
+      final h = await _pump(tester, _online());
+      await _open(tester);
+      await _choose(tester, 'Add to playlist…');
+      await _choose(tester, 'Road trip');
+      verify(() => h.repo.saveOnlineItem(any())).called(1);
+      verify(() => h.repo.addSongToPlaylist('pl_1', 'yt_dQw4w9WgXcQ')).called(1);
+    });
+
+    testWidgets('Share sends the clean youtu.be link', (tester) async {
+      final h = await _pump(tester, _online());
+      await _open(tester);
+      await _choose(tester, 'Share');
+      expect(h.platform.shared, ['text:https://youtu.be/dQw4w9WgXcQ']);
+    });
   });
 
   group('themes and layouts', () {
@@ -616,7 +810,7 @@ void main() {
       await _open(tester);
 
       expect(find.byType(BottomSheet), findsNothing);
-      expect(find.byType(PopupMenuItem<MediaAction>), findsNWidgets(7));
+      expect(find.byType(PopupMenuItem<MediaAction>), findsNWidgets(8));
       final button = tester.getRect(find.text('open'));
       final first = tester.getRect(find.widgetWithText(PopupMenuItem<MediaAction>, 'Play next'));
       expect((first.center - button.center).distance, lessThan(300), reason: 'next to the button, not a sheet');
@@ -637,6 +831,7 @@ void main() {
       container = ProviderContainer(overrides: [
         appDatabaseProvider.overrideWithValue(db),
         libraryRepositoryProvider.overrideWithValue(LibraryRepositoryImpl(db)),
+        downloadDirectoryProvider.overrideWith((ref) async => dir),
       ]);
     });
 
@@ -669,7 +864,8 @@ void main() {
       final pl = await repo.createPlaylist('Mix');
       await repo.addSongToPlaylist(pl.id, 'other');
       await repo.addSongToPlaylist(pl.id, 'dl_1');
-      await repo.addSongToPlaylist(pl.id, 'other');
+      // Changed on purpose (LIB-10): a second copy needs allowDuplicate.
+      await repo.addSongToPlaylist(pl.id, 'other', allowDuplicate: true);
       await db.into(db.videoProgressTable).insert(VideoProgressTableCompanion.insert(
             mediaId: 'dl_1',
             positionMs: 10,
@@ -717,5 +913,65 @@ void main() {
           .get();
       expect([for (final e in entries) (e.mediaId, e.position)], [('other', 0), ('other', 1)]);
     });
+
+    test('a download whose path is outside the downloads folder keeps that file', () async {
+      final outsideDir = Directory.systemTemp.createTempSync('media_sheet_outside');
+      addTearDown(() => outsideDir.deleteSync(recursive: true));
+      final file = File('${outsideDir.path}/someone_elses.mp3')..writeAsStringSync('audio');
+      await insertSong('dl_2', file.path);
+      final item = MediaItem(
+        id: 'dl_2',
+        uri: file.path,
+        mediaType: MediaType.audio,
+        title: 'dl_2',
+        durationMs: 1000,
+        sizeBytes: 10,
+        dateAdded: DateTime(2026),
+        source: 'download',
+      );
+      await container.read(mediaFileDeleterProvider).delete(item);
+      expect(file.existsSync(), isTrue, reason: 'only files inside the downloads folder are deleted');
+      expect(await db.select(db.mediaItemsTable).get(), isEmpty, reason: 'the library row still goes');
+    });
+
+    test('isPathInside refuses the folder itself, siblings and climbing out with ..', () {
+      final root = dir.path;
+      expect(isPathInside(root, '$root/a.mp3'), isTrue);
+      expect(isPathInside(root, '$root/sub/a.mp3'), isTrue);
+      expect(isPathInside(root, root), isFalse);
+      expect(isPathInside(root, '$root/../evil.mp3'), isFalse);
+      expect(isPathInside(root, '${root}_other/a.mp3'), isFalse);
+    });
+  });
+
+  // Real fonts (the test font draws every glyph as a 1 em square): last in
+  // the file, so the tests above keep the test font.
+  group('Add to playlist header with the app fonts', () {
+    setUpAll(loadAppFonts);
+
+    for (final (width, scale) in [(320.0, 1.3), (360.0, 1.0)]) {
+      testWidgets('the title is never cut to "Add to …" ($width dp, ${scale}x text)', (tester) async {
+        await _pump(tester, _song(), size: Size(width, 720), theme: AppTheme.lightTheme);
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await tester.pump();
+        await _open(tester);
+        await _choose(tester, 'Add to playlist…');
+
+        final title = find.byKey(const ValueKey('add_to_playlist_title'));
+        final paragraph = tester.renderObject<RenderParagraph>(find.descendant(of: title, matching: find.byType(RichText)));
+        expect(paragraph.size.width, greaterThanOrEqualTo(paragraph.getMaxIntrinsicWidth(double.infinity) - 0.5),
+            reason: 'the whole title on one line');
+        expect(paragraph.didExceedMaxLines, isFalse);
+        final button = tester.getRect(find.widgetWithText(TextButton, 'New playlist'));
+        expect(button.right, lessThanOrEqualTo(width), reason: 'New playlist stays on screen');
+        expect(button.overlaps(tester.getRect(title)), isFalse);
+        if (scale == 1.0) {
+          expect((button.center.dy - tester.getRect(title).center.dy).abs(), lessThan(4),
+              reason: 'side by side when they fit');
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
   });
 }

@@ -118,6 +118,12 @@ void main() {
     when(() => permissions.checkVideoPermission()).thenAnswer((_) async => MediaPermissionState.granted);
 
     await pump(tester, const MusicScreen(), extra: [mediaPermissionServiceProvider.overrideWithValue(permissions)]);
+    // Albums is the fourth chip now (Songs, Liked songs, Playlists, Albums,
+    // Artists): bring it into the row's view first.
+    final chipRow = find.ancestor(of: find.text('Songs'), matching: find.byType(Scrollable)).first;
+    await tester.scrollUntilVisible(find.text('Albums'), 120, scrollable: chipRow);
+    await tester.ensureVisible(find.text('Albums'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Albums'));
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 100));

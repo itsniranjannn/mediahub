@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path/path.dart' as p;
 
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/platform/device_controls.dart';
+import '../../core/platform/share_channel.dart';
 import '../../core/platform_info.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
@@ -19,23 +21,28 @@ import '../../domain/models/playlist_and_groups.dart';
 import '../../domain/repositories/library_repository.dart';
 import '../../shared/widgets/favorite_feedback_button.dart' show isFavoriteProvider;
 import '../downloads/download_link_inbox.dart';
+import '../downloads/download_providers.dart';
 import '../music_player/playback_notifier.dart';
+import '../online/youtube_urls.dart';
 import '../playlists/playlist_cover.dart';
 import 'detail_screens.dart';
+import 'playable.dart';
 
 /// Everything the media sheet can do with an item (docs/DESIGN.md 7.10).
 ///
 /// Which of them an item gets is decided by [MediaContextMenu.actionsFor]:
-/// - songs: [playNext], [addToQueue], [addToPlaylist], [favorite],
-///   [goToAlbum], [goToArtist], [details], then [delete];
-/// - videos: [play], [playAsAudio], [pictureInPicture], [details], [delete];
-/// - online items: [download], [copyLink], [details].
+/// - songs: [playNext], [addToQueue], [addToPlaylist], [removeFromPlaylist]
+///   (in a playlist), [favorite] (Liked songs), [goToAlbum], [goToArtist],
+///   [share], [details], then [delete];
+/// - videos: [play], [playAsAudio], [pictureInPicture], [share], [details],
+///   [delete];
+/// - Online (YouTube) items: [favorite], [addToPlaylist],
+///   [removeFromPlaylist], [download], [copyLink], [share], [details].
 ///
-/// "Share" is not offered: the app has no share sheet yet (it needs a native
-/// `ACTION_SEND` / `UIActivityViewController` bridge or the share_plus
-/// plugin). "Delete" is offered only for downloads, the files the app owns;
-/// removing a file another app put on the phone needs Android's
-/// `MediaStore.createDeleteRequest`, which the native side does not expose.
+/// "Share" needs the system share sheet (Android). "Delete" is offered only
+/// for downloads, the files the app owns; removing a file another app put on
+/// the phone needs Android's `MediaStore.createDeleteRequest` and an
+/// Activity result, which the app does not have yet.
 enum MediaAction {
   play,
   playAsAudio,
@@ -43,13 +50,26 @@ enum MediaAction {
   playNext,
   addToQueue,
   addToPlaylist,
+  removeFromPlaylist,
   favorite,
   goToAlbum,
   goToArtist,
   download,
   copyLink,
+  share,
   details,
   delete,
+}
+
+/// Where in a playlist a song's menu was opened: "Remove from this
+/// playlist" takes out that entry (its stored position).
+@immutable
+class PlaylistEntryRef {
+  final String playlistId;
+  final String playlistName;
+  final int position;
+
+  const PlaylistEntryRef({required this.playlistId, required this.playlistName, required this.position});
 }
 
 /// The platform pieces the media sheet uses, so tests can stand in for them.
@@ -70,6 +90,16 @@ class MediaMenuPlatform {
   void openTab(BuildContext context, String location) => GoRouter.maybeOf(context)?.go(location);
 
   Future<void> copyText(String text) => Clipboard.setData(ClipboardData(text: text));
+
+  /// Whether the system share sheet is there.
+  bool get shareSupported => ShareChannel.available;
+
+  /// Opens the share sheet for a media file; false when it could not.
+  Future<bool> shareFile({required String uriOrPath, required String mimeType, String? title}) =>
+      ShareChannel.shareFile(uriOrPath: uriOrPath, mimeType: mimeType, title: title);
+
+  /// Opens the share sheet for a link; false when it could not.
+  Future<bool> shareText(String text) => ShareChannel.shareText(text);
 }
 
 final mediaMenuPlatformProvider = Provider<MediaMenuPlatform>((ref) => const MediaMenuPlatform());
@@ -87,17 +117,23 @@ abstract interface class MediaFileDeleter {
 
 final mediaFileDeleterProvider = Provider<MediaFileDeleter>((ref) => _DownloadedFileDeleter(ref));
 
+/// Whether [path] is a file inside [dir] (never [dir] itself, never a path
+/// that climbs out of it with `..`).
+bool isPathInside(String dir, String path) => p.isWithin(p.normalize(dir), p.normalize(path));
+
 /// Deletes downloads: their file lives in the app's own storage, so the app
-/// may remove it. Then its saved cover, its rows in Downloads, its playlist
-/// entries (each playlist renumbered, as reordering works on positions), its
-/// video progress and its library row go too.
+/// may remove it. Then its saved cover and its rows in Downloads go, and
+/// [LibraryRepository.deleteMediaCompletely] takes it out of every playlist
+/// (each renumbered), its video progress and its library row.
+///
+/// Only files inside the downloads folder are ever deleted: a row pointing
+/// anywhere else (a corrupt or crafted database) loses its rows, not a file.
 class _DownloadedFileDeleter implements MediaFileDeleter {
   final Ref _ref;
 
   _DownloadedFileDeleter(this._ref);
 
-  static bool _isLocalPath(String? path) =>
-      path != null && path.isNotEmpty && !path.contains('://');
+  static bool _isLocalPath(String? path) => path != null && path.isNotEmpty && !path.contains('://');
 
   @override
   bool canDelete(MediaItem item) => item.source == 'download' && _isLocalPath(item.uri);
@@ -107,32 +143,28 @@ class _DownloadedFileDeleter implements MediaFileDeleter {
     if (!canDelete(item)) throw StateError('${item.id} is not a download');
     final db = _ref.read(appDatabaseProvider);
     final repo = _ref.read(libraryRepositoryProvider);
+    final dir = (await _ref.read(downloadDirectoryProvider.future)).path;
 
     final downloads = await (db.select(db.downloadsTable)..where((t) => t.mediaId.equals(item.id))).get();
 
     // The media file first: if it cannot go, the library keeps its row and
     // the song still plays.
-    final media = File(item.uri);
-    if (await media.exists()) await media.delete();
+    if (isPathInside(dir, item.uri)) {
+      final media = File(item.uri);
+      if (await media.exists()) await media.delete();
+    }
     for (final path in {item.artworkPath, for (final d in downloads) ...[d.finalPath, d.thumbnailPath]}) {
-      if (!_isLocalPath(path) || path == item.uri) continue;
+      if (!_isLocalPath(path) || path == item.uri || !isPathInside(dir, path!)) continue;
       try {
-        final file = File(path!);
+        final file = File(path);
         if (await file.exists()) await file.delete();
       } catch (_) {
         // A leftover cover is harmless; the startup sweep may still get it.
       }
     }
 
-    final entries = await (db.select(db.playlistItemsTable)..where((t) => t.mediaId.equals(item.id))).get();
-    // Highest position first, so removing one never moves the next.
-    entries.sort((a, b) => b.position.compareTo(a.position));
-    for (final entry in entries) {
-      await repo.removeSongFromPlaylist(entry.playlistId, entry.mediaId, entry.position);
-    }
-    await (db.delete(db.videoProgressTable)..where((t) => t.mediaId.equals(item.id))).go();
+    await repo.deleteMediaCompletely(item.id);
     await (db.delete(db.downloadsTable)..where((t) => t.mediaId.equals(item.id))).go();
-    await (db.delete(db.mediaItemsTable)..where((t) => t.id.equals(item.id))).go();
   }
 }
 
@@ -157,17 +189,26 @@ class MediaContextMenu {
   static const double rowHeight = 56;
   static const double menuRowHeight = 48;
 
+  /// The name of the liked-songs list everywhere ("wishlist").
+  static const String likedSongs = 'Liked songs';
+
   /// The title the sheet, its dialogs and snackbars show: a video without
   /// its file extension, as on the video cards it opens from.
   static String shownTitle(MediaItem item) =>
-      item.mediaType == MediaType.video ? videoDisplayTitle(item.title) : item.title;
+      item.mediaType == MediaType.video && !item.isOnline ? videoDisplayTitle(item.title) : item.title;
 
   /// Opens the media sheet for [item].
   ///
   /// [anchorContext] is the ⋮ button the wide-screen popup hangs from
   /// (defaults to [context]). [without] drops actions that make no sense
   /// where the sheet is opened ("Go to album" on that album's page).
-  /// [onCustomAction] is kept for older callers and is not used.
+  /// [playlistEntry] adds "Remove from this playlist" for a song opened on a
+  /// playlist page. [onCustomAction] is kept for older callers and is not
+  /// used.
+  ///
+  /// Online items (`source == 'online'`, e.g. from the Online tab's watch
+  /// strip) are saved to the library when they are liked or put in a
+  /// playlist ([LibraryRepository.saveOnlineItem]).
   static Future<void> show(
     BuildContext context,
     WidgetRef ref,
@@ -175,9 +216,33 @@ class MediaContextMenu {
     VoidCallback? onCustomAction,
     BuildContext? anchorContext,
     Set<MediaAction> without = const {},
+    PlaylistEntryRef? playlistEntry,
   }) {
-    return _MediaMenu(context, item).open(anchorContext ?? context, without);
+    return _MediaMenu(context, onlineRecordOf(item), playlistEntry).open(anchorContext ?? context, without);
   }
+
+  /// The library row an Online item is kept as: id `yt_<video id>`, the
+  /// canonical watch link as uri and the https thumbnail as artwork, whatever
+  /// link or stream it came with. Other items, and Online items without a
+  /// YouTube video id, are returned as they are.
+  static MediaItem onlineRecordOf(MediaItem item) {
+    if (!item.isOnline) return item;
+    var videoId = youTubeVideoIdFromString(item.uri);
+    if (videoId == null && item.id.startsWith('yt_') && isValidYouTubeVideoId(item.id.substring(3))) {
+      videoId = item.id.substring(3);
+    }
+    if (videoId == null) return item;
+    final art = item.artworkPath;
+    return item.copyWith(
+      id: 'yt_$videoId',
+      uri: 'https://www.youtube.com/watch?v=$videoId',
+      artworkPath: art != null && art.startsWith('https://') ? art : youTubeThumbnailFor(videoId),
+      sizeBytes: 0,
+    );
+  }
+
+  /// Whether [item] is an Online item that can be saved (it has a video).
+  static bool _isSavableOnline(MediaItem item) => item.isOnline && item.id.startsWith('yt_') && _isWebLink(item.uri);
 
   /// The actions [item] gets, in sheet order.
   @visibleForTesting
@@ -186,12 +251,19 @@ class MediaContextMenu {
     required bool canDelete,
     required bool pipSupported,
     bool downloadsSupported = true,
+    bool shareSupported = true,
+    bool inPlaylist = false,
   }) {
-    if (item.source == 'online') {
+    if (item.isOnline) {
       final link = _isWebLink(item.uri);
+      final savable = _isSavableOnline(item);
       return [
+        if (savable) MediaAction.favorite,
+        if (savable) MediaAction.addToPlaylist,
+        if (inPlaylist) MediaAction.removeFromPlaylist,
         if (link && downloadsSupported) MediaAction.download,
         if (link) MediaAction.copyLink,
+        if (link && shareSupported) MediaAction.share,
         MediaAction.details,
       ];
     }
@@ -200,6 +272,7 @@ class MediaContextMenu {
         MediaAction.play,
         MediaAction.playAsAudio,
         if (pipSupported) MediaAction.pictureInPicture,
+        if (shareSupported) MediaAction.share,
         MediaAction.details,
         if (canDelete) MediaAction.delete,
       ];
@@ -208,9 +281,11 @@ class MediaContextMenu {
       MediaAction.playNext,
       MediaAction.addToQueue,
       MediaAction.addToPlaylist,
+      if (inPlaylist) MediaAction.removeFromPlaylist,
       MediaAction.favorite,
       if (_albumOf(item) != null) MediaAction.goToAlbum,
       if (_artistOf(item) != null) MediaAction.goToArtist,
+      if (shareSupported) MediaAction.share,
       MediaAction.details,
       if (canDelete) MediaAction.delete,
     ];
@@ -222,15 +297,8 @@ class MediaContextMenu {
     return (album == null || album.isEmpty) ? null : item.album;
   }
 
-  /// The artist name to open, or null for an unknown artist (the scan stores
-  /// "Unknown Artist" for those).
-  static String? _artistOf(MediaItem item) {
-    final artist = item.artist?.trim();
-    if (artist == null || artist.isEmpty) return null;
-    final lower = artist.toLowerCase();
-    if (lower == 'unknown artist' || lower == '<unknown>') return null;
-    return item.artist;
-  }
+  /// The artist name to open, or null for an unknown artist.
+  static String? _artistOf(MediaItem item) => isUnknownArtistName(item.artist) ? null : item.artist;
 
   static bool _isWebLink(String uri) => uri.startsWith('https://') || uri.startsWith('http://');
 
@@ -243,13 +311,15 @@ class MediaContextMenu {
       MediaAction.playNext => (Icons.playlist_play_rounded, 'Play next'),
       MediaAction.addToQueue => (Icons.queue_music_rounded, 'Add to queue'),
       MediaAction.addToPlaylist => (Icons.playlist_add_rounded, 'Add to playlist…'),
+      MediaAction.removeFromPlaylist => (Icons.playlist_remove_rounded, 'Remove from this playlist'),
       MediaAction.favorite => isFavorite
-          ? (Icons.favorite_rounded, 'Remove from favorites')
-          : (Icons.favorite_border_rounded, 'Add to favorites'),
+          ? (Icons.favorite_rounded, 'Remove from $likedSongs')
+          : (Icons.favorite_border_rounded, 'Add to $likedSongs'),
       MediaAction.goToAlbum => (Icons.album_rounded, 'Go to album'),
       MediaAction.goToArtist => (Icons.person_rounded, 'Go to artist'),
       MediaAction.download => (Icons.file_download_rounded, 'Download'),
       MediaAction.copyLink => (Icons.link_rounded, 'Copy link'),
+      MediaAction.share => (Icons.share_rounded, 'Share'),
       MediaAction.details => (Icons.info_outline_rounded, 'Details'),
       MediaAction.delete => (Icons.delete_outline_rounded, 'Delete from phone'),
     };
@@ -258,6 +328,21 @@ class MediaContextMenu {
   /// The "Details" rows for [item]: (label, value, whether it is a figure).
   @visibleForTesting
   static List<(String, String, bool)> detailRows(MediaItem item) => _MediaDetails.rowsFor(item);
+
+  /// The MIME type to share [item] with.
+  @visibleForTesting
+  static String shareMimeType(MediaItem item) {
+    final kind = item.mediaType == MediaType.video ? 'video' : 'audio';
+    final format = item.format?.trim().toLowerCase();
+    if (item.source == 'device' && format != null && format.isNotEmpty && !format.contains('/')) {
+      // MediaStore songs keep their MIME subtype ("mpeg", "mp4").
+      return '$kind/$format';
+    }
+    final fromName = ShareChannel.mimeTypeFor(item.uri, fallback: '');
+    if (fromName.isNotEmpty) return fromName;
+    if (format != null && format.isNotEmpty) return ShareChannel.mimeTypeFor('x.$format', fallback: '$kind/*');
+    return '$kind/*';
+  }
 
   static void showNewPlaylistDialog(BuildContext context, WidgetRef ref, {MediaItem? initialSong}) {
     _showNewPlaylistDialog(context, ProviderScope.containerOf(context, listen: false), initialSong: initialSong);
@@ -271,7 +356,10 @@ class MediaContextMenu {
         onCreate: (name) async {
           final repo = container.read(libraryRepositoryProvider);
           final pl = await repo.createPlaylist(name);
-          if (initialSong != null) await repo.addSongToPlaylist(pl.id, initialSong.id);
+          if (initialSong != null) {
+            final song = initialSong.isOnline ? await repo.saveOnlineItem(initialSong) : initialSong;
+            await repo.addSongToPlaylist(pl.id, song.id);
+          }
           if (messenger != null && messenger.mounted) {
             messenger.showSnackBar(SnackBar(content: Text('Created playlist "${pl.name}"')));
           }
@@ -342,7 +430,7 @@ class _NewPlaylistDialogState extends State<_NewPlaylistDialog> {
 /// providers it acts through (the caller's container, which outlives the row
 /// that opened it).
 class _MediaMenu {
-  _MediaMenu(this.context, this.item)
+  _MediaMenu(this.context, this.item, this.playlistEntry)
       : container = ProviderScope.containerOf(context, listen: false),
         messenger = ScaffoldMessenger.maybeOf(context);
 
@@ -350,6 +438,7 @@ class _MediaMenu {
   /// navigator.
   final BuildContext context;
   final MediaItem item;
+  final PlaylistEntryRef? playlistEntry;
   final ProviderContainer container;
   final ScaffoldMessengerState? messenger;
 
@@ -366,13 +455,15 @@ class _MediaMenu {
       MediaQuery.sizeOf(context).width >= 600 || MediaQuery.orientationOf(context) == Orientation.landscape;
 
   Future<void> open(BuildContext anchor, Set<MediaAction> without) async {
-    final pip = item.mediaType == MediaType.video && item.source != 'online' && await _platform.isPipSupported();
+    final pip = item.mediaType == MediaType.video && !item.isOnline && await _platform.isPipSupported();
     if (!context.mounted) return;
     final actions = MediaContextMenu.actionsFor(
       item,
       canDelete: container.read(mediaFileDeleterProvider).canDelete(item),
       pipSupported: pip,
       downloadsSupported: PlatformInfo.supportsDownloads,
+      shareSupported: _platform.shareSupported,
+      inPlaylist: playlistEntry != null,
     ).where((a) => !without.contains(a)).toList();
 
     final MediaAction? chosen;
@@ -466,17 +557,21 @@ class _MediaMenu {
         if (context.mounted) _platform.openVideo(context, item);
       case MediaAction.playAsAudio:
         if (!_fileIsThere()) return;
-        await _playback.loadQueue([item]);
+        await _playback.loadQueue([item], shuffle: _playback.shuffleMode);
         _snack('Playing as audio: ${MediaContextMenu.shownTitle(item)}', duration: const Duration(seconds: 2));
       case MediaAction.pictureInPicture:
         await _pictureInPicture();
       case MediaAction.playNext:
+        if (!_fileIsThere()) return;
         _playback.playNext(item);
         _snack('Playing next: ${item.title}', duration: const Duration(seconds: 2));
       case MediaAction.addToQueue:
+        if (!_fileIsThere()) return;
         _addToQueue();
       case MediaAction.addToPlaylist:
         if (context.mounted) _AddToPlaylistSheet.show(_appContext, container, messenger, item);
+      case MediaAction.removeFromPlaylist:
+        await _removeFromPlaylist();
       case MediaAction.favorite:
         await _toggleFavorite();
       case MediaAction.goToAlbum:
@@ -487,8 +582,10 @@ class _MediaMenu {
         container.read(downloadLinkInboxProvider.notifier).send(PendingDownloadLink(item.uri, title: item.title));
         if (context.mounted) _platform.openTab(context, '/downloads');
       case MediaAction.copyLink:
-        await _platform.copyText(item.uri);
+        await _platform.copyText(_shareLink());
         _snack('Link copied', duration: const Duration(seconds: 2));
+      case MediaAction.share:
+        await _share();
       case MediaAction.details:
         if (context.mounted) await _MediaDetails.show(_appContext, item);
       case MediaAction.delete:
@@ -523,16 +620,58 @@ class _MediaMenu {
     );
   }
 
+  /// The link "Copy link" and "Share" hand out for an Online item: the
+  /// short youtu.be form without tracking parameters.
+  String _shareLink() => canonicalYouTubeLink(Uri.tryParse(item.uri)) ?? item.uri;
+
+  Future<void> _share() async {
+    final bool ok;
+    if (item.isOnline) {
+      ok = await _platform.shareText(_shareLink());
+    } else {
+      ok = await _platform.shareFile(
+        uriOrPath: item.uri,
+        mimeType: MediaContextMenu.shareMimeType(item),
+        title: MediaContextMenu.shownTitle(item),
+      );
+    }
+    if (!ok) _snack("Couldn't open the share sheet.");
+  }
+
+  Future<void> _removeFromPlaylist() async {
+    final entry = playlistEntry;
+    if (entry == null) return;
+    final repo = _repo;
+    await repo.removeSongFromPlaylist(entry.playlistId, item.id, entry.position);
+    _snack(
+      'Removed from ${entry.playlistName}',
+      duration: const Duration(seconds: 4),
+      action: SnackBarAction(
+        label: 'Undo',
+        onPressed: () => repo.insertSongIntoPlaylist(entry.playlistId, item.id, entry.position),
+      ),
+    );
+  }
+
   Future<void> _toggleFavorite() async {
+    final repo = _repo;
+    var id = item.id;
+    if (item.isOnline) {
+      try {
+        id = (await repo.saveOnlineItem(item)).id;
+      } catch (_) {
+        _snack("Couldn't save this video.");
+        return;
+      }
+    }
     final next = !await _currentFavorite();
     HapticFeedback.lightImpact();
-    final repo = _repo;
-    await repo.toggleFavorite(item.id);
+    await repo.toggleFavorite(id);
     final m = messenger;
     if (m == null || !m.mounted) return;
     m.hideCurrentSnackBar();
     m.showSnackBar(SnackBar(
-      content: Text(next ? 'Added to Favorites' : 'Removed from Favorites'),
+      content: Text(next ? 'Added to ${MediaContextMenu.likedSongs}' : 'Removed from ${MediaContextMenu.likedSongs}'),
       behavior: SnackBarBehavior.floating,
       margin: const EdgeInsets.only(
         left: AppSpacing.lg16,
@@ -541,27 +680,28 @@ class _MediaMenu {
       ),
       duration: const Duration(seconds: 3),
       persist: false,
-      action: SnackBarAction(label: 'Undo', onPressed: () => repo.toggleFavorite(item.id)),
+      action: SnackBarAction(label: 'Undo', onPressed: () => repo.toggleFavorite(id)),
     ));
   }
 
   Future<void> _goToAlbum() async {
     final name = MediaContextMenu._albumOf(item);
     if (name == null) return;
-    // The album's own group, so its page shows the same cover as its tile;
-    // a plain group if the library does not answer in time.
+    // The album's own group (by its key, so a same-named album by someone
+    // else is never opened), with the same cover as its tile; a plain group
+    // if the library does not answer in time.
     AlbumGroup? group;
     try {
-      final albums = await _repo.watchAlbums(searchQuery: name).first.timeout(const Duration(seconds: 2));
-      group = albums.where((a) => a.album == name).firstOrNull;
+      group = await _repo.findAlbumOf(item).timeout(const Duration(seconds: 2));
     } catch (_) {}
     group ??= AlbumGroup(
       album: name,
-      artist: item.artist ?? 'Unknown artist',
+      artist: item.albumArtist ?? item.artist ?? ArtistGroup.unknownArtist,
       songCount: 0,
       totalDurationMs: 0,
       coverUri: item.uri,
       coverArtworkPath: item.artworkPath,
+      key: LibraryRepositoryImpl.albumKeyOfItem(item),
     );
     if (!context.mounted) return;
     final album = group;
@@ -625,10 +765,9 @@ class _MediaMenu {
       return;
     }
     // Out of the queue too, so it is not tried later.
-    final queue = container.read(playbackNotifierProvider);
-    for (var i = queue.queue.length - 1; i >= 0; i--) {
-      if (queue.queue[i].id == item.id && i != queue.queueIndex) await _playback.removeQueueItemAt(i);
-    }
+    try {
+      await removeFromPlayQueue(container, item.id);
+    } catch (_) {}
     _snack('Deleted "$shown"');
   }
 }
@@ -681,6 +820,14 @@ class _SheetHeader extends StatelessWidget {
   const _SheetHeader({required this.item});
 
   static String metaLine(MediaItem item) {
+    if (item.isOnline) {
+      final artist = item.artist;
+      return [
+        if (artist != null && artist.isNotEmpty) artist,
+        if (item.durationMs > 0) formatClock(Duration(milliseconds: item.durationMs)),
+        'Online',
+      ].join(' · ');
+    }
     if (item.mediaType == MediaType.video) {
       return [
         if (item.durationMs > 0) formatClock(Duration(milliseconds: item.durationMs)),
@@ -688,7 +835,7 @@ class _SheetHeader extends StatelessWidget {
         if (item.source == 'download') 'Downloaded',
       ].join(' · ');
     }
-    final artist = item.artist ?? 'Unknown artist';
+    final artist = isUnknownArtistName(item.artist) ? ArtistGroup.unknownArtist : item.artist!;
     final album = item.album;
     return (album != null && album.isNotEmpty) ? '$artist · $album' : artist;
   }
@@ -803,8 +950,9 @@ class _MenuItemLabel extends StatelessWidget {
   }
 }
 
-/// "Add to playlist…": the same sheet shell with the playlists, and "New
-/// playlist" at the top.
+/// "Add to playlist…": the same sheet shell with "Liked songs" pinned first,
+/// then the playlists, and "New playlist" at the top. A playlist that already
+/// holds the song shows a check; picking it says so and offers "Add anyway".
 class _AddToPlaylistSheet extends StatelessWidget {
   final MediaItem item;
   final ProviderContainer container;
@@ -838,114 +986,240 @@ class _AddToPlaylistSheet extends StatelessWidget {
     );
   }
 
+  void _snack(String text, {SnackBarAction? action}) {
+    final m = messenger;
+    if (m == null || !m.mounted) return;
+    m.hideCurrentSnackBar();
+    m.showSnackBar(SnackBar(
+      content: Text(text),
+      duration: Duration(seconds: action == null ? 2 : 4),
+      persist: action == null ? null : false,
+      action: action,
+    ));
+  }
+
+  /// The id to file the song under: an Online item is saved first.
+  Future<String?> _savedId() async {
+    if (!item.isOnline) return item.id;
+    try {
+      return (await container.read(libraryRepositoryProvider).saveOnlineItem(item)).id;
+    } catch (_) {
+      _snack("Couldn't save this video.");
+      return null;
+    }
+  }
+
+  Future<void> _addTo(Playlist pl, {required bool alreadyThere}) async {
+    final repo = container.read(libraryRepositoryProvider);
+    if (alreadyThere) {
+      _snack(
+        'Already in ${pl.name}',
+        action: SnackBarAction(
+          label: 'Add anyway',
+          onPressed: () => repo.addSongToPlaylist(pl.id, item.id, allowDuplicate: true),
+        ),
+      );
+      return;
+    }
+    final id = await _savedId();
+    if (id == null) return;
+    final added = await repo.addSongToPlaylist(pl.id, id);
+    if (added) {
+      _snack('Added to ${pl.name}');
+    } else {
+      _snack(
+        'Already in ${pl.name}',
+        action: SnackBarAction(
+          label: 'Add anyway',
+          onPressed: () => repo.addSongToPlaylist(pl.id, id, allowDuplicate: true),
+        ),
+      );
+    }
+  }
+
+  Future<void> _like(bool liked) async {
+    if (liked) {
+      _snack('Already in ${MediaContextMenu.likedSongs}');
+      return;
+    }
+    final id = await _savedId();
+    if (id == null) return;
+    await container.read(libraryRepositoryProvider).toggleFavorite(id);
+    _snack('Added to ${MediaContextMenu.likedSongs}');
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final type = context.typography;
+    final repo = container.read(libraryRepositoryProvider);
     return StreamBuilder<List<Playlist>>(
-      stream: container.read(libraryRepositoryProvider).watchPlaylists(),
+      stream: repo.watchPlaylists(),
       builder: (context, snapshot) {
         final playlists = snapshot.data ?? const <Playlist>[];
-        return SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.sm8, 0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Semantics(
-                        header: true,
-                        child: Text(
-                          'Add to playlist',
-                          style: type.sectionTitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+        return StreamBuilder<Set<String>>(
+          stream: repo.watchPlaylistIdsContaining(item.id),
+          builder: (context, containing) {
+            final holding = containing.data ?? const <String>{};
+            return SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.sm8, 0),
+                    // Title and "New playlist" share the row; when both do not
+                    // fit (320 dp at large text) the button goes under the
+                    // title instead of cutting it to "Add to ...".
+                    child: OverflowBar(
+                      alignment: MainAxisAlignment.spaceBetween,
+                      overflowAlignment: OverflowBarAlignment.start,
+                      children: [
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            'Add to playlist',
+                            key: const ValueKey('add_to_playlist_title'),
+                            style: type.sectionTitle,
+                          ),
                         ),
-                      ),
+                        TextButton.icon(
+                          icon: const Icon(Icons.add_rounded, size: 20),
+                          label: const Text('New playlist'),
+                          onPressed: () {
+                            Navigator.pop(context);
+                            if (!hostContext.mounted) return;
+                            MediaContextMenu._showNewPlaylistDialog(hostContext, container, initialSong: item);
+                          },
+                        ),
+                      ],
                     ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.add_rounded, size: 20),
-                      label: const Text('New playlist'),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        if (!hostContext.mounted) return;
-                        MediaContextMenu._showNewPlaylistDialog(hostContext, container, initialSong: item);
-                      },
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.md12),
+                    child: Text(
+                      item.title,
+                      style: type.metadata,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.md12),
-                child: Text(
-                  item.title,
-                  style: type.metadata,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Divider(height: 1, thickness: 1, color: palette.divider),
-              if (playlists.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl24, vertical: AppSpacing.xxxl32),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.queue_music_rounded, size: 36, color: palette.primary),
-                      const SizedBox(height: AppSpacing.md12),
-                      Text(
-                        'No playlists yet. Create one above!',
-                        style: type.body.copyWith(color: palette.textSecondary),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
                   ),
-                )
-              else
-                Flexible(
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm8),
-                    itemCount: playlists.length,
-                    itemBuilder: (itemContext, index) {
-                      final pl = playlists[index];
-                      return ListTile(
-                        minTileHeight: 64,
-                        leading: PlaylistCover(
-                          playlistId: pl.id,
-                          size: 48,
-                          borderRadius: AppSpacing.radiusArtSmall,
+                  Divider(height: 1, thickness: 1, color: palette.divider),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm8),
+                      children: [
+                        _LikedSongsRow(
+                          itemId: item.id,
+                          fallback: item.isFavorite,
+                          onTap: (liked) {
+                            Navigator.pop(context);
+                            _like(liked);
+                          },
                         ),
-                        title: Text(pl.name, style: type.bodyStrong, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        subtitle: Text(
-                          pl.songCount == 1 ? '1 song' : '${pl.songCount} songs',
-                          style: type.metadata,
-                        ),
-                        trailing: Icon(Icons.add_rounded, color: palette.textSecondary),
-                        onTap: () async {
-                          Navigator.pop(context);
-                          await container.read(libraryRepositoryProvider).addSongToPlaylist(pl.id, item.id);
-                          final m = messenger;
-                          if (m != null && m.mounted) {
-                            m.showSnackBar(SnackBar(
-                              content: Text('Added to ${pl.name}'),
-                              duration: const Duration(seconds: 2),
-                            ));
-                          }
-                        },
-                      );
-                    },
+                        if (playlists.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.xxl24,
+                              vertical: AppSpacing.xl20,
+                            ),
+                            child: Text(
+                              'No playlists yet. Create one above!',
+                              style: type.body.copyWith(color: palette.textSecondary),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        for (final pl in playlists)
+                          _PlaylistPickRow(
+                            playlist: pl,
+                            contains: holding.contains(pl.id),
+                            onTap: () {
+                              Navigator.pop(context);
+                              _addTo(pl, alreadyThere: holding.contains(pl.id));
+                            },
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-            ],
-          ),
+                ],
+              ),
+            );
+          },
         );
       },
     );
+  }
+}
+
+/// "Liked songs" pinned first in the playlist picker: the heart cover, and
+/// a check once the song is liked.
+class _LikedSongsRow extends ConsumerWidget {
+  final String itemId;
+  final bool fallback;
+  final void Function(bool liked) onTap;
+
+  const _LikedSongsRow({required this.itemId, required this.fallback, required this.onTap});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final type = context.typography;
+    final liked = ref.watch(isFavoriteProvider(itemId)).asData?.value ?? fallback;
+    return ListTile(
+      minTileHeight: 64,
+      leading: const LikedSongsCover(size: 48, borderRadius: AppSpacing.radiusArtSmall),
+      title: Text(MediaContextMenu.likedSongs, style: type.bodyStrong, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(liked ? 'Liked' : 'Tap to like', style: type.metadata),
+      trailing: _PickMark(selected: liked),
+      onTap: () => onTap(liked),
+    );
+  }
+}
+
+class _PlaylistPickRow extends StatelessWidget {
+  final Playlist playlist;
+  final bool contains;
+  final VoidCallback onTap;
+
+  const _PlaylistPickRow({required this.playlist, required this.contains, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final type = context.typography;
+    final count = playlist.songCount == 1 ? '1 song' : '${playlist.songCount} songs';
+    return Semantics(
+      selected: contains,
+      child: ListTile(
+        minTileHeight: 64,
+        leading: PlaylistCover(
+          playlistId: playlist.id,
+          coverSongs: playlist.coverSongs,
+          size: 48,
+          borderRadius: AppSpacing.radiusArtSmall,
+        ),
+        title: Text(playlist.name, style: type.bodyStrong, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(contains ? '$count · Added' : count, style: type.metadata),
+        trailing: _PickMark(selected: contains),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+/// A check in primary once the song is in that list, a plus otherwise
+/// (the word "Added" / "Liked" says it too, never the colour alone).
+class _PickMark extends StatelessWidget {
+  final bool selected;
+
+  const _PickMark({required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return selected
+        ? Icon(Icons.check_circle_rounded, color: palette.primary)
+        : Icon(Icons.add_rounded, color: palette.textSecondary);
   }
 }
 
@@ -959,16 +1233,26 @@ class _MediaDetails {
 
   /// (label, value, is a figure) rows for [item].
   static List<(String, String, bool)> rowsFor(MediaItem item) {
-    final isVideo = item.mediaType == MediaType.video;
+    final isVideo = item.mediaType == MediaType.video && !item.isOnline;
     final width = item.width;
     final height = item.height;
     final album = item.album;
     final artist = item.artist;
+    final albumArtist = item.albumArtist;
     final lastPlayed = item.lastPlayed;
+    final track = item.trackNumber;
+    final disc = item.discNumber;
+    final year = item.year;
+    final genre = item.genre;
     return [
       ('Title', item.title, false),
       if (!isVideo && artist != null && artist.isNotEmpty) ('Artist', artist, false),
       if (!isVideo && album != null && album.isNotEmpty) ('Album', album, false),
+      if (!isVideo && albumArtist != null && albumArtist.isNotEmpty && albumArtist != artist)
+        ('Album artist', albumArtist, false),
+      if (track != null) ('Track', disc != null && disc > 1 ? '$disc-$track' : '$track', true),
+      if (year != null) ('Year', '$year', true),
+      if (genre != null && genre.isNotEmpty) ('Genre', genre, false),
       if (item.durationMs > 0) ('Length', formatClock(Duration(milliseconds: item.durationMs)), true),
       if (item.sizeBytes > 0) ('Size', formatFileSize(item.sizeBytes), true),
       if (item.format != null && item.format!.isNotEmpty) ('Format', item.format!.toUpperCase(), false),

@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../domain/models/media_item.dart';
 import '../../domain/models/playback_state.dart';
 import '../../domain/models/video_progress.dart';
+import 'search_text.dart';
 
 part 'app_database.g.dart';
 
@@ -28,7 +30,23 @@ class MediaItemsTable extends Table {
       text().withDefault(const Constant('available'))(); // 'available' or 'missing'
   TextColumn get source =>
       text().nullable().withDefault(const Constant('device'))(); // 'device' or 'download'
-  TextColumn get artworkPath => text().nullable()(); // local image file (downloads)
+  TextColumn get artworkPath => text().nullable()(); // local image file (downloads) or https thumbnail (online)
+
+  // --- v8: album identity, track order, search, liked time ----------------
+  /// MediaStore ALBUM_ID (songs on the phone).
+  TextColumn get albumId => text().nullable()();
+  TextColumn get albumArtist => text().nullable()();
+  IntColumn get trackNumber => integer().nullable()();
+  IntColumn get discNumber => integer().nullable()();
+  IntColumn get year => integer().nullable()();
+
+  /// [librarySearchKey] of the row: folded title, artist and album.
+  TextColumn get searchKey => text().nullable()();
+
+  /// When the song was liked; null when not liked (or liked before v8).
+  DateTimeColumn get favoritedAt => dateTime().nullable()();
+  TextColumn get relativePath => text().nullable()();
+  TextColumn get genre => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -143,7 +161,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? e]) : super(e ?? _openConnection());
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration {
@@ -189,8 +207,98 @@ class AppDatabase extends _$AppDatabase {
           // just got the current table from the `from < 5` step.
           await m.addColumn(downloadsTable, downloadsTable.errorDetail);
         }
+        if (from < 8) {
+          final t = mediaItemsTable;
+          for (final column in <GeneratedColumn>[
+            t.albumId,
+            t.albumArtist,
+            t.trackNumber,
+            t.discNumber,
+            t.year,
+            t.searchKey,
+            t.favoritedAt,
+            t.relativePath,
+            t.genre,
+          ]) {
+            await m.addColumn(t, column);
+          }
+          await migrateLibraryToV8();
+        }
       },
     );
+  }
+
+  /// The data half of the v7 -> v8 step, so every list works on an existing
+  /// install straight after the update (the next scan fills album ids, track
+  /// numbers and years):
+  /// - an artist stored as "Unknown Artist", `<unknown>` or "" becomes NULL,
+  ///   so one "Unknown artist" tile holds every untagged song;
+  /// - playlist entries whose song row is gone (a deleted download) are
+  ///   removed, and each playlist is numbered 0, 1, 2... again, so the song
+  ///   count is right and remove / reorder find their entry;
+  /// - every row gets its search key.
+  ///
+  /// Raw SQL with explicit columns only, so it keeps working whatever later
+  /// versions add to the tables.
+  @visibleForTesting
+  Future<void> migrateLibraryToV8() async {
+    await customStatement(
+      "UPDATE media_items_table SET artist = NULL "
+      "WHERE artist IS NOT NULL AND (TRIM(artist) = '' OR LOWER(TRIM(artist)) IN ('unknown artist', '<unknown>'))",
+    );
+
+    await customStatement(
+      'DELETE FROM playlist_items_table WHERE media_id NOT IN (SELECT id FROM media_items_table)',
+    );
+    await renumberAllPlaylists();
+
+    final rows = await customSelect(
+      'SELECT id, title, artist, album, album_artist FROM media_items_table',
+    ).get();
+    for (final row in rows) {
+      final key = librarySearchKey(
+        title: row.read<String>('title'),
+        artist: row.readNullable<String>('artist'),
+        album: row.readNullable<String>('album'),
+        albumArtist: row.readNullable<String>('album_artist'),
+      );
+      await customStatement('UPDATE media_items_table SET search_key = ? WHERE id = ?', [key, row.read<String>('id')]);
+    }
+  }
+
+  /// Numbers the entries of every playlist (or only [playlistId]) 0, 1, 2...
+  /// in their current order, closing gaps left by removed entries.
+  ///
+  /// Two passes through negative numbers, so no intermediate state can collide
+  /// with the (playlist, song, position) unique key, even when two entries
+  /// share a position. Call it inside a transaction.
+  Future<void> renumberAllPlaylists({String? playlistId}) async {
+    final entries = await customSelect(
+      playlistId == null
+          ? 'SELECT rowid AS rid, playlist_id, position FROM playlist_items_table ORDER BY playlist_id, position, rowid'
+          : 'SELECT rowid AS rid, playlist_id, position FROM playlist_items_table WHERE playlist_id = ? '
+              'ORDER BY position, rowid',
+      variables: [if (playlistId != null) Variable.withString(playlistId)],
+    ).get();
+    final byPlaylist = <String, List<(int, int)>>{};
+    for (final row in entries) {
+      byPlaylist
+          .putIfAbsent(row.read<String>('playlist_id'), () => [])
+          .add((row.read<int>('rid'), row.read<int>('position')));
+    }
+    for (final list in byPlaylist.values) {
+      var inOrder = true;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].$2 != i) inOrder = false;
+      }
+      if (inOrder) continue;
+      for (var i = 0; i < list.length; i++) {
+        await customStatement('UPDATE playlist_items_table SET position = ? WHERE rowid = ?', [-1 - i, list[i].$1]);
+      }
+      for (final (rid, _) in list) {
+        await customStatement('UPDATE playlist_items_table SET position = -1 - position WHERE rowid = ?', [rid]);
+      }
+    }
   }
 
   static QueryExecutor _openConnection() {
@@ -221,6 +329,14 @@ extension MediaItemEntryMapper on MediaItemEntry {
           : MediaAvailability.available,
       source: source ?? 'device',
       artworkPath: artworkPath,
+      albumId: albumId,
+      albumArtist: albumArtist,
+      trackNumber: trackNumber,
+      discNumber: discNumber,
+      year: year,
+      favoritedAt: favoritedAt,
+      relativePath: relativePath,
+      genre: genre,
     );
   }
 }
@@ -246,6 +362,15 @@ extension MediaItemMapper on MediaItem {
       availability: Value(availability.name),
       source: Value(source),
       artworkPath: Value(artworkPath),
+      albumId: Value(albumId),
+      albumArtist: Value(albumArtist),
+      trackNumber: Value(trackNumber),
+      discNumber: Value(discNumber),
+      year: Value(year),
+      searchKey: Value(librarySearchKey(title: title, artist: artist, album: album, albumArtist: albumArtist)),
+      favoritedAt: Value(favoritedAt),
+      relativePath: Value(relativePath),
+      genre: Value(genre),
     );
   }
 
@@ -269,10 +394,19 @@ extension MediaItemMapper on MediaItem {
       'availability': availability.name,
       'source': source,
       'artworkPath': artworkPath,
+      if (albumId != null) 'albumId': albumId,
+      if (albumArtist != null) 'albumArtist': albumArtist,
+      if (trackNumber != null) 'trackNumber': trackNumber,
+      if (discNumber != null) 'discNumber': discNumber,
+      if (year != null) 'year': year,
+      if (favoritedAt != null) 'favoritedAt': favoritedAt!.toIso8601String(),
+      if (relativePath != null) 'relativePath': relativePath,
+      if (genre != null) 'genre': genre,
     };
   }
 
   static MediaItem fromJsonMap(Map<String, dynamic> map) {
+    final favoritedAt = map['favoritedAt'];
     return MediaItem(
       id: map['id'] as String,
       uri: map['uri'] as String,
@@ -296,6 +430,14 @@ extension MediaItemMapper on MediaItem {
           : MediaAvailability.available,
       source: map['source'] as String? ?? 'device',
       artworkPath: map['artworkPath'] as String?,
+      albumId: map['albumId'] as String?,
+      albumArtist: map['albumArtist'] as String?,
+      trackNumber: (map['trackNumber'] as num?)?.toInt(),
+      discNumber: (map['discNumber'] as num?)?.toInt(),
+      year: (map['year'] as num?)?.toInt(),
+      favoritedAt: favoritedAt is String ? DateTime.tryParse(favoritedAt) : null,
+      relativePath: map['relativePath'] as String?,
+      genre: map['genre'] as String?,
     );
   }
 }

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/motion_tokens.dart';
@@ -199,6 +200,11 @@ class _FadeInOverState extends State<_FadeInOver> {
 
 /// The art the device has for [uri] (embedded cover, MediaStore thumbnail or
 /// video frame), looked up once per uri and size and kept across rebuilds.
+///
+/// While a list is flung fast ([Scrollable.recommendDeferredLoadingForContext])
+/// the platform lookup waits a frame at a time, so rows that only fly past
+/// never ask the phone for their cover. A web link (an Online item without a
+/// thumbnail) has no device art and is never looked up.
 class _ServiceArtwork extends StatefulWidget {
   final String uri;
   final int lookupSize;
@@ -217,11 +223,17 @@ class _ServiceArtwork extends StatefulWidget {
 class _ServiceArtworkState extends State<_ServiceArtwork> {
   String _key = '';
   Uint8List? _bytes;
+  bool _started = false;
 
   @override
-  void initState() {
-    super.initState();
-    _load();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The first lookup waits for the scroll context (not reachable in
+    // initState).
+    if (!_started) {
+      _started = true;
+      _load();
+    }
   }
 
   @override
@@ -232,6 +244,8 @@ class _ServiceArtworkState extends State<_ServiceArtwork> {
     }
   }
 
+  static bool _isWebLink(String uri) => uri.startsWith('https://') || uri.startsWith('http://');
+
   void _load() {
     final uri = widget.uri;
     final size = widget.lookupSize;
@@ -241,8 +255,17 @@ class _ServiceArtworkState extends State<_ServiceArtwork> {
     // Already loaded once: paint it on this frame.
     final cached = ArtworkService.instance.peek(uri, size: size);
     _bytes = cached;
-    if (cached != null) return;
+    if (cached != null || uri.isEmpty || _isWebLink(uri)) return;
+    _lookUp(uri, size, key);
+  }
 
+  void _lookUp(String uri, int size, String key) {
+    if (!mounted || _key != key) return;
+    if (Scrollable.recommendDeferredLoadingForContext(context)) {
+      // Flung past at speed: try again next frame.
+      SchedulerBinding.instance.scheduleFrameCallback((_) => _lookUp(uri, size, key));
+      return;
+    }
     ArtworkService.instance
         .getArtwork(uri, size: size)
         .catchError((Object _) => null)

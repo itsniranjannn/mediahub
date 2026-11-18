@@ -42,6 +42,15 @@ void main() {
       expect(store.getStringList('l'), ['x', 'y']);
     });
 
+    test('strings: missing or wrongly typed read null, a set one reads back', () async {
+      final store = SettingsStore.forTesting();
+      expect(store.getString('library.audio.sort'), isNull);
+      await store.setString('library.audio.sort', 'album');
+      expect(store.getString('library.audio.sort'), 'album');
+      await store.setBool('flag', true);
+      expect(store.getString('flag'), isNull, reason: 'a bool is not a string');
+    });
+
     test('a list passed to setStringList is copied', () async {
       final store = SettingsStore.forTesting();
       final list = ['one'];
@@ -71,10 +80,12 @@ void main() {
       final first = await loadedStore();
       await first.setBool('flag', true);
       await first.setStringList('history', ['a', 'b']);
+      await first.setString('library.audio.sort', 'mostPlayed');
 
       final second = await loadedStore();
       expect(second.getBool('flag'), isTrue);
       expect(second.getStringList('history'), ['a', 'b']);
+      expect(second.getString('library.audio.sort'), 'mostPlayed');
     });
 
     test('wrongly typed values fall back to the defaults', () async {

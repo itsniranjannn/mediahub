@@ -5,6 +5,7 @@ import 'package:drift/native.dart';
 import 'package:mediahub/data/database/app_database.dart';
 import 'package:mediahub/data/repositories/library_repository_impl.dart';
 import 'package:mediahub/domain/models/media_item.dart';
+import 'package:mediahub/domain/models/playlist_and_groups.dart';
 
 class MockMethodChannel implements MethodChannel {
   List<dynamic>? queryAudioResult;
@@ -253,12 +254,12 @@ void main() {
     await insert('d3', 'file:///music/c.m4a', artworkPath: '/thumbs/c.jpg');
 
     final unknown = (await repo.watchAlbums().first).single;
-    expect(unknown.album, 'Unknown Album');
+    expect(unknown.album, AlbumGroup.unknownAlbum);
     expect(unknown.coverUri, 'file:///music/a.m4a');
     expect(unknown.coverArtworkPath, '/thumbs/a.jpg');
 
     // The album page finds that same song, with that same thumbnail.
-    final songs = await repo.watchAlbumSongs('Unknown Album').first;
+    final songs = await repo.watchAlbumSongs(unknown.lookupKey).first;
     final cover = songs.singleWhere((s) => s.uri == unknown.coverUri);
     expect(cover.artworkPath, unknown.coverArtworkPath);
   });
@@ -353,11 +354,12 @@ void main() {
     ];
     await scanRepo.scanDeviceMedia();
 
+    // Changed on purpose (LIB-07): a missing file is kept in the database
+    // (its likes and playlist entries come back with it) but no list shows it.
     items = await scanRepo.watchMediaItems(mediaType: MediaType.audio).first;
-    expect(items.length, 3);
-    expect(items.firstWhere((i) => i.id == 'audio_A').availability, MediaAvailability.available);
-    expect(items.firstWhere((i) => i.id == 'audio_B').availability, MediaAvailability.available);
-    expect(items.firstWhere((i) => i.id == 'audio_C').availability, MediaAvailability.missing);
+    expect(items.map((i) => i.id), unorderedEquals(['audio_A', 'audio_B']));
+    final rowC = await (db.select(db.mediaItemsTable)..where((t) => t.id.equals('audio_C'))).getSingle();
+    expect(rowC.availability, 'missing');
 
     // Rescan with A, B, C (C is available again)
     mockChannel.queryAudioResult = [

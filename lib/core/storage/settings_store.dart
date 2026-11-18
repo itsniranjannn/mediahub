@@ -108,6 +108,16 @@ class SettingsStore {
     await _save();
   }
 
+  String? getString(String key) {
+    final v = _data[key];
+    return v is String ? v : null;
+  }
+
+  Future<void> setString(String key, String value) async {
+    _data[key] = value;
+    await _save();
+  }
+
   List<String> getStringList(String key) {
     final v = _data[key];
     return v is List ? v.whereType<String>().toList() : <String>[];

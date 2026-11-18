@@ -332,7 +332,7 @@ class _AudioRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final type = context.typography;
-    final artist = item.artist ?? 'Unknown Artist';
+    final artist = item.artist ?? 'Unknown artist';
     final hasMenu = onPlayNext != null || onAddToQueue != null;
 
     return Semantics(

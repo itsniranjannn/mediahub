@@ -2,16 +2,17 @@ import '../../domain/repositories/library_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
-import '../../core/app_config.dart';
 import '../../core/permissions/media_permission_service.dart';
+import '../../core/platform_info.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
+import '../../data/database/search_text.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/playlist_and_groups.dart';
@@ -22,6 +23,7 @@ import '../library/detail_screens.dart';
 import '../library/library_notifier.dart';
 import '../library/media_context_menu.dart';
 import '../library/media_song_row.dart';
+import '../library/playable.dart';
 import '../playlists/playlist_cover.dart';
 import 'playback_notifier.dart';
 
@@ -36,28 +38,36 @@ final ButtonStyle _compactStyle = FilledButton.styleFrom(
 String _count(int n, String singular, String plural) => '$n ${n == 1 ? singular : plural}';
 
 /// The Music tab (docs/DESIGN.md 6 and 7): the "Music" masthead, the search
-/// field, a pinned row of chips for Songs / Albums / Artists / Playlists /
-/// Favorites (the selected one is the Volt sticker), then song rows or the
-/// album, artist and playlist grids.
+/// field, a pinned row of chips for Songs / Liked songs / Playlists / Albums
+/// / Artists (the selected one is the Volt sticker), then song rows or the
+/// playlist, album and artist grids.
+///
+/// The search applies to every tab: every word has to match a song's title,
+/// artist or album (accents and case ignored, Devanagari as typed), a
+/// playlist's name, an album or an artist.
 class MusicScreen extends ConsumerStatefulWidget {
   const MusicScreen({super.key});
+
+  /// The chips, in order. "Liked songs" ("wishlist") comes right after the
+  /// songs, as on Spotify and YouTube Music.
+  static const List<String> tabs = ['Songs', MediaContextMenu.likedSongs, 'Playlists', 'Albums', 'Artists'];
 
   @override
   ConsumerState<MusicScreen> createState() => _MusicScreenState();
 }
 
 class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProviderStateMixin {
-  static const List<String> _tabs = ['Songs', 'Albums', 'Artists', 'Playlists', 'Favorites'];
-
   late TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
-  bool _notificationPermissionRequested = false;
   DateTime? _lastShuffleAllTap;
+
+  /// Bumped by Retry: the tab streams are opened again.
+  int _retry = 0;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: _tabs.length, vsync: this);
+    _tabController = TabController(length: MusicScreen.tabs.length, vsync: this);
   }
 
   @override
@@ -67,15 +77,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     super.dispose();
   }
 
-  Future<void> _requestNotificationPermissionOnce() async {
-    if (_notificationPermissionRequested) return;
-    _notificationPermissionRequested = true;
-    try {
-      await Permission.notification.request();
-    } catch (e) {
-      debugPrint('Notification permission request error: $e');
-    }
-  }
+  void _retryStreams() => setState(() => _retry++);
 
   @override
   Widget build(BuildContext context) {
@@ -84,9 +86,16 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     final repo = ref.watch(libraryRepositoryProvider);
     final palette = context.palette;
 
+    // "12 new songs" after the refresh button.
+    ref.listen<ScanReport?>(musicLibraryProvider.select((s) => s.scanReport), (previous, next) {
+      if (next == null || next.serial == previous?.serial) return;
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger?.hideCurrentSnackBar();
+      messenger?.showSnackBar(SnackBar(content: Text(next.message), duration: const Duration(seconds: 2)));
+    });
+
     final permission = state.permissionState;
-    final hasLibrary =
-        permission == MediaPermissionState.granted || permission == MediaPermissionState.limited;
+    final hasLibrary = permission == MediaPermissionState.granted || permission == MediaPermissionState.limited;
 
     final header = _MusicHeader(
       actions: [
@@ -102,20 +111,24 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
             tooltip: 'Scan device media',
             onPressed: state.isScanning ? null : () => notifier.scanDevice(),
           ),
-          PopupMenuButton<MediaSortOption>(
+          PopupMenuButton<SongSortOption>(
             icon: const Icon(Icons.sort_rounded),
             tooltip: 'Sort songs',
-            onSelected: (sort) => notifier.setSortOption(sort),
+            onSelected: (sort) => notifier.setSongSort(sort),
             itemBuilder: (context) => [
-              _sortItem(context, MediaSortOption.title, 'Title', state),
-              _sortItem(context, MediaSortOption.artist, 'Artist', state),
-              _sortItem(context, MediaSortOption.dateAdded, 'Date Added', state),
-              _sortItem(context, MediaSortOption.duration, 'Duration', state),
+              _sortItem(context, SongSortOption.title, 'Title', state),
+              _sortItem(context, SongSortOption.artist, 'Artist', state),
+              _sortItem(context, SongSortOption.album, 'Album', state),
+              _sortItem(context, SongSortOption.dateAdded, 'Date added', state),
+              _sortItem(context, SongSortOption.duration, 'Duration', state),
+              _sortItem(context, SongSortOption.mostPlayed, 'Most played', state),
             ],
           ),
         ],
       ],
     );
+
+    final error = state.errorMessage;
 
     // No app bar: the screen sets the status bar icons for its own canvas.
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -135,12 +148,14 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                         child: _LimitedAccessBanner(onOpenSettings: () => notifier.openSettings()),
                       ),
                     SliverToBoxAdapter(child: _searchField(context, notifier)),
+                    if (error != null && state.items.isNotEmpty)
+                      SliverToBoxAdapter(child: _ErrorBanner(message: error, onRetry: () => notifier.scanDevice())),
                     SliverOverlapAbsorber(
                       handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
                       sliver: SliverPersistentHeader(
                         pinned: true,
                         delegate: _PinnedChipsDelegate(
-                          chips: _TabChips(controller: _tabController, labels: _tabs),
+                          chips: _TabChips(controller: _tabController, labels: MusicScreen.tabs),
                           height: _TabChips.heightFor(context),
                           background: palette.background,
                           divider: innerBoxIsScrolled ? palette.divider : Colors.transparent,
@@ -151,11 +166,11 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                   body: TabBarView(
                     controller: _tabController,
                     children: [
-                      _buildSongsTab(state),
+                      _buildSongsTab(state, notifier),
+                      _buildLikedTab(repo, state.searchQuery),
+                      _buildPlaylistsTab(repo, state.searchQuery),
                       _buildAlbumsTab(repo, state.searchQuery),
                       _buildArtistsTab(repo, state.searchQuery),
-                      _buildPlaylistsTab(repo),
-                      _buildFavoritesTab(repo, state.searchQuery),
                     ],
                   ),
                 )
@@ -173,16 +188,16 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     );
   }
 
-  PopupMenuItem<MediaSortOption> _sortItem(
+  PopupMenuItem<SongSortOption> _sortItem(
     BuildContext context,
-    MediaSortOption option,
+    SongSortOption option,
     String label,
     LibraryState state,
   ) {
     final palette = context.palette;
     final type = context.typography;
-    final selected = state.sortBy == option;
-    return PopupMenuItem<MediaSortOption>(
+    final selected = state.songSort == option;
+    return PopupMenuItem<SongSortOption>(
       value: option,
       child: Semantics(
         selected: selected,
@@ -219,7 +234,11 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
       padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.sm8),
       child: TextField(
         controller: _searchController,
-        onChanged: (val) => notifier.setSearchQuery(val),
+        onChanged: (val) {
+          notifier.setSearchQuery(val);
+          // The other tabs read the query from this state.
+          setState(() {});
+        },
         textInputAction: TextInputAction.search,
         style: context.typography.body,
         decoration: InputDecoration(
@@ -233,6 +252,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                   onPressed: () {
                     _searchController.clear();
                     notifier.setSearchQuery('');
+                    setState(() {});
                   },
                 )
               : null,
@@ -241,31 +261,31 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     );
   }
 
+  /// Friendly, sentence-case permission states (the same words on the
+  /// Videos tab, with "videos").
   Widget _buildPermissionState(LibraryState state, BaseLibraryNotifier notifier) {
     if (state.permissionState == MediaPermissionState.denied) {
       return EmptyHint(
-        icon: Icons.security_rounded,
-        title: 'Permission Required',
-        message:
-            '${AppConfig.appName} needs media permission to access your audio files and build your music library.',
+        icon: Icons.library_music_rounded,
+        title: 'Allow access to your music',
+        message: 'MediaHub plays the songs saved on this phone. Allow access to see them here.',
         action: FilledButton.icon(
           onPressed: () => notifier.requestPermission(),
           icon: const Icon(Icons.lock_open_rounded, size: 20),
-          label: const Text('Allow Access'),
+          label: const Text('Allow access'),
         ),
       );
     }
 
     if (state.permissionState == MediaPermissionState.permanentlyDenied) {
       return EmptyHint(
-        icon: Icons.no_encryption_gmailerrorred_rounded,
-        title: 'Permission Permanently Denied',
-        message:
-            'Media permission was permanently denied. Please grant permission in system settings to access your music library.',
+        icon: Icons.library_music_rounded,
+        title: 'Music access is off',
+        message: 'Turn on music access for MediaHub in Settings to see your songs here.',
         action: FilledButton.icon(
           onPressed: () => notifier.openSettings(),
           icon: const Icon(Icons.settings_rounded, size: 20),
-          label: const Text('Open Settings'),
+          label: const Text('Open settings'),
         ),
       );
     }
@@ -274,12 +294,32 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     return const SizedBox.shrink();
   }
 
-  Widget _buildSongsTab(LibraryState state) {
+  Widget _buildSongsTab(LibraryState state, BaseLibraryNotifier notifier) {
     if (state.status == LibraryStatus.loading || state.status == LibraryStatus.initial) {
       return const _TabScrollView(storageKey: 'songs', slivers: [_LoadingSliver()]);
     }
 
+    if (state.status == LibraryStatus.error && state.items.isEmpty) {
+      return _TabScrollView(
+        storageKey: 'songs',
+        slivers: [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: _ErrorHint(
+              what: 'your songs',
+              message: state.errorMessage,
+              onRetry: () => notifier.retry(),
+            ),
+          ),
+        ],
+      );
+    }
+
     if (state.items.isEmpty) {
+      final searching = state.searchQuery.isNotEmpty;
+      // On iPhone there is no shared music folder to scan: songs come from
+      // MediaHub's own downloads.
+      final ios = PlatformInfo.isIOS;
       return _TabScrollView(
         storageKey: 'songs',
         slivers: [
@@ -287,27 +327,37 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
             hasScrollBody: false,
             child: EmptyStateWidget(
               icon: Icons.music_off_outlined,
-              title: state.searchQuery.isNotEmpty ? 'No matching songs' : 'No songs yet',
-              message: state.searchQuery.isNotEmpty
+              title: searching ? 'No matching songs' : 'No songs yet',
+              message: searching
                   ? 'No songs matching "${state.searchQuery}".'
-                  : 'Find the songs saved on this phone.',
-              action: state.searchQuery.isNotEmpty
+                  : ios
+                      ? 'Songs you download in MediaHub show up here.'
+                      : 'Find the songs saved on this phone.',
+              action: searching
                   ? null
-                  : FilledButton.icon(
-                      onPressed: state.isScanning
-                          ? null
-                          : () => ref.read(musicLibraryProvider.notifier).scanDevice(),
-                      icon: const Icon(Icons.refresh_rounded, size: 20),
-                      label: const Text('Scan device'),
-                    ),
+                  : ios
+                      ? (PlatformInfo.supportsDownloads
+                          ? FilledButton.icon(
+                              onPressed: () => GoRouter.maybeOf(context)?.go('/downloads'),
+                              icon: const Icon(Icons.file_download_rounded, size: 20),
+                              label: const Text('Open Downloads'),
+                            )
+                          : null)
+                      : FilledButton.icon(
+                          onPressed: state.isScanning ? null : () => notifier.scanDevice(),
+                          icon: const Icon(Icons.refresh_rounded, size: 20),
+                          label: const Text('Scan device'),
+                        ),
             ),
           ),
         ],
       );
     }
 
+    final playback = ref.read(playbackNotifierProvider.notifier);
     return _TabScrollView(
       storageKey: 'songs',
+      scrollbar: true,
       slivers: [
         SliverToBoxAdapter(
           child: _ListToolbar(
@@ -323,15 +373,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                     return;
                   }
                   _lastShuffleAllTap = now;
-                  final randomStart = (state.items.isNotEmpty)
-                      ? DateTime.now().microsecond % state.items.length
-                      : 0;
-                  ref.read(playbackNotifierProvider.notifier).loadQueue(
-                    state.items,
-                    startIndex: randomStart,
-                    autoPlay: true,
-                    shuffle: true,
-                  );
+                  playCollection(playback, state.items, shuffle: true);
                 },
               ),
             ],
@@ -343,10 +385,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
             final song = state.items[index];
             return MediaSongRow(
               item: song,
-              onTap: () async {
-                await _requestNotificationPermissionOnce();
-                await ref.read(playbackNotifierProvider.notifier).playTrack(song, state.items);
-              },
+              onTap: () => playCollection(playback, state.items, start: song),
             );
           },
         ),
@@ -354,10 +393,25 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     );
   }
 
+  /// "Couldn't load your albums" with a Retry, for the grid tabs.
+  Widget _gridError(String storageKey, String what) {
+    return _TabScrollView(
+      storageKey: storageKey,
+      slivers: [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: _ErrorHint(what: what, onRetry: _retryStreams),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAlbumsTab(LibraryRepository repo, String query) {
     return StreamBuilder<List<AlbumGroup>>(
+      key: ValueKey('albums$_retry'),
       stream: repo.watchAlbums(searchQuery: query),
       builder: (context, snapshot) {
+        if (snapshot.hasError) return _gridError('albums', 'your albums');
         if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
           return const _TabScrollView(storageKey: 'albums', slivers: [_LoadingSliver()]);
         }
@@ -398,8 +452,10 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
 
   Widget _buildArtistsTab(LibraryRepository repo, String query) {
     return StreamBuilder<List<ArtistGroup>>(
+      key: ValueKey('artists$_retry'),
       stream: repo.watchArtists(searchQuery: query),
       builder: (context, snapshot) {
+        if (snapshot.hasError) return _gridError('artists', 'your artists');
         if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
           return const _TabScrollView(storageKey: 'artists', slivers: [_LoadingSliver()]);
         }
@@ -461,20 +517,27 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     return '$songs · ${_count(artist.albumCount, 'album', 'albums')}';
   }
 
-  Widget _buildPlaylistsTab(LibraryRepository repo) {
+  Widget _buildPlaylistsTab(LibraryRepository repo, String query) {
+    final terms = searchTerms(query);
+    final showLiked = matchesAllTerms(terms, [foldForSearch(MediaContextMenu.likedSongs)]);
     return StreamBuilder<List<Playlist>>(
+      key: ValueKey('playlists$_retry'),
       stream: repo.watchPlaylists(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) return _gridError('playlists', 'your playlists');
         if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
           return const _TabScrollView(storageKey: 'playlists', slivers: [_LoadingSliver()]);
         }
-        final playlists = snapshot.data ?? [];
+        final all = snapshot.data ?? [];
+        final playlists =
+            terms.isEmpty ? all : all.where((p) => matchesAllTerms(terms, [foldForSearch(p.name)])).toList();
+        final tiles = (showLiked ? 1 : 0) + playlists.length;
         return _TabScrollView(
           storageKey: 'playlists',
           slivers: [
             SliverToBoxAdapter(
               child: _ListToolbar(
-                label: _count(playlists.length, 'playlist', 'playlists'),
+                label: _count(all.length, 'playlist', 'playlists'),
                 actions: [
                   FilledButton.icon(
                     style: _compactStyle,
@@ -485,25 +548,32 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                 ],
               ),
             ),
-            if (playlists.isEmpty)
-              const SliverFillRemaining(
+            if (tiles == 0)
+              SliverFillRemaining(
                 hasScrollBody: false,
                 child: EmptyHint(
                   icon: Icons.queue_music_rounded,
-                  title: 'No playlists yet',
-                  message: 'Tap "New playlist" to create one!',
+                  title: 'No matching playlists',
+                  message: 'No playlists matching "$query".',
                 ),
               )
             else
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, 0),
                 sliver: _CoverGrid(
-                  itemCount: playlists.length,
+                  itemCount: tiles,
                   captionLines: (type) => [type.bodyStrong, type.metadata],
                   itemBuilder: (context, index, side) {
-                    final pl = playlists[index];
+                    // Liked songs is pinned first.
+                    if (showLiked && index == 0) return _LikedSongsTile(repo: repo, artSize: side);
+                    final pl = playlists[index - (showLiked ? 1 : 0)];
                     return _GridTile(
-                      cover: PlaylistCover(playlistId: pl.id, size: side, borderRadius: AppSpacing.radiusThumb),
+                      cover: PlaylistCover(
+                        playlistId: pl.id,
+                        coverSongs: pl.coverSongs,
+                        size: side,
+                        borderRadius: AppSpacing.radiusThumb,
+                      ),
                       title: pl.name,
                       lines: [_count(pl.songCount, 'song', 'songs')],
                       semanticsLabel: 'Playlist ${pl.name}, ${_count(pl.songCount, 'song', 'songs')}',
@@ -523,15 +593,17 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     );
   }
 
-  Widget _buildFavoritesTab(LibraryRepository repo, String query) {
+  Widget _buildLikedTab(LibraryRepository repo, String query) {
     return StreamBuilder<List<MediaItem>>(
+      key: ValueKey('liked$_retry'),
       stream: repo.watchFavorites(searchQuery: query),
       builder: (context, snapshot) {
+        if (snapshot.hasError) return _gridError('favorites', 'your liked songs');
         if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
           return const _TabScrollView(storageKey: 'favorites', slivers: [_LoadingSliver()]);
         }
-        final favs = snapshot.data ?? [];
-        if (favs.isEmpty) {
+        final liked = snapshot.data ?? [];
+        if (liked.isEmpty) {
           return _TabScrollView(
             storageKey: 'favorites',
             slivers: [
@@ -539,56 +611,141 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                 hasScrollBody: false,
                 child: EmptyHint(
                   icon: Icons.favorite_border_rounded,
-                  title: 'No favorite songs yet',
+                  title: query.isNotEmpty ? 'No matching liked songs' : 'No liked songs yet',
                   message: query.isNotEmpty
-                      ? 'No favorites matching "$query".'
+                      ? 'No liked songs matching "$query".'
                       : 'Tap the heart on any song to keep it here.',
                 ),
               ),
             ],
           );
         }
+        final playback = ref.read(playbackNotifierProvider.notifier);
+        final canPlay = playableOnly(liked).isNotEmpty;
         return _TabScrollView(
           storageKey: 'favorites',
+          scrollbar: true,
           slivers: [
             SliverToBoxAdapter(
               child: _ListToolbar(
-                label: _count(favs.length, 'favorite', 'favorites'),
+                label: _count(liked.length, 'liked song', 'liked songs'),
                 actions: [
                   VoltButton.compact(
                     icon: Icons.play_arrow_rounded,
                     label: 'Play all',
-                    onPressed: () {
-                      ref.read(playbackNotifierProvider.notifier).loadQueue(favs, autoPlay: true);
-                    },
+                    onPressed: canPlay ? () => playCollection(playback, liked) : null,
                   ),
                   FilledButton.tonalIcon(
                     style: _compactStyle,
                     icon: const Icon(Icons.shuffle_rounded, size: 18),
                     label: const Text('Shuffle'),
-                    onPressed: () {
-                      final shuffled = List<MediaItem>.from(favs)..shuffle();
-                      ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
-                    },
+                    onPressed: canPlay ? () => playCollection(playback, liked, shuffle: true) : null,
                   ),
                 ],
               ),
             ),
             SliverList.builder(
-              itemCount: favs.length,
+              itemCount: liked.length,
               itemBuilder: (context, index) {
-                final song = favs[index];
+                final song = liked[index];
                 return MediaSongRow(
                   item: song,
-                  onTap: () {
-                    ref.read(playbackNotifierProvider.notifier).playTrack(song, favs);
-                  },
+                  onTap: () => playCollection(playback, liked, start: song),
                 );
               },
             ),
           ],
         );
       },
+    );
+  }
+}
+
+/// The "Liked songs" tile pinned first among the playlists: the heart cover
+/// and how many songs it holds; it opens the Liked songs page.
+class _LikedSongsTile extends StatelessWidget {
+  final LibraryRepository repo;
+  final double artSize;
+
+  const _LikedSongsTile({required this.repo, required this.artSize});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<MediaItem>>(
+      stream: repo.watchFavorites(),
+      builder: (context, snapshot) {
+        final count = snapshot.data?.length;
+        final countText = count == null ? '' : _count(count, 'song', 'songs');
+        return _GridTile(
+          cover: LikedSongsCover(size: artSize, borderRadius: AppSpacing.radiusThumb),
+          title: MediaContextMenu.likedSongs,
+          lines: [countText],
+          semanticsLabel: count == null
+              ? 'Playlist ${MediaContextMenu.likedSongs}'
+              : 'Playlist ${MediaContextMenu.likedSongs}, $countText',
+          onTap: () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const LikedSongsScreen()));
+          },
+        );
+      },
+    );
+  }
+}
+
+/// "Couldn't load your albums" with a Retry.
+class _ErrorHint extends StatelessWidget {
+  final String what;
+  final String? message;
+  final VoidCallback onRetry;
+
+  const _ErrorHint({required this.what, required this.onRetry, this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return EmptyHint(
+      icon: Icons.error_outline_rounded,
+      title: "Couldn't load $what",
+      message: message ?? 'Something went wrong reading your library.',
+      action: FilledButton.icon(
+        onPressed: onRetry,
+        icon: const Icon(Icons.refresh_rounded, size: 20),
+        label: const Text('Retry'),
+      ),
+    );
+  }
+}
+
+/// A failed refresh while the list is still there: the reason and a Retry,
+/// in the warning colour (icon and words, never colour alone).
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _ErrorBanner({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.sm8),
+      child: Container(
+        padding: const EdgeInsetsDirectional.fromSTEB(AppSpacing.md12, AppSpacing.sm8, AppSpacing.xs4, AppSpacing.sm8),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMenu),
+          border: Border.all(color: palette.divider),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline_rounded, color: palette.warning, size: 20),
+            const SizedBox(width: AppSpacing.md12),
+            Expanded(
+              child: Text(message, style: context.typography.metadata.copyWith(color: palette.textPrimary)),
+            ),
+            TextButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -680,12 +837,16 @@ class _LimitedAccessBanner extends StatelessWidget {
 /// The section chips (docs/DESIGN.md 7.3) that drive the tab view: a
 /// horizontal row with 16 dp gutters, the selected chip the Volt sticker with
 /// its check (from the chip theme). Swiping between tabs moves the selection,
-/// and the selected chip scrolls into view.
+/// and the selected chip scrolls into view. The row fades out over its last
+/// 24 dp (DESIGN.md 7.13), hinting that more chips follow.
 class _TabChips extends StatefulWidget {
   final TabController controller;
   final List<String> labels;
 
   const _TabChips({required this.controller, required this.labels});
+
+  /// Width of the fade at the end of the row.
+  static const double fadeWidth = 24;
 
   /// Height of the chip row: a 48 dp touch target, or the chip itself once
   /// large text makes it taller.
@@ -746,20 +907,34 @@ class _TabChipsState extends State<_TabChips> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
-      itemCount: widget.labels.length,
-      separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm8),
-      itemBuilder: (context, index) => Center(
-        child: ChoiceChip(
-          key: _keys[index],
-          label: Text(widget.labels[index]),
-          selected: index == _shown,
-          onSelected: (_) {
-            setState(() => _shown = index);
-            widget.controller.animateTo(index);
-          },
+    final rtl = Directionality.of(context) == TextDirection.rtl;
+    return ShaderMask(
+      blendMode: BlendMode.dstIn,
+      shaderCallback: (rect) {
+        final fade = rect.width <= 0 ? 0.0 : (_TabChips.fadeWidth / rect.width).clamp(0.0, 1.0);
+        return LinearGradient(
+          begin: rtl ? Alignment.centerRight : Alignment.centerLeft,
+          end: rtl ? Alignment.centerLeft : Alignment.centerRight,
+          colors: const [Colors.black, Colors.black, Colors.transparent],
+          stops: [0, 1 - fade, 1],
+        ).createShader(rect);
+      },
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        // The end gutter clears the fade, so the last chip ends fully visible.
+        padding: const EdgeInsetsDirectional.only(start: AppSpacing.lg16, end: AppSpacing.lg16 + _TabChips.fadeWidth),
+        itemCount: widget.labels.length,
+        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm8),
+        itemBuilder: (context, index) => Center(
+          child: ChoiceChip(
+            key: _keys[index],
+            label: Text(widget.labels[index]),
+            selected: index == _shown,
+            onSelected: (_) {
+              setState(() => _shown = index);
+              widget.controller.animateTo(index);
+            },
+          ),
         ),
       ),
     );
@@ -812,16 +987,18 @@ class _PinnedChipsDelegate extends SliverPersistentHeaderDelegate {
 }
 
 /// Scroll view for one tab inside the NestedScrollView: injects the space the
-/// pinned chip row takes and remembers its scroll offset per tab.
+/// pinned chip row takes and remembers its scroll offset per tab. Long song
+/// lists get a draggable [scrollbar].
 class _TabScrollView extends StatelessWidget {
   final String storageKey;
   final List<Widget> slivers;
+  final bool scrollbar;
 
-  const _TabScrollView({required this.storageKey, required this.slivers});
+  const _TabScrollView({required this.storageKey, required this.slivers, this.scrollbar = false});
 
   @override
   Widget build(BuildContext context) {
-    return CustomScrollView(
+    final view = CustomScrollView(
       key: PageStorageKey<String>(storageKey),
       primary: true,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
@@ -831,6 +1008,8 @@ class _TabScrollView extends StatelessWidget {
         const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxl24)),
       ],
     );
+    if (!scrollbar) return view;
+    return Scrollbar(interactive: true, notificationPredicate: (n) => n.depth == 0, child: view);
   }
 }
 

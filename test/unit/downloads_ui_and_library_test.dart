@@ -295,6 +295,8 @@ void main() {
         ProviderScope(
           overrides: [
             appDatabaseProvider.overrideWithValue(db),
+            // The file is inside the downloads folder, so it may be deleted.
+            downloadDirectoryProvider.overrideWith((ref) async => tempDir),
             storageInfoProvider.overrideWith((ref) => Future.value(const StorageInfo(usedBytes: 1024, freeBytes: 1000000000))),
           ],
           child: const MaterialApp(
@@ -337,6 +339,100 @@ void main() {
 
       // unmount so the drift streams are cancelled, then let drift's own
       // clean-up timer fire (an un-fired timer fails the test)
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    // SEC-1 probe: a deleted download used to leave its playlist entries
+    // behind (the playlist said "3 songs", showed 2, and remove / reorder
+    // acted on the wrong rows), and any path on the row was deleted.
+    testWidgets('4c. Deleting a download takes it out of its playlists, and never deletes files outside the downloads folder',
+        (tester) async {
+      final now = DateTime.now();
+      final outside = await tester.runAsync(() => Directory.systemTemp.createTemp('dl_outside'));
+      final outsideFile = File('${outside!.path}/not_ours.mp3');
+      final insideFile = File('${tempDir.path}/ours.mp3');
+
+      await tester.runAsync(() async {
+        await outsideFile.writeAsString('someone else');
+        await insideFile.writeAsString('ours');
+        await db.into(db.downloadsTable).insert(
+              DownloadsTableCompanion.insert(
+                id: 'dl_x',
+                url: 'https://example.com/x.mp3',
+                host: 'example.com',
+                displayName: 'Crafted Row',
+                fileName: 'x.mp3',
+                state: DownloadTaskState.completed.name,
+                // A row pointing at a file the app does not own.
+                finalPath: d.Value(outsideFile.path),
+                thumbnailPath: d.Value(insideFile.path),
+                mediaId: const d.Value('dl_dl_x'),
+                kind: const d.Value('audio'),
+                createdAt: now,
+                updatedAt: now,
+              ),
+            );
+        for (final id in ['dl_dl_x', 'keep_1', 'keep_2']) {
+          await db.into(db.mediaItemsTable).insert(
+                MediaItemsTableCompanion.insert(
+                  id: id,
+                  uri: id == 'dl_dl_x' ? outsideFile.path : 'content://media/$id',
+                  mediaType: 'audio',
+                  title: id,
+                  durationMs: 1000,
+                  sizeBytes: 1,
+                  dateAdded: now,
+                  source: d.Value(id == 'dl_dl_x' ? 'download' : 'device'),
+                ),
+              );
+        }
+        await db.into(db.playlistsTable).insert(
+              PlaylistsTableCompanion.insert(id: 'pl_1', name: 'Road trip', createdAt: now, updatedAt: now),
+            );
+        var position = 0;
+        for (final id in ['keep_1', 'dl_dl_x', 'keep_2']) {
+          await db.into(db.playlistItemsTable).insert(
+                PlaylistItemsTableCompanion.insert(
+                  playlistId: 'pl_1',
+                  mediaId: id,
+                  position: position++,
+                  addedAt: now,
+                ),
+              );
+        }
+      });
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWithValue(db),
+            downloadDirectoryProvider.overrideWith((ref) async => tempDir),
+            storageInfoProvider.overrideWith((ref) => Future.value(const StorageInfo(usedBytes: 0, freeBytes: 1000000000))),
+          ],
+          child: const MaterialApp(home: DownloadsScreen()),
+        ),
+      );
+      await settle(tester);
+
+      await tester.tap(find.byTooltip('Delete'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.text('Delete'));
+      await settle(tester);
+
+      await tester.runAsync(() async {
+        expect(outsideFile.existsSync(), isTrue, reason: 'outside the downloads folder: never deleted');
+        expect(insideFile.existsSync(), isFalse, reason: 'its cover inside the folder goes');
+        expect((await db.select(db.mediaItemsTable).get()).map((r) => r.id), unorderedEquals(['keep_1', 'keep_2']));
+        final entries = await (db.select(db.playlistItemsTable)
+              ..orderBy([(t) => d.OrderingTerm(expression: t.position)]))
+            .get();
+        expect([for (final e in entries) (e.mediaId, e.position)], [('keep_1', 0), ('keep_2', 1)],
+            reason: 'the entry is gone and the playlist renumbered');
+        await outside.delete(recursive: true);
+      });
+
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 1));
     });

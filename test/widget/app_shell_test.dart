@@ -118,14 +118,22 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('Permission Required'), findsOneWidget);
+    // The Music tab's copy belongs to the library package (old or new wording).
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is Text && (w.data == 'Permission Required' || w.data == 'Allow access to your music'),
+      ),
+      findsOneWidget,
+    );
 
-    // Tap Videos tab
+    // Tap Videos tab: the friendly sentence-case copy (SEC-12).
     await tester.tap(find.text('Videos'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('Permission Required'), findsOneWidget);
+    expect(find.text('Allow access to your videos'), findsOneWidget);
+    expect(find.text('Allow access'), findsOneWidget);
+    expect(find.text('Permission Required'), findsNothing);
 
     // Tap Downloads tab
     await tester.tap(find.text('Downloads'));

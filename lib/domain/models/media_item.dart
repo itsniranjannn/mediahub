@@ -11,6 +11,31 @@ enum MediaSortOption {
   duration,
 }
 
+/// The Music tab's song orders. The first four are the shared
+/// [MediaSortOption]s; [album] (album, then disc and track) and [mostPlayed]
+/// exist for songs only.
+enum SongSortOption {
+  title,
+  artist,
+  album,
+  dateAdded,
+  duration,
+  mostPlayed;
+
+  /// The shared option this one maps to, or null for the song-only ones.
+  MediaSortOption? get mediaSort => switch (this) {
+        SongSortOption.title => MediaSortOption.title,
+        SongSortOption.artist => MediaSortOption.artist,
+        SongSortOption.dateAdded => MediaSortOption.dateAdded,
+        SongSortOption.duration => MediaSortOption.duration,
+        SongSortOption.album || SongSortOption.mostPlayed => null,
+      };
+
+  /// Newest, longest and most played make sense first; names start at A.
+  bool get startsDescending =>
+      this == SongSortOption.dateAdded || this == SongSortOption.duration || this == SongSortOption.mostPlayed;
+}
+
 @immutable
 class MediaItem {
   final String id;
@@ -29,8 +54,36 @@ class MediaItem {
   final int playCount;
   final bool isFavorite;
   final MediaAvailability availability;
-  final String source; // 'device' or 'download'
-  final String? artworkPath; // local image file (downloaded items)
+  final String source; // 'device', 'download' or 'online'
+  final String? artworkPath; // local image file (downloaded items) or https thumbnail (online)
+
+  // --- Optional library details (schema v8). All nullable, so every caller
+  // that builds a MediaItem without them keeps compiling and behaving. ---
+
+  /// MediaStore ALBUM_ID of a song on the phone: two albums with the same
+  /// name stay apart, one compilation stays together.
+  final String? albumId;
+
+  /// The album's own artist tag ("Various Artists" on a compilation).
+  final String? albumArtist;
+
+  /// Track number within its disc (1-based), when tagged.
+  final int? trackNumber;
+
+  /// Disc number (1-based), when tagged.
+  final int? discNumber;
+
+  /// Release year, when tagged.
+  final int? year;
+
+  /// When the song was liked (null for songs liked before v8 or not liked).
+  final DateTime? favoritedAt;
+
+  /// Folder of the file on the phone ("Music/Albums/"), when known.
+  final String? relativePath;
+
+  /// Genre tag, when known (Android 11+).
+  final String? genre;
 
   const MediaItem({
     required this.id,
@@ -51,7 +104,18 @@ class MediaItem {
     this.availability = MediaAvailability.available,
     this.source = 'device',
     this.artworkPath,
+    this.albumId,
+    this.albumArtist,
+    this.trackNumber,
+    this.discNumber,
+    this.year,
+    this.favoritedAt,
+    this.relativePath,
+    this.genre,
   });
+
+  /// Streamed or saved from the Online tab (a YouTube watch link), not a file.
+  bool get isOnline => source == 'online';
 
   MediaItem copyWith({
     String? id,
@@ -72,6 +136,14 @@ class MediaItem {
     MediaAvailability? availability,
     String? source,
     String? artworkPath,
+    String? albumId,
+    String? albumArtist,
+    int? trackNumber,
+    int? discNumber,
+    int? year,
+    DateTime? favoritedAt,
+    String? relativePath,
+    String? genre,
   }) {
     return MediaItem(
       id: id ?? this.id,
@@ -92,6 +164,14 @@ class MediaItem {
       availability: availability ?? this.availability,
       source: source ?? this.source,
       artworkPath: artworkPath ?? this.artworkPath,
+      albumId: albumId ?? this.albumId,
+      albumArtist: albumArtist ?? this.albumArtist,
+      trackNumber: trackNumber ?? this.trackNumber,
+      discNumber: discNumber ?? this.discNumber,
+      year: year ?? this.year,
+      favoritedAt: favoritedAt ?? this.favoritedAt,
+      relativePath: relativePath ?? this.relativePath,
+      genre: genre ?? this.genre,
     );
   }
 
@@ -117,7 +197,15 @@ class MediaItem {
           isFavorite == other.isFavorite &&
           availability == other.availability &&
           source == other.source &&
-          artworkPath == other.artworkPath;
+          artworkPath == other.artworkPath &&
+          albumId == other.albumId &&
+          albumArtist == other.albumArtist &&
+          trackNumber == other.trackNumber &&
+          discNumber == other.discNumber &&
+          year == other.year &&
+          favoritedAt == other.favoritedAt &&
+          relativePath == other.relativePath &&
+          genre == other.genre;
 
   @override
   int get hashCode => Object.hashAll([
@@ -139,6 +227,14 @@ class MediaItem {
         availability,
         source,
         artworkPath,
+        albumId,
+        albumArtist,
+        trackNumber,
+        discNumber,
+        year,
+        favoritedAt,
+        relativePath,
+        genre,
       ]);
 
   Map<String, dynamic> toJsonMap() {
@@ -161,10 +257,19 @@ class MediaItem {
       'availability': availability.name,
       'source': source,
       'artworkPath': artworkPath,
+      if (albumId != null) 'albumId': albumId,
+      if (albumArtist != null) 'albumArtist': albumArtist,
+      if (trackNumber != null) 'trackNumber': trackNumber,
+      if (discNumber != null) 'discNumber': discNumber,
+      if (year != null) 'year': year,
+      if (favoritedAt != null) 'favoritedAt': favoritedAt!.toIso8601String(),
+      if (relativePath != null) 'relativePath': relativePath,
+      if (genre != null) 'genre': genre,
     };
   }
 
   factory MediaItem.fromJsonMap(Map<String, dynamic> map) {
+    final favoritedAt = map['favoritedAt'];
     return MediaItem(
       id: map['id'] as String,
       uri: map['uri'] as String,
@@ -184,6 +289,14 @@ class MediaItem {
       availability: MediaAvailability.values.firstWhere((e) => e.name == map['availability'], orElse: () => MediaAvailability.available),
       source: map['source'] as String? ?? 'device',
       artworkPath: map['artworkPath'] as String?,
+      albumId: map['albumId'] as String?,
+      albumArtist: map['albumArtist'] as String?,
+      trackNumber: (map['trackNumber'] as num?)?.toInt(),
+      discNumber: (map['discNumber'] as num?)?.toInt(),
+      year: (map['year'] as num?)?.toInt(),
+      favoritedAt: favoritedAt is String ? DateTime.tryParse(favoritedAt) : null,
+      relativePath: map['relativePath'] as String?,
+      genre: map['genre'] as String?,
     );
   }
 }

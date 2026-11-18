@@ -16,6 +16,7 @@ import '../library/media_context_menu.dart';
 import '../library/media_song_row.dart';
 import '../music_player/playback_notifier.dart';
 import '../playlists/playlist_cover.dart';
+import 'playable.dart';
 
 /// Size of the cover in the hero header of every detail screen.
 const double _kHeroArtSize = 168;
@@ -48,6 +49,39 @@ MediaItem _albumCoverSong(AlbumGroup album, List<MediaItem> songs) {
   return songs.firstWhere((song) => song.uri == coverUri, orElse: () => songs.first);
 }
 
+PlaybackNotifier _playback(WidgetRef ref) => ref.read(playbackNotifierProvider.notifier);
+
+/// "Couldn't load the songs" with a Retry, for every detail page.
+Widget _loadError(String what, VoidCallback onRetry) => EmptyHint(
+      icon: Icons.error_outline_rounded,
+      title: "Couldn't load $what",
+      message: 'Something went wrong reading your library.',
+      action: FilledButton.icon(
+        onPressed: onRetry,
+        icon: const Icon(Icons.refresh_rounded, size: 20),
+        label: const Text('Retry'),
+      ),
+    );
+
+/// The ⋮ in a detail page's app bar: the collection menu for all of its
+/// songs ([songs] while they load is empty, and the menu waits).
+Widget _collectionMenuButton({
+  required WidgetRef ref,
+  required String title,
+  required List<MediaItem>? songs,
+  List<_CollectionExtra> extras = const [],
+}) {
+  return Builder(
+    builder: (buttonContext) => IconButton(
+      icon: const Icon(Icons.more_vert_rounded),
+      tooltip: 'More options',
+      onPressed: songs == null
+          ? null
+          : () => _CollectionMenu.show(buttonContext, ref, title: title, songs: songs, extras: extras),
+    ),
+  );
+}
+
 class AlbumDetailScreen extends ConsumerWidget {
   final AlbumGroup album;
 
@@ -55,32 +89,15 @@ class AlbumDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final songsAsync = ref.watch(_albumSongsProvider(album.album));
+    final provider = _albumSongsProvider(album.lookupKey);
+    final songsAsync = ref.watch(provider);
 
     return _DetailScaffold(
       title: album.album,
       // Only the song list has a hero; loading / error / empty need the bar title.
       showTitle: !songsAsync.maybeWhen(data: (songs) => songs.isNotEmpty, orElse: () => false),
       actions: [
-        Builder(
-          builder: (buttonContext) => IconButton(
-            icon: const Icon(Icons.more_vert_rounded),
-            tooltip: 'More options',
-            onPressed: () {
-              songsAsync.whenData((songs) {
-                if (songs.isNotEmpty) {
-                  MediaContextMenu.show(
-                    context,
-                    ref,
-                    songs.first,
-                    anchorContext: buttonContext,
-                    without: const {MediaAction.goToAlbum},
-                  );
-                }
-              });
-            },
-          ),
-        ),
+        _collectionMenuButton(ref: ref, title: album.album, songs: songsAsync.asData?.value),
       ],
       body: songsAsync.when(
         data: (songs) {
@@ -92,69 +109,72 @@ class AlbumDetailScreen extends ConsumerWidget {
             );
           }
           final cover = _albumCoverSong(album, songs);
-          return CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                // A real cover gets the neutral violet glow: the placeholder's
-                // palette would clash with the cover's own colours.
-                child: ArtworkPresenceBuilder(
-                  item: cover,
-                  lookupSize: _kHeroLookupSize,
-                  builder: (context, hasArtwork, _) => _HeroHeader(
-                    tint: hasArtwork
-                        ? context.palette.heroGradient
-                        : ArtworkTint.surfaceGradient(_albumSeed(album), context.palette),
-                    artwork: _HeroArtwork(
-                      child: ArtworkThumbnail(
-                        uri: cover.uri,
-                        artworkPath: cover.artworkPath,
-                        size: _kHeroArtSize,
-                        borderRadius: _kHeroArtRadius,
-                        placeholderIcon: Icons.album_rounded,
-                        // Same colours as the album's tile in Music > Albums.
-                        placeholderSeed: _albumSeed(album),
+          final year = album.year ?? _yearOf(songs);
+          return Scrollbar(
+            interactive: true,
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  // A real cover gets the neutral violet glow: the placeholder's
+                  // palette would clash with the cover's own colours.
+                  child: ArtworkPresenceBuilder(
+                    item: cover,
+                    lookupSize: _kHeroLookupSize,
+                    builder: (context, hasArtwork, _) => _HeroHeader(
+                      tint: hasArtwork
+                          ? context.palette.heroGradient
+                          : ArtworkTint.surfaceGradient(_albumSeed(album), context.palette),
+                      artwork: _HeroArtwork(
+                        child: ArtworkThumbnail(
+                          uri: cover.uri,
+                          artworkPath: cover.artworkPath,
+                          size: _kHeroArtSize,
+                          borderRadius: _kHeroArtRadius,
+                          placeholderIcon: Icons.album_rounded,
+                          // Same colours as the album's tile in Music > Albums.
+                          placeholderSeed: _albumSeed(album),
+                        ),
                       ),
+                      eyebrow: 'Album',
+                      title: album.album,
+                      subtitle: album.artist,
+                      meta: songsMeta(songs, year: year),
+                      onPlay: () => playCollection(_playback(ref), songs),
+                      onShuffle: () => playCollection(_playback(ref), songs, shuffle: true),
                     ),
-                    eyebrow: 'Album',
-                    title: album.album,
-                    subtitle: album.artist,
-                    meta: _songsMeta(songs),
-                    onPlay: () {
-                      ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
-                    },
-                    onShuffle: () {
-                      final shuffled = List<MediaItem>.from(songs)..shuffle();
-                      ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
-                    },
                   ),
                 ),
-              ),
-              SliverList.builder(
-                itemCount: songs.length,
-                itemBuilder: (context, index) {
-                  final song = songs[index];
-                  return MediaSongRow(
-                    item: song,
-                    index: index + 1,
-                    menuWithout: const {MediaAction.goToAlbum},
-                    onTap: () {
-                      ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
-                    },
-                  );
-                },
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl32)),
-            ],
+                SliverList.builder(
+                  itemCount: songs.length,
+                  itemBuilder: (context, index) {
+                    final song = songs[index];
+                    return MediaSongRow(
+                      item: song,
+                      // The real track number when the song is tagged.
+                      index: song.trackNumber ?? index + 1,
+                      menuWithout: const {MediaAction.goToAlbum},
+                      onTap: () => playCollection(_playback(ref), songs, start: song),
+                    );
+                  },
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl32)),
+              ],
+            ),
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => EmptyHint(
-          icon: Icons.error_outline_rounded,
-          title: 'Could not load songs',
-          message: 'Error: $err',
-        ),
+        error: (err, _) => _loadError('the songs', () => ref.invalidate(provider)),
       ),
     );
+  }
+
+  static int? _yearOf(List<MediaItem> songs) {
+    int? year;
+    for (final s in songs) {
+      final y = s.year;
+      if (y != null && (year == null || y > year)) year = y;
+    }
+    return year;
   }
 }
 
@@ -165,12 +185,16 @@ class ArtistDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final songsAsync = ref.watch(_artistSongsProvider(artist.artist));
+    final provider = _artistSongsProvider(artist.artist);
+    final songsAsync = ref.watch(provider);
 
     return _DetailScaffold(
       title: artist.artist,
       // Only the song list has a hero; loading / error / empty need the bar title.
       showTitle: !songsAsync.maybeWhen(data: (songs) => songs.isNotEmpty, orElse: () => false),
+      actions: [
+        _collectionMenuButton(ref: ref, title: artist.artist, songs: songsAsync.asData?.value),
+      ],
       body: songsAsync.when(
         data: (songs) {
           if (songs.isEmpty) {
@@ -180,121 +204,92 @@ class ArtistDetailScreen extends ConsumerWidget {
               message: 'Songs by this artist are no longer in your library.',
             );
           }
-          return CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                // A real cover gets the neutral violet glow (see the album).
-                child: ArtworkPresenceBuilder(
-                  item: songs.first,
-                  lookupSize: _kHeroLookupSize,
-                  builder: (context, hasArtwork, _) => _HeroHeader(
-                    tint: hasArtwork
-                        ? context.palette.heroGradient
-                        : ArtworkTint.surfaceGradient(_artistSeed(artist), context.palette),
-                    artwork: _HeroArtwork(
-                      circle: true,
-                      child: ArtworkThumbnail(
-                        uri: songs.first.uri,
-                        artworkPath: songs.first.artworkPath,
-                        size: _kHeroArtSize,
-                        borderRadius: _kHeroArtSize / 2, // Circular for artist
-                        placeholderIcon: Icons.person_rounded,
-                        placeholderSeed: _artistSeed(artist),
+          return Scrollbar(
+            interactive: true,
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  // A real cover gets the neutral violet glow (see the album).
+                  child: ArtworkPresenceBuilder(
+                    item: songs.first,
+                    lookupSize: _kHeroLookupSize,
+                    builder: (context, hasArtwork, _) => _HeroHeader(
+                      tint: hasArtwork
+                          ? context.palette.heroGradient
+                          : ArtworkTint.surfaceGradient(_artistSeed(artist), context.palette),
+                      artwork: _HeroArtwork(
+                        circle: true,
+                        child: ArtworkThumbnail(
+                          uri: songs.first.uri,
+                          artworkPath: songs.first.artworkPath,
+                          size: _kHeroArtSize,
+                          borderRadius: _kHeroArtSize / 2, // Circular for artist
+                          placeholderIcon: Icons.person_rounded,
+                          placeholderSeed: _artistSeed(artist),
+                        ),
                       ),
+                      eyebrow: 'Artist',
+                      title: artist.artist,
+                      meta: songsMeta(songs),
+                      onPlay: () => playCollection(_playback(ref), songs),
+                      onShuffle: () => playCollection(_playback(ref), songs, shuffle: true),
                     ),
-                    eyebrow: 'Artist',
-                    title: artist.artist,
-                    meta: _songsMeta(songs),
-                    onPlay: () {
-                      ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
-                    },
-                    onShuffle: () {
-                      final shuffled = List<MediaItem>.from(songs)..shuffle();
-                      ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
-                    },
                   ),
                 ),
-              ),
-              SliverList.builder(
-                itemCount: songs.length,
-                itemBuilder: (context, index) {
-                  final song = songs[index];
-                  return MediaSongRow(
-                    item: song,
-                    menuWithout: const {MediaAction.goToArtist},
-                    onTap: () {
-                      ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
-                    },
-                  );
-                },
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl32)),
-            ],
+                SliverList.builder(
+                  itemCount: songs.length,
+                  itemBuilder: (context, index) {
+                    final song = songs[index];
+                    return MediaSongRow(
+                      item: song,
+                      menuWithout: const {MediaAction.goToArtist},
+                      onTap: () => playCollection(_playback(ref), songs, start: song),
+                    );
+                  },
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl32)),
+              ],
+            ),
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => EmptyHint(
-          icon: Icons.error_outline_rounded,
-          title: 'Could not load songs',
-          message: 'Error: $err',
-        ),
+        error: (err, _) => _loadError('the songs', () => ref.invalidate(provider)),
       ),
     );
   }
 }
 
-class PlaylistDetailScreen extends ConsumerWidget {
-  final Playlist playlist;
-
-  const PlaylistDetailScreen({super.key, required this.playlist});
+/// Liked songs ("wishlist"), the playlist every song's heart adds to: newest
+/// liked first, songs on the phone, downloads and liked Online videos (those
+/// open in the Online tab).
+class LikedSongsScreen extends ConsumerWidget {
+  const LikedSongsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final songsAsync = ref.watch(_playlistSongsProvider(playlist.id));
+    final songsAsync = ref.watch(_likedSongsProvider);
+    const title = MediaContextMenu.likedSongs;
 
     return _DetailScaffold(
-      title: playlist.name,
-      // An empty playlist still shows its hero; loading / error need the bar title.
+      title: title,
       showTitle: !songsAsync.maybeWhen(data: (_) => true, orElse: () => false),
       actions: [
-        IconButton(
-          icon: const Icon(Icons.edit_rounded),
-          tooltip: 'Rename',
-          onPressed: () {
-            _showRenameDialog(context, ref);
-          },
-        ),
-        IconButton(
-          icon: const Icon(Icons.delete_outline_rounded),
-          tooltip: 'Delete playlist',
-          onPressed: () {
-            _showDeleteConfirmation(context, ref);
-          },
-        ),
+        _collectionMenuButton(ref: ref, title: title, songs: songsAsync.asData?.value),
       ],
       body: songsAsync.when(
         data: (songs) {
+          final playable = playableOnly(songs);
           final header = _HeroHeader(
-            tint: PlaylistCover.heroTint(playlist.id, context.palette),
-            artwork: _HeroArtwork(
-              child: PlaylistCover(playlistId: playlist.id, size: _kHeroArtSize, borderRadius: _kHeroArtRadius),
+            tint: LikedSongsCover.heroTint(context.palette),
+            artwork: const _HeroArtwork(
+              child: LikedSongsCover(size: _kHeroArtSize, borderRadius: _kHeroArtRadius),
             ),
             eyebrow: 'Playlist',
-            title: playlist.name,
-            meta: _songsMeta(songs),
-            onPlay: songs.isEmpty
-                ? null
-                : () {
-                    ref.read(playbackNotifierProvider.notifier).loadQueue(songs, autoPlay: true);
-                  },
-            onShuffle: songs.isEmpty
-                ? null
-                : () {
-                    final shuffled = List<MediaItem>.from(songs)..shuffle();
-                    ref.read(playbackNotifierProvider.notifier).loadQueue(shuffled, autoPlay: true);
-                  },
+            title: title,
+            meta: songsMeta(songs),
+            onPlay: playable.isEmpty ? null : () => playCollection(_playback(ref), songs),
+            onShuffle: playable.isEmpty ? null : () => playCollection(_playback(ref), songs, shuffle: true),
           );
-
           if (songs.isEmpty) {
             return CustomScrollView(
               slivers: [
@@ -302,121 +297,301 @@ class PlaylistDetailScreen extends ConsumerWidget {
                 const SliverFillRemaining(
                   hasScrollBody: false,
                   child: EmptyHint(
-                    icon: Icons.queue_music_rounded,
-                    title: 'Playlist is empty',
-                    message: 'Add songs with "Add to playlist" in any song\'s menu.',
+                    icon: Icons.favorite_border_rounded,
+                    title: 'No liked songs yet',
+                    message: 'Tap the heart on any song to keep it here.',
                   ),
                 ),
               ],
             );
           }
-
-          return ReorderableListView.builder(
-            header: header,
-            padding: const EdgeInsets.only(bottom: AppSpacing.xxxl32),
-            itemCount: songs.length,
-            // The rows bring their own drag starters: long-press anywhere on
-            // the row, or an immediate drag from the handle (_RowDragListener
-            // keeps the two from both starting a recognizer).
-            buildDefaultDragHandles: false,
-            // ignore: deprecated_member_use
-            onReorder: (oldIndex, newIndex) {
-              if (newIndex > oldIndex) newIndex -= 1;
-              ref.read(libraryRepositoryProvider).reorderPlaylist(playlist.id, oldIndex, newIndex);
-            },
-            itemBuilder: (context, index) {
-              final song = songs[index];
-              void remove() {
-                ref.read(libraryRepositoryProvider).removeSongFromPlaylist(playlist.id, song.id, index);
-              }
-
-              // Under TalkBack / VoiceOver the swipe would become unlabelled
-              // scroll actions on the row, and "scroll forward" would take the
-              // song out of the playlist. So the swipe is off and the row gets
-              // a real "Remove from playlist" button, like the queue's. (A
-              // custom action cannot be used: it conflicts with the list's own
-              // "Move up / down" actions and splits the row into two nodes.)
-              final screenReader = MediaQuery.accessibleNavigationOf(context);
-              return Dismissible(
-                key: ValueKey('${song.id}_$index'),
-                direction: screenReader ? DismissDirection.none : DismissDirection.endToStart,
-                background: const _RemoveBackground(),
-                onDismissed: (_) => remove(),
-                child: _RowDragListener(
-                  index: index,
-                  child: MediaSongRow(
-                    item: song,
-                    index: index + 1,
-                    // A long press here drags the row.
-                    longPressOpensMenu: false,
-                    trailing: screenReader
-                        ? Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _RemoveFromPlaylistButton(onPressed: remove),
-                              _DragHandle(index: index),
-                            ],
-                          )
-                        : _DragHandle(index: index),
-                    onTap: () {
-                      ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
-                    },
-                  ),
+          return Scrollbar(
+            interactive: true,
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(child: header),
+                SliverList.builder(
+                  itemCount: songs.length,
+                  itemBuilder: (context, index) {
+                    final song = songs[index];
+                    return MediaSongRow(
+                      item: song,
+                      onTap: () => playCollection(_playback(ref), songs, start: song),
+                    );
+                  },
                 ),
-              );
-            },
+                const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl32)),
+              ],
+            ),
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => EmptyHint(
-          icon: Icons.error_outline_rounded,
-          title: 'Could not load songs',
-          message: 'Error: $err',
-        ),
+        error: (err, _) => _loadError('your liked songs', () => ref.invalidate(_likedSongsProvider)),
       ),
     );
   }
+}
 
-  void _showRenameDialog(BuildContext context, WidgetRef ref) {
-    final controller = TextEditingController(text: playlist.name);
-    showDialog(
-      context: context,
-      builder: (dialogCtx) {
-        return AlertDialog(
-          title: const Text('Rename Playlist'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            textCapitalization: TextCapitalization.sentences,
-            style: dialogCtx.typography.body,
-            decoration: InputDecoration(
-              hintText: 'Playlist name',
-              prefixIcon: Icon(Icons.edit_rounded, color: dialogCtx.palette.textSecondary),
+class PlaylistDetailScreen extends ConsumerStatefulWidget {
+  final Playlist playlist;
+
+  const PlaylistDetailScreen({super.key, required this.playlist});
+
+  @override
+  ConsumerState<PlaylistDetailScreen> createState() => _PlaylistDetailScreenState();
+}
+
+class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
+  /// The order the user just dragged the rows into, shown until the database
+  /// reports it (so a row does not jump back for a frame).
+  List<PlaylistTrack>? _order;
+
+  /// Reorders sent and not finished yet.
+  int _pendingReorders = 0;
+
+  /// Rows swiped away ([_trackKey]), hidden until the database no longer has
+  /// them: a dismissed row has to leave the list at once.
+  final Set<String> _removed = {};
+
+  /// The page is closing (deleted here, or the playlist went away).
+  bool _closing = false;
+
+  String get _id => widget.playlist.id;
+
+  static String _trackKey(PlaylistTrack t) => '${t.item.id}_${t.position}';
+
+  void _close() {
+    if (_closing) return;
+    _closing = true;
+    Navigator.of(context).maybePop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final playlistProvider = _playlistProvider(_id);
+    final tracksProvider = _playlistTracksProvider(_id);
+
+    // The live row: its new name after a rename; the page closes when it is
+    // deleted (here or anywhere else).
+    ref.listen<AsyncValue<Playlist?>>(playlistProvider, (_, next) {
+      if (next.hasValue && next.value == null) _close();
+    });
+    ref.listen<AsyncValue<List<PlaylistTrack>>>(tracksProvider, (_, next) {
+      final list = next.asData?.value;
+      if (list == null) return;
+      final keys = {for (final t in list) _trackKey(t)};
+      final clearOrder = _order != null && _pendingReorders == 0;
+      final gone = _removed.where((k) => !keys.contains(k)).toList();
+      if (clearOrder || gone.isNotEmpty) {
+        setState(() {
+          if (clearOrder) _order = null;
+          _removed.removeAll(gone);
+        });
+      }
+    });
+
+    final playlist = ref.watch(playlistProvider).asData?.value ?? widget.playlist;
+    final tracksAsync = ref.watch(tracksProvider);
+    final base = _order ?? tracksAsync.asData?.value;
+    final tracks = base == null ? null : [for (final t in base) if (!_removed.contains(_trackKey(t))) t];
+    final songs = tracks == null ? null : [for (final t in tracks) t.item];
+
+    return _DetailScaffold(
+      title: playlist.name,
+      // An empty playlist still shows its hero; loading / error need the bar title.
+      showTitle: tracks == null,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.edit_rounded),
+          tooltip: 'Rename',
+          onPressed: () => _showRenameDialog(playlist),
+        ),
+        _collectionMenuButton(
+          ref: ref,
+          title: playlist.name,
+          songs: songs,
+          extras: [
+            _CollectionExtra(Icons.add_rounded, 'Add songs', () => _openAddSongs(playlist)),
+            _CollectionExtra(Icons.delete_outline_rounded, 'Delete playlist', () => _showDeleteConfirmation(playlist),
+                destructive: true),
+          ],
+        ),
+      ],
+      body: tracks == null
+          ? tracksAsync.maybeWhen(
+              error: (err, _) => _loadError('this playlist', () => ref.invalidate(tracksProvider)),
+              orElse: () => const Center(child: CircularProgressIndicator()),
+            )
+          : _buildList(context, playlist, tracks),
+    );
+  }
+
+  Widget _buildList(BuildContext context, Playlist playlist, List<PlaylistTrack> tracks) {
+    final songs = [for (final t in tracks) t.item];
+    final playable = playableOnly(songs);
+    final header = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _HeroHeader(
+          tint: PlaylistCover.heroTint(playlist.id, context.palette),
+          artwork: _HeroArtwork(
+            child: PlaylistCover(
+              playlistId: playlist.id,
+              coverSongs: playlist.coverSongs,
+              size: _kHeroArtSize,
+              borderRadius: _kHeroArtRadius,
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogCtx),
-              child: const Text('Cancel'),
+          eyebrow: 'Playlist',
+          title: playlist.name,
+          meta: songsMeta(songs),
+          onPlay: playable.isEmpty ? null : () => playCollection(_playback(ref), songs),
+          onShuffle: playable.isEmpty ? null : () => playCollection(_playback(ref), songs, shuffle: true),
+        ),
+        if (tracks.isNotEmpty) _AddSongsRow(onTap: () => _openAddSongs(playlist)),
+      ],
+    );
+
+    if (tracks.isEmpty) {
+      return CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(child: header),
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: EmptyHint(
+              icon: Icons.queue_music_rounded,
+              title: 'Playlist is empty',
+              message: 'Add songs from your library, or with "Add to playlist" in any song\'s menu.',
+              action: FilledButton.icon(
+                onPressed: () => _openAddSongs(playlist),
+                icon: const Icon(Icons.add_rounded, size: 20),
+                label: const Text('Add songs'),
+              ),
             ),
-            FilledButton(
-              onPressed: () {
-                final newName = controller.text.trim();
-                if (newName.isNotEmpty) {
-                  Navigator.pop(dialogCtx);
-                  ref.read(libraryRepositoryProvider).renamePlaylist(playlist.id, newName);
-                }
-              },
-              child: const Text('Save'),
+          ),
+        ],
+      );
+    }
+
+    final screenReader = MediaQuery.accessibleNavigationOf(context);
+    return ReorderableListView.builder(
+      header: header,
+      padding: const EdgeInsets.only(bottom: AppSpacing.xxxl32),
+      itemCount: tracks.length,
+      // The rows bring their own drag starters: long-press anywhere on
+      // the row, or an immediate drag from the handle (_RowDragListener
+      // keeps the two from both starting a recognizer).
+      buildDefaultDragHandles: false,
+      // ignore: deprecated_member_use
+      onReorder: (oldIndex, newIndex) {
+        if (newIndex > oldIndex) newIndex -= 1;
+        _reorder(tracks, oldIndex, newIndex);
+      },
+      itemBuilder: (context, index) {
+        final track = tracks[index];
+        final song = track.item;
+        final entry = PlaylistEntryRef(playlistId: playlist.id, playlistName: playlist.name, position: track.position);
+
+        // Under TalkBack / VoiceOver the swipe would become unlabelled
+        // scroll actions on the row, and "scroll forward" would take the
+        // song out of the playlist. So the swipe is off and the row gets
+        // a real "Remove from playlist" button, like the queue's. (A
+        // custom action cannot be used: it conflicts with the list's own
+        // "Move up / down" actions and splits the row into two nodes.)
+        return Dismissible(
+          key: ValueKey('${song.id}_${track.position}'),
+          direction: screenReader ? DismissDirection.none : DismissDirection.endToStart,
+          background: const _RemoveBackground(),
+          onDismissed: (_) => _remove(playlist, tracks, track),
+          child: _RowDragListener(
+            index: index,
+            child: MediaSongRow(
+              item: song,
+              index: index + 1,
+              // A long press here drags the row.
+              longPressOpensMenu: false,
+              playlistEntry: entry,
+              keepMenu: true,
+              trailing: screenReader
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _RemoveFromPlaylistButton(onPressed: () => _remove(playlist, tracks, track)),
+                        _DragHandle(index: index),
+                      ],
+                    )
+                  : _DragHandle(index: index),
+              onTap: () => playCollection(_playback(ref), songs, start: song),
             ),
-          ],
+          ),
         );
       },
     );
   }
 
-  void _showDeleteConfirmation(BuildContext context, WidgetRef ref) {
-    showDialog(
+  /// Moves the row at [from] to [to] on screen at once, and in the database
+  /// by the entries' stored positions.
+  void _reorder(List<PlaylistTrack> tracks, int from, int to) {
+    if (from == to || from < 0 || to < 0 || from >= tracks.length || to >= tracks.length) return;
+    final oldPosition = tracks[from].position;
+    final newPosition = tracks[to].position;
+    final items = [for (final t in tracks) t.item];
+    final moved = items.removeAt(from);
+    items.insert(to, moved);
+    setState(() {
+      _order = [
+        for (var i = 0; i < tracks.length; i++) PlaylistTrack(position: tracks[i].position, item: items[i]),
+      ];
+      _pendingReorders++;
+    });
+    ref.read(libraryRepositoryProvider).reorderPlaylist(_id, oldPosition, newPosition).whenComplete(() {
+      if (mounted) _pendingReorders--;
+    });
+  }
+
+  /// Takes [track] out (swipe or the screen-reader button), with an Undo
+  /// that puts it back where it was.
+  void _remove(Playlist playlist, List<PlaylistTrack> tracks, PlaylistTrack track) {
+    final repo = ref.read(libraryRepositoryProvider);
+    final key = _trackKey(track);
+    setState(() => _removed.add(key));
+    repo.removeSongFromPlaylist(_id, track.item.id, track.position);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(SnackBar(
+      content: Text('Removed from ${playlist.name}'),
+      duration: const Duration(seconds: 4),
+      persist: false,
+      action: SnackBarAction(
+        label: 'Undo',
+        onPressed: () {
+          if (mounted) setState(() => _removed.remove(key));
+          repo.insertSongIntoPlaylist(_id, track.item.id, track.position);
+        },
+      ),
+    ));
+  }
+
+  void _openAddSongs(Playlist playlist) {
+    _AddSongsSheet.show(context, playlist);
+  }
+
+  void _showRenameDialog(Playlist playlist) {
+    final repo = ref.read(libraryRepositoryProvider);
+    showDialog<void>(
+      context: context,
+      builder: (_) => _RenamePlaylistDialog(
+        initialName: playlist.name,
+        onSave: (name) => repo.renamePlaylist(playlist.id, name),
+      ),
+    );
+  }
+
+  void _showDeleteConfirmation(Playlist playlist) {
+    final repo = ref.read(libraryRepositoryProvider);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    showDialog<void>(
       context: context,
       builder: (dialogCtx) {
         final palette = dialogCtx.palette;
@@ -436,9 +611,9 @@ class PlaylistDetailScreen extends ConsumerWidget {
               style: TextButton.styleFrom(foregroundColor: palette.error),
               onPressed: () {
                 Navigator.pop(dialogCtx); // close dialog
-                Navigator.pop(context); // close screen
-                ref.read(libraryRepositoryProvider).deletePlaylist(playlist.id);
-                ScaffoldMessenger.of(context).showSnackBar(
+                _close(); // close screen
+                repo.deletePlaylist(playlist.id);
+                messenger?.showSnackBar(
                   SnackBar(content: Text('Deleted playlist "${playlist.name}"')),
                 );
               },
@@ -451,27 +626,489 @@ class PlaylistDetailScreen extends ConsumerWidget {
   }
 }
 
-/// "12 songs · 48 min"
-String _songsMeta(List<MediaItem> songs) {
+/// "Rename Playlist": owns its text controller, so the field outlives the
+/// dialog's closing animation and is disposed with it.
+class _RenamePlaylistDialog extends StatefulWidget {
+  final String initialName;
+  final Future<void> Function(String name) onSave;
+
+  const _RenamePlaylistDialog({required this.initialName, required this.onSave});
+
+  @override
+  State<_RenamePlaylistDialog> createState() => _RenamePlaylistDialogState();
+}
+
+class _RenamePlaylistDialogState extends State<_RenamePlaylistDialog> {
+  late final TextEditingController _controller = TextEditingController(text: widget.initialName);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final newName = _controller.text.trim();
+    if (newName.isEmpty) return;
+    Navigator.pop(context);
+    widget.onSave(newName);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Rename Playlist'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textCapitalization: TextCapitalization.sentences,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _save(),
+        style: context.typography.body,
+        decoration: InputDecoration(
+          hintText: 'Playlist name',
+          prefixIcon: Icon(Icons.edit_rounded, color: context.palette.textSecondary),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+/// "Add songs" at the top of a playlist's list, like Spotify's "Add to this
+/// playlist".
+class _AddSongsRow extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _AddSongsRow({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return ListTile(
+      minTileHeight: MediaSongRow.minHeight,
+      contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+      leading: Container(
+        width: MediaSongRow.artworkSize,
+        height: MediaSongRow.artworkSize,
+        decoration: BoxDecoration(
+          color: palette.surfaceElevated,
+          borderRadius: BorderRadius.circular(MediaSongRow.artworkRadius),
+        ),
+        child: Icon(Icons.add_rounded, color: palette.textPrimary),
+      ),
+      title: Text('Add songs', style: context.typography.bodyStrong),
+      onTap: onTap,
+    );
+  }
+}
+
+/// "Add songs": every song in the library, searchable, to pick several at
+/// once. Songs already in the playlist are ticked and cannot be picked again.
+class _AddSongsSheet extends ConsumerStatefulWidget {
+  final Playlist playlist;
+
+  const _AddSongsSheet({required this.playlist});
+
+  static void show(BuildContext context, Playlist playlist) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final container = ProviderScope.containerOf(context, listen: false);
+    showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.9),
+      builder: (_) => UncontrolledProviderScope(container: container, child: _AddSongsSheet(playlist: playlist)),
+    ).then((added) {
+      if (added == null || messenger == null || !messenger.mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text(added == 0
+            ? 'Those songs are already in ${playlist.name}'
+            : 'Added ${added == 1 ? '1 song' : '$added songs'} to ${playlist.name}'),
+        duration: const Duration(seconds: 2),
+      ));
+    });
+  }
+
+  @override
+  ConsumerState<_AddSongsSheet> createState() => _AddSongsSheetState();
+}
+
+class _AddSongsSheetState extends ConsumerState<_AddSongsSheet> {
+  final TextEditingController _search = TextEditingController();
+  late Stream<List<MediaItem>> _songs = _query('');
+  late final Stream<List<PlaylistTrack>> _present =
+      ref.read(libraryRepositoryProvider).watchPlaylistTracks(widget.playlist.id);
+
+  /// Picked song ids, in the order they were picked.
+  final List<String> _picked = [];
+  bool _adding = false;
+
+  Stream<List<MediaItem>> _query(String text) =>
+      ref.read(libraryRepositoryProvider).watchMediaItems(mediaType: MediaType.audio, searchQuery: text);
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _add() async {
+    if (_picked.isEmpty || _adding) return;
+    setState(() => _adding = true);
+    final added = await ref.read(libraryRepositoryProvider).addSongsToPlaylist(widget.playlist.id, List.of(_picked));
+    if (mounted) Navigator.of(context).pop(added);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
+    final count = _picked.length;
+    return SafeArea(
+      top: false,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.sm8),
+            child: Semantics(
+              header: true,
+              child: Text(
+                'Add to ${widget.playlist.name}',
+                style: type.sectionTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.sm8),
+            child: TextField(
+              controller: _search,
+              textInputAction: TextInputAction.search,
+              style: type.body,
+              onChanged: (text) => setState(() => _songs = _query(text)),
+              decoration: InputDecoration(
+                hintText: 'Search your music',
+                prefixIcon: Icon(Icons.search_rounded, color: palette.textSecondary),
+              ),
+            ),
+          ),
+          Divider(height: 1, thickness: 1, color: palette.divider),
+          Expanded(
+            child: StreamBuilder<List<PlaylistTrack>>(
+              stream: _present,
+              builder: (context, presentSnapshot) {
+                final inPlaylist = {for (final t in presentSnapshot.data ?? const <PlaylistTrack>[]) t.item.id};
+                return StreamBuilder<List<MediaItem>>(
+                  stream: _songs,
+                  builder: (context, snapshot) {
+                    final songs = snapshot.data;
+                    if (songs == null) return const Center(child: CircularProgressIndicator());
+                    if (songs.isEmpty) {
+                      return EmptyHint(
+                        icon: Icons.music_off_outlined,
+                        title: _search.text.isEmpty ? 'No songs yet' : 'No matching songs',
+                        message: _search.text.isEmpty
+                            ? 'Songs on this phone show up here.'
+                            : 'No songs matching "${_search.text}".',
+                      );
+                    }
+                    return Scrollbar(
+                      interactive: true,
+                      child: ListView.builder(
+                        itemCount: songs.length,
+                        itemBuilder: (context, index) {
+                          final song = songs[index];
+                          final already = inPlaylist.contains(song.id);
+                          final picked = already || _picked.contains(song.id);
+                          return CheckboxListTile(
+                            value: picked,
+                            onChanged: already
+                                ? null
+                                : (on) => setState(() {
+                                      if (on == true) {
+                                        _picked.add(song.id);
+                                      } else {
+                                        _picked.remove(song.id);
+                                      }
+                                    }),
+                            controlAffinity: ListTileControlAffinity.trailing,
+                            secondary: ArtworkThumbnail(
+                              uri: song.uri,
+                              artworkPath: song.artworkPath,
+                              size: MediaSongRow.artworkSize,
+                              borderRadius: MediaSongRow.artworkRadius,
+                            ),
+                            title: Text(song.title, style: type.bodyStrong, maxLines: 1, overflow: TextOverflow.ellipsis),
+                            subtitle: Text(
+                              already ? 'In this playlist' : MediaSongRow.artistOf(song),
+                              style: type.metadata,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        },
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, AppSpacing.sm8),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: count == 0 || _adding ? null : _add,
+                icon: const Icon(Icons.playlist_add_rounded, size: 20),
+                label: Text(count == 0 ? 'Pick songs to add' : 'Add ${count == 1 ? '1 song' : '$count songs'}'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// An extra row in a [_CollectionMenu] (a playlist's "Add songs", "Delete
+/// playlist").
+class _CollectionExtra {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool destructive;
+
+  const _CollectionExtra(this.icon, this.label, this.onTap, {this.destructive = false});
+}
+
+/// The ⋮ menu of an album, artist or playlist page: it acts on the whole
+/// list (only the songs that can play go to the queue), never on one song.
+class _CollectionMenu {
+  _CollectionMenu._();
+
+  static Future<void> show(
+    BuildContext context,
+    WidgetRef ref, {
+    required String title,
+    required List<MediaItem> songs,
+    List<_CollectionExtra> extras = const [],
+  }) async {
+    final playable = playableOnly(songs);
+    final container = ProviderScope.containerOf(context, listen: false);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final playback = container.read(playbackNotifierProvider.notifier);
+    void snack(String text) {
+      if (messenger == null || !messenger.mounted) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(SnackBar(content: Text(text), duration: const Duration(seconds: 2)));
+    }
+
+    final hasSongs = playable.isNotEmpty;
+    final count = playable.length == 1 ? '1 song' : '${playable.length} songs';
+    final rows = <(IconData, String, VoidCallback?, bool)>[
+      (Icons.playlist_play_rounded, 'Play next', hasSongs ? () {
+        playback.playNextAll(playable);
+        snack('Playing $count next');
+      } : null, false),
+      (Icons.queue_music_rounded, 'Add to queue', hasSongs ? () {
+        playback.addAllToQueue(playable);
+        snack('Added $count to the queue');
+      } : null, false),
+      (Icons.playlist_add_rounded, 'Add to playlist…', songs.isEmpty ? null : () {
+        if (context.mounted) _PickPlaylistSheet.show(context, container, messenger, songs);
+      }, false),
+      (Icons.shuffle_rounded, 'Shuffle', hasSongs ? () => playCollection(playback, playable, shuffle: true) : null, false),
+      for (final extra in extras) (extra.icon, extra.label, extra.onTap, extra.destructive),
+    ];
+
+    final chosen = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.9),
+      builder: (sheetContext) {
+        final palette = sheetContext.palette;
+        final type = sheetContext.typography;
+        return SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: AppSpacing.sm8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.md12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(breakableTitle(title), semanticsLabel: title, style: type.bodyStrong, maxLines: 2,
+                          overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 2),
+                      Text(songsMeta(songs), style: type.metadata),
+                    ],
+                  ),
+                ),
+                Divider(height: 1, thickness: 1, color: palette.divider),
+                const SizedBox(height: AppSpacing.xs4),
+                for (var i = 0; i < rows.length; i++)
+                  ListTile(
+                    minTileHeight: MediaContextMenu.rowHeight,
+                    enabled: rows[i].$3 != null,
+                    leading: Icon(rows[i].$1, size: 24, color: rows[i].$4 ? palette.error : palette.textSecondary),
+                    title: Text(
+                      rows[i].$2,
+                      style: type.body.copyWith(color: rows[i].$4 ? palette.error : palette.textPrimary),
+                    ),
+                    onTap: () => Navigator.of(sheetContext).pop(i),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (chosen != null) rows[chosen].$3?.call();
+  }
+}
+
+/// "Add to playlist…" for a whole album, artist or playlist: one transaction
+/// per pick, songs already in that playlist skipped.
+class _PickPlaylistSheet extends StatelessWidget {
+  final ProviderContainer container;
+  final List<MediaItem> songs;
+
+  const _PickPlaylistSheet({required this.container, required this.songs});
+
+  static void show(
+    BuildContext context,
+    ProviderContainer container,
+    ScaffoldMessengerState? messenger,
+    List<MediaItem> songs,
+  ) {
+    showModalBottomSheet<Playlist>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.9),
+      builder: (_) => UncontrolledProviderScope(
+        container: container,
+        child: _PickPlaylistSheet(container: container, songs: songs),
+      ),
+    ).then((pl) async {
+      if (pl == null) return;
+      final added = await container
+          .read(libraryRepositoryProvider)
+          .addSongsToPlaylist(pl.id, [for (final s in songs) s.id]);
+      if (messenger == null || !messenger.mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text(added == 0
+            ? 'All of them are already in ${pl.name}'
+            : 'Added ${added == 1 ? '1 song' : '$added songs'} to ${pl.name}'),
+        duration: const Duration(seconds: 2),
+      ));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
+    return StreamBuilder<List<Playlist>>(
+      stream: container.read(libraryRepositoryProvider).watchPlaylists(),
+      builder: (context, snapshot) {
+        final playlists = snapshot.data ?? const <Playlist>[];
+        return SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.md12),
+                child: Semantics(
+                  header: true,
+                  child: Text('Add to playlist', style: type.sectionTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+              ),
+              Divider(height: 1, thickness: 1, color: palette.divider),
+              if (playlists.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl24, vertical: AppSpacing.xxxl32),
+                  child: Text(
+                    'No playlists yet. Make one in Music > Playlists.',
+                    style: type.body.copyWith(color: palette.textSecondary),
+                    textAlign: TextAlign.center,
+                  ),
+                )
+              else
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm8),
+                    itemCount: playlists.length,
+                    itemBuilder: (context, index) {
+                      final pl = playlists[index];
+                      return ListTile(
+                        minTileHeight: 64,
+                        leading: PlaylistCover(
+                          playlistId: pl.id,
+                          coverSongs: pl.coverSongs,
+                          size: 48,
+                          borderRadius: AppSpacing.radiusArtSmall,
+                        ),
+                        title: Text(pl.name, style: type.bodyStrong, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: Text(pl.songCount == 1 ? '1 song' : '${pl.songCount} songs', style: type.metadata),
+                        trailing: Icon(Icons.add_rounded, color: palette.textSecondary),
+                        onTap: () => Navigator.pop(context, pl),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// "2019 · 12 songs · 48 min"; [year] leads when the album is tagged with one.
+String songsMeta(List<MediaItem> songs, {int? year}) {
   final count = songs.length;
   final countText = count == 1 ? '1 song' : '$count songs';
   var totalMs = 0;
   for (final song in songs) {
     if (song.durationMs > 0) totalMs += song.durationMs;
   }
-  if (totalMs <= 0) return countText;
-  final total = Duration(milliseconds: totalMs);
-  final hours = total.inHours;
-  final minutes = total.inMinutes.remainder(60);
-  final String durationText;
-  if (hours > 0) {
-    durationText = minutes > 0 ? '$hours hr $minutes min' : '$hours hr';
-  } else if (total.inMinutes > 0) {
-    durationText = '${total.inMinutes} min';
-  } else {
-    durationText = '${total.inSeconds} sec';
+  final parts = <String>[if (year != null) '$year', countText];
+  if (totalMs > 0) {
+    final total = Duration(milliseconds: totalMs);
+    final hours = total.inHours;
+    final minutes = total.inMinutes.remainder(60);
+    final String durationText;
+    if (hours > 0) {
+      durationText = minutes > 0 ? '$hours hr $minutes min' : '$hours hr';
+    } else if (total.inMinutes > 0) {
+      durationText = '${total.inMinutes} min';
+    } else {
+      durationText = '${total.inSeconds} sec';
+    }
+    parts.add(durationText);
   }
-  return '$countText · $durationText';
+  return parts.join(' · ');
 }
 
 /// Scaffold for the detail screens: a transparent app bar over the hero glow
@@ -877,14 +1514,22 @@ class _RemoveBackground extends StatelessWidget {
   }
 }
 
-final _albumSongsProvider = StreamProvider.family<List<MediaItem>, String>((ref, album) {
-  return ref.watch(libraryRepositoryProvider).watchAlbumSongs(album);
+final _albumSongsProvider = StreamProvider.family<List<MediaItem>, String>((ref, albumKey) {
+  return ref.watch(libraryRepositoryProvider).watchAlbumSongs(albumKey);
 });
 
 final _artistSongsProvider = StreamProvider.family<List<MediaItem>, String>((ref, artist) {
   return ref.watch(libraryRepositoryProvider).watchArtistSongs(artist);
 });
 
-final _playlistSongsProvider = StreamProvider.family<List<MediaItem>, String>((ref, playlistId) {
-  return ref.watch(libraryRepositoryProvider).watchPlaylistSongs(playlistId);
+final _playlistTracksProvider = StreamProvider.family<List<PlaylistTrack>, String>((ref, playlistId) {
+  return ref.watch(libraryRepositoryProvider).watchPlaylistTracks(playlistId);
+});
+
+final _playlistProvider = StreamProvider.family<Playlist?, String>((ref, playlistId) {
+  return ref.watch(libraryRepositoryProvider).watchPlaylist(playlistId);
+});
+
+final _likedSongsProvider = StreamProvider<List<MediaItem>>((ref) {
+  return ref.watch(libraryRepositoryProvider).watchFavorites();
 });

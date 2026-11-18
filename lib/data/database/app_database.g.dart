@@ -196,6 +196,101 @@ class $MediaItemsTableTable extends MediaItemsTable
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _albumIdMeta = const VerificationMeta(
+    'albumId',
+  );
+  @override
+  late final GeneratedColumn<String> albumId = GeneratedColumn<String>(
+    'album_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _albumArtistMeta = const VerificationMeta(
+    'albumArtist',
+  );
+  @override
+  late final GeneratedColumn<String> albumArtist = GeneratedColumn<String>(
+    'album_artist',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _trackNumberMeta = const VerificationMeta(
+    'trackNumber',
+  );
+  @override
+  late final GeneratedColumn<int> trackNumber = GeneratedColumn<int>(
+    'track_number',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _discNumberMeta = const VerificationMeta(
+    'discNumber',
+  );
+  @override
+  late final GeneratedColumn<int> discNumber = GeneratedColumn<int>(
+    'disc_number',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _yearMeta = const VerificationMeta('year');
+  @override
+  late final GeneratedColumn<int> year = GeneratedColumn<int>(
+    'year',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _searchKeyMeta = const VerificationMeta(
+    'searchKey',
+  );
+  @override
+  late final GeneratedColumn<String> searchKey = GeneratedColumn<String>(
+    'search_key',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _favoritedAtMeta = const VerificationMeta(
+    'favoritedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> favoritedAt = GeneratedColumn<DateTime>(
+    'favorited_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _relativePathMeta = const VerificationMeta(
+    'relativePath',
+  );
+  @override
+  late final GeneratedColumn<String> relativePath = GeneratedColumn<String>(
+    'relative_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _genreMeta = const VerificationMeta('genre');
+  @override
+  late final GeneratedColumn<String> genre = GeneratedColumn<String>(
+    'genre',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -216,6 +311,15 @@ class $MediaItemsTableTable extends MediaItemsTable
     availability,
     source,
     artworkPath,
+    albumId,
+    albumArtist,
+    trackNumber,
+    discNumber,
+    year,
+    searchKey,
+    favoritedAt,
+    relativePath,
+    genre,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -354,6 +458,72 @@ class $MediaItemsTableTable extends MediaItemsTable
         ),
       );
     }
+    if (data.containsKey('album_id')) {
+      context.handle(
+        _albumIdMeta,
+        albumId.isAcceptableOrUnknown(data['album_id']!, _albumIdMeta),
+      );
+    }
+    if (data.containsKey('album_artist')) {
+      context.handle(
+        _albumArtistMeta,
+        albumArtist.isAcceptableOrUnknown(
+          data['album_artist']!,
+          _albumArtistMeta,
+        ),
+      );
+    }
+    if (data.containsKey('track_number')) {
+      context.handle(
+        _trackNumberMeta,
+        trackNumber.isAcceptableOrUnknown(
+          data['track_number']!,
+          _trackNumberMeta,
+        ),
+      );
+    }
+    if (data.containsKey('disc_number')) {
+      context.handle(
+        _discNumberMeta,
+        discNumber.isAcceptableOrUnknown(data['disc_number']!, _discNumberMeta),
+      );
+    }
+    if (data.containsKey('year')) {
+      context.handle(
+        _yearMeta,
+        year.isAcceptableOrUnknown(data['year']!, _yearMeta),
+      );
+    }
+    if (data.containsKey('search_key')) {
+      context.handle(
+        _searchKeyMeta,
+        searchKey.isAcceptableOrUnknown(data['search_key']!, _searchKeyMeta),
+      );
+    }
+    if (data.containsKey('favorited_at')) {
+      context.handle(
+        _favoritedAtMeta,
+        favoritedAt.isAcceptableOrUnknown(
+          data['favorited_at']!,
+          _favoritedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('relative_path')) {
+      context.handle(
+        _relativePathMeta,
+        relativePath.isAcceptableOrUnknown(
+          data['relative_path']!,
+          _relativePathMeta,
+        ),
+      );
+    }
+    if (data.containsKey('genre')) {
+      context.handle(
+        _genreMeta,
+        genre.isAcceptableOrUnknown(data['genre']!, _genreMeta),
+      );
+    }
     return context;
   }
 
@@ -435,6 +605,42 @@ class $MediaItemsTableTable extends MediaItemsTable
         DriftSqlType.string,
         data['${effectivePrefix}artwork_path'],
       ),
+      albumId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}album_id'],
+      ),
+      albumArtist: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}album_artist'],
+      ),
+      trackNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}track_number'],
+      ),
+      discNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}disc_number'],
+      ),
+      year: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}year'],
+      ),
+      searchKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}search_key'],
+      ),
+      favoritedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}favorited_at'],
+      ),
+      relativePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}relative_path'],
+      ),
+      genre: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}genre'],
+      ),
     );
   }
 
@@ -463,6 +669,21 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
   final String availability;
   final String? source;
   final String? artworkPath;
+
+  /// MediaStore ALBUM_ID (songs on the phone).
+  final String? albumId;
+  final String? albumArtist;
+  final int? trackNumber;
+  final int? discNumber;
+  final int? year;
+
+  /// [librarySearchKey] of the row: folded title, artist and album.
+  final String? searchKey;
+
+  /// When the song was liked; null when not liked (or liked before v8).
+  final DateTime? favoritedAt;
+  final String? relativePath;
+  final String? genre;
   const MediaItemEntry({
     required this.id,
     required this.uri,
@@ -482,6 +703,15 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     required this.availability,
     this.source,
     this.artworkPath,
+    this.albumId,
+    this.albumArtist,
+    this.trackNumber,
+    this.discNumber,
+    this.year,
+    this.searchKey,
+    this.favoritedAt,
+    this.relativePath,
+    this.genre,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -519,6 +749,33 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     }
     if (!nullToAbsent || artworkPath != null) {
       map['artwork_path'] = Variable<String>(artworkPath);
+    }
+    if (!nullToAbsent || albumId != null) {
+      map['album_id'] = Variable<String>(albumId);
+    }
+    if (!nullToAbsent || albumArtist != null) {
+      map['album_artist'] = Variable<String>(albumArtist);
+    }
+    if (!nullToAbsent || trackNumber != null) {
+      map['track_number'] = Variable<int>(trackNumber);
+    }
+    if (!nullToAbsent || discNumber != null) {
+      map['disc_number'] = Variable<int>(discNumber);
+    }
+    if (!nullToAbsent || year != null) {
+      map['year'] = Variable<int>(year);
+    }
+    if (!nullToAbsent || searchKey != null) {
+      map['search_key'] = Variable<String>(searchKey);
+    }
+    if (!nullToAbsent || favoritedAt != null) {
+      map['favorited_at'] = Variable<DateTime>(favoritedAt);
+    }
+    if (!nullToAbsent || relativePath != null) {
+      map['relative_path'] = Variable<String>(relativePath);
+    }
+    if (!nullToAbsent || genre != null) {
+      map['genre'] = Variable<String>(genre);
     }
     return map;
   }
@@ -559,6 +816,31 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       artworkPath: artworkPath == null && nullToAbsent
           ? const Value.absent()
           : Value(artworkPath),
+      albumId: albumId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(albumId),
+      albumArtist: albumArtist == null && nullToAbsent
+          ? const Value.absent()
+          : Value(albumArtist),
+      trackNumber: trackNumber == null && nullToAbsent
+          ? const Value.absent()
+          : Value(trackNumber),
+      discNumber: discNumber == null && nullToAbsent
+          ? const Value.absent()
+          : Value(discNumber),
+      year: year == null && nullToAbsent ? const Value.absent() : Value(year),
+      searchKey: searchKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(searchKey),
+      favoritedAt: favoritedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(favoritedAt),
+      relativePath: relativePath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(relativePath),
+      genre: genre == null && nullToAbsent
+          ? const Value.absent()
+          : Value(genre),
     );
   }
 
@@ -586,6 +868,15 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       availability: serializer.fromJson<String>(json['availability']),
       source: serializer.fromJson<String?>(json['source']),
       artworkPath: serializer.fromJson<String?>(json['artworkPath']),
+      albumId: serializer.fromJson<String?>(json['albumId']),
+      albumArtist: serializer.fromJson<String?>(json['albumArtist']),
+      trackNumber: serializer.fromJson<int?>(json['trackNumber']),
+      discNumber: serializer.fromJson<int?>(json['discNumber']),
+      year: serializer.fromJson<int?>(json['year']),
+      searchKey: serializer.fromJson<String?>(json['searchKey']),
+      favoritedAt: serializer.fromJson<DateTime?>(json['favoritedAt']),
+      relativePath: serializer.fromJson<String?>(json['relativePath']),
+      genre: serializer.fromJson<String?>(json['genre']),
     );
   }
   @override
@@ -610,6 +901,15 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       'availability': serializer.toJson<String>(availability),
       'source': serializer.toJson<String?>(source),
       'artworkPath': serializer.toJson<String?>(artworkPath),
+      'albumId': serializer.toJson<String?>(albumId),
+      'albumArtist': serializer.toJson<String?>(albumArtist),
+      'trackNumber': serializer.toJson<int?>(trackNumber),
+      'discNumber': serializer.toJson<int?>(discNumber),
+      'year': serializer.toJson<int?>(year),
+      'searchKey': serializer.toJson<String?>(searchKey),
+      'favoritedAt': serializer.toJson<DateTime?>(favoritedAt),
+      'relativePath': serializer.toJson<String?>(relativePath),
+      'genre': serializer.toJson<String?>(genre),
     };
   }
 
@@ -632,6 +932,15 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     String? availability,
     Value<String?> source = const Value.absent(),
     Value<String?> artworkPath = const Value.absent(),
+    Value<String?> albumId = const Value.absent(),
+    Value<String?> albumArtist = const Value.absent(),
+    Value<int?> trackNumber = const Value.absent(),
+    Value<int?> discNumber = const Value.absent(),
+    Value<int?> year = const Value.absent(),
+    Value<String?> searchKey = const Value.absent(),
+    Value<DateTime?> favoritedAt = const Value.absent(),
+    Value<String?> relativePath = const Value.absent(),
+    Value<String?> genre = const Value.absent(),
   }) => MediaItemEntry(
     id: id ?? this.id,
     uri: uri ?? this.uri,
@@ -651,6 +960,15 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     availability: availability ?? this.availability,
     source: source.present ? source.value : this.source,
     artworkPath: artworkPath.present ? artworkPath.value : this.artworkPath,
+    albumId: albumId.present ? albumId.value : this.albumId,
+    albumArtist: albumArtist.present ? albumArtist.value : this.albumArtist,
+    trackNumber: trackNumber.present ? trackNumber.value : this.trackNumber,
+    discNumber: discNumber.present ? discNumber.value : this.discNumber,
+    year: year.present ? year.value : this.year,
+    searchKey: searchKey.present ? searchKey.value : this.searchKey,
+    favoritedAt: favoritedAt.present ? favoritedAt.value : this.favoritedAt,
+    relativePath: relativePath.present ? relativePath.value : this.relativePath,
+    genre: genre.present ? genre.value : this.genre,
   );
   MediaItemEntry copyWithCompanion(MediaItemsTableCompanion data) {
     return MediaItemEntry(
@@ -682,6 +1000,25 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       artworkPath: data.artworkPath.present
           ? data.artworkPath.value
           : this.artworkPath,
+      albumId: data.albumId.present ? data.albumId.value : this.albumId,
+      albumArtist: data.albumArtist.present
+          ? data.albumArtist.value
+          : this.albumArtist,
+      trackNumber: data.trackNumber.present
+          ? data.trackNumber.value
+          : this.trackNumber,
+      discNumber: data.discNumber.present
+          ? data.discNumber.value
+          : this.discNumber,
+      year: data.year.present ? data.year.value : this.year,
+      searchKey: data.searchKey.present ? data.searchKey.value : this.searchKey,
+      favoritedAt: data.favoritedAt.present
+          ? data.favoritedAt.value
+          : this.favoritedAt,
+      relativePath: data.relativePath.present
+          ? data.relativePath.value
+          : this.relativePath,
+      genre: data.genre.present ? data.genre.value : this.genre,
     );
   }
 
@@ -705,13 +1042,22 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
           ..write('isFavorite: $isFavorite, ')
           ..write('availability: $availability, ')
           ..write('source: $source, ')
-          ..write('artworkPath: $artworkPath')
+          ..write('artworkPath: $artworkPath, ')
+          ..write('albumId: $albumId, ')
+          ..write('albumArtist: $albumArtist, ')
+          ..write('trackNumber: $trackNumber, ')
+          ..write('discNumber: $discNumber, ')
+          ..write('year: $year, ')
+          ..write('searchKey: $searchKey, ')
+          ..write('favoritedAt: $favoritedAt, ')
+          ..write('relativePath: $relativePath, ')
+          ..write('genre: $genre')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     uri,
     mediaType,
@@ -730,7 +1076,16 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     availability,
     source,
     artworkPath,
-  );
+    albumId,
+    albumArtist,
+    trackNumber,
+    discNumber,
+    year,
+    searchKey,
+    favoritedAt,
+    relativePath,
+    genre,
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -752,7 +1107,16 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
           other.isFavorite == this.isFavorite &&
           other.availability == this.availability &&
           other.source == this.source &&
-          other.artworkPath == this.artworkPath);
+          other.artworkPath == this.artworkPath &&
+          other.albumId == this.albumId &&
+          other.albumArtist == this.albumArtist &&
+          other.trackNumber == this.trackNumber &&
+          other.discNumber == this.discNumber &&
+          other.year == this.year &&
+          other.searchKey == this.searchKey &&
+          other.favoritedAt == this.favoritedAt &&
+          other.relativePath == this.relativePath &&
+          other.genre == this.genre);
 }
 
 class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
@@ -774,6 +1138,15 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
   final Value<String> availability;
   final Value<String?> source;
   final Value<String?> artworkPath;
+  final Value<String?> albumId;
+  final Value<String?> albumArtist;
+  final Value<int?> trackNumber;
+  final Value<int?> discNumber;
+  final Value<int?> year;
+  final Value<String?> searchKey;
+  final Value<DateTime?> favoritedAt;
+  final Value<String?> relativePath;
+  final Value<String?> genre;
   final Value<int> rowid;
   const MediaItemsTableCompanion({
     this.id = const Value.absent(),
@@ -794,6 +1167,15 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     this.availability = const Value.absent(),
     this.source = const Value.absent(),
     this.artworkPath = const Value.absent(),
+    this.albumId = const Value.absent(),
+    this.albumArtist = const Value.absent(),
+    this.trackNumber = const Value.absent(),
+    this.discNumber = const Value.absent(),
+    this.year = const Value.absent(),
+    this.searchKey = const Value.absent(),
+    this.favoritedAt = const Value.absent(),
+    this.relativePath = const Value.absent(),
+    this.genre = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MediaItemsTableCompanion.insert({
@@ -815,6 +1197,15 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     this.availability = const Value.absent(),
     this.source = const Value.absent(),
     this.artworkPath = const Value.absent(),
+    this.albumId = const Value.absent(),
+    this.albumArtist = const Value.absent(),
+    this.trackNumber = const Value.absent(),
+    this.discNumber = const Value.absent(),
+    this.year = const Value.absent(),
+    this.searchKey = const Value.absent(),
+    this.favoritedAt = const Value.absent(),
+    this.relativePath = const Value.absent(),
+    this.genre = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        uri = Value(uri),
@@ -842,6 +1233,15 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     Expression<String>? availability,
     Expression<String>? source,
     Expression<String>? artworkPath,
+    Expression<String>? albumId,
+    Expression<String>? albumArtist,
+    Expression<int>? trackNumber,
+    Expression<int>? discNumber,
+    Expression<int>? year,
+    Expression<String>? searchKey,
+    Expression<DateTime>? favoritedAt,
+    Expression<String>? relativePath,
+    Expression<String>? genre,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -863,6 +1263,15 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
       if (availability != null) 'availability': availability,
       if (source != null) 'source': source,
       if (artworkPath != null) 'artwork_path': artworkPath,
+      if (albumId != null) 'album_id': albumId,
+      if (albumArtist != null) 'album_artist': albumArtist,
+      if (trackNumber != null) 'track_number': trackNumber,
+      if (discNumber != null) 'disc_number': discNumber,
+      if (year != null) 'year': year,
+      if (searchKey != null) 'search_key': searchKey,
+      if (favoritedAt != null) 'favorited_at': favoritedAt,
+      if (relativePath != null) 'relative_path': relativePath,
+      if (genre != null) 'genre': genre,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -886,6 +1295,15 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     Value<String>? availability,
     Value<String?>? source,
     Value<String?>? artworkPath,
+    Value<String?>? albumId,
+    Value<String?>? albumArtist,
+    Value<int?>? trackNumber,
+    Value<int?>? discNumber,
+    Value<int?>? year,
+    Value<String?>? searchKey,
+    Value<DateTime?>? favoritedAt,
+    Value<String?>? relativePath,
+    Value<String?>? genre,
     Value<int>? rowid,
   }) {
     return MediaItemsTableCompanion(
@@ -907,6 +1325,15 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
       availability: availability ?? this.availability,
       source: source ?? this.source,
       artworkPath: artworkPath ?? this.artworkPath,
+      albumId: albumId ?? this.albumId,
+      albumArtist: albumArtist ?? this.albumArtist,
+      trackNumber: trackNumber ?? this.trackNumber,
+      discNumber: discNumber ?? this.discNumber,
+      year: year ?? this.year,
+      searchKey: searchKey ?? this.searchKey,
+      favoritedAt: favoritedAt ?? this.favoritedAt,
+      relativePath: relativePath ?? this.relativePath,
+      genre: genre ?? this.genre,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -968,6 +1395,33 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     if (artworkPath.present) {
       map['artwork_path'] = Variable<String>(artworkPath.value);
     }
+    if (albumId.present) {
+      map['album_id'] = Variable<String>(albumId.value);
+    }
+    if (albumArtist.present) {
+      map['album_artist'] = Variable<String>(albumArtist.value);
+    }
+    if (trackNumber.present) {
+      map['track_number'] = Variable<int>(trackNumber.value);
+    }
+    if (discNumber.present) {
+      map['disc_number'] = Variable<int>(discNumber.value);
+    }
+    if (year.present) {
+      map['year'] = Variable<int>(year.value);
+    }
+    if (searchKey.present) {
+      map['search_key'] = Variable<String>(searchKey.value);
+    }
+    if (favoritedAt.present) {
+      map['favorited_at'] = Variable<DateTime>(favoritedAt.value);
+    }
+    if (relativePath.present) {
+      map['relative_path'] = Variable<String>(relativePath.value);
+    }
+    if (genre.present) {
+      map['genre'] = Variable<String>(genre.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -995,6 +1449,15 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
           ..write('availability: $availability, ')
           ..write('source: $source, ')
           ..write('artworkPath: $artworkPath, ')
+          ..write('albumId: $albumId, ')
+          ..write('albumArtist: $albumArtist, ')
+          ..write('trackNumber: $trackNumber, ')
+          ..write('discNumber: $discNumber, ')
+          ..write('year: $year, ')
+          ..write('searchKey: $searchKey, ')
+          ..write('favoritedAt: $favoritedAt, ')
+          ..write('relativePath: $relativePath, ')
+          ..write('genre: $genre, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4214,6 +4677,15 @@ typedef $$MediaItemsTableTableCreateCompanionBuilder =
       Value<String> availability,
       Value<String?> source,
       Value<String?> artworkPath,
+      Value<String?> albumId,
+      Value<String?> albumArtist,
+      Value<int?> trackNumber,
+      Value<int?> discNumber,
+      Value<int?> year,
+      Value<String?> searchKey,
+      Value<DateTime?> favoritedAt,
+      Value<String?> relativePath,
+      Value<String?> genre,
       Value<int> rowid,
     });
 typedef $$MediaItemsTableTableUpdateCompanionBuilder =
@@ -4236,6 +4708,15 @@ typedef $$MediaItemsTableTableUpdateCompanionBuilder =
       Value<String> availability,
       Value<String?> source,
       Value<String?> artworkPath,
+      Value<String?> albumId,
+      Value<String?> albumArtist,
+      Value<int?> trackNumber,
+      Value<int?> discNumber,
+      Value<int?> year,
+      Value<String?> searchKey,
+      Value<DateTime?> favoritedAt,
+      Value<String?> relativePath,
+      Value<String?> genre,
       Value<int> rowid,
     });
 
@@ -4335,6 +4816,51 @@ class $$MediaItemsTableTableFilterComposer
 
   ColumnFilters<String> get artworkPath => $composableBuilder(
     column: $table.artworkPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get albumId => $composableBuilder(
+    column: $table.albumId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get albumArtist => $composableBuilder(
+    column: $table.albumArtist,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get trackNumber => $composableBuilder(
+    column: $table.trackNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get discNumber => $composableBuilder(
+    column: $table.discNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get year => $composableBuilder(
+    column: $table.year,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get searchKey => $composableBuilder(
+    column: $table.searchKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get favoritedAt => $composableBuilder(
+    column: $table.favoritedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get genre => $composableBuilder(
+    column: $table.genre,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -4437,6 +4963,51 @@ class $$MediaItemsTableTableOrderingComposer
     column: $table.artworkPath,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get albumId => $composableBuilder(
+    column: $table.albumId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get albumArtist => $composableBuilder(
+    column: $table.albumArtist,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get trackNumber => $composableBuilder(
+    column: $table.trackNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get discNumber => $composableBuilder(
+    column: $table.discNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get year => $composableBuilder(
+    column: $table.year,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get searchKey => $composableBuilder(
+    column: $table.searchKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get favoritedAt => $composableBuilder(
+    column: $table.favoritedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get genre => $composableBuilder(
+    column: $table.genre,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MediaItemsTableTableAnnotationComposer
@@ -4511,6 +5082,43 @@ class $$MediaItemsTableTableAnnotationComposer
     column: $table.artworkPath,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get albumId =>
+      $composableBuilder(column: $table.albumId, builder: (column) => column);
+
+  GeneratedColumn<String> get albumArtist => $composableBuilder(
+    column: $table.albumArtist,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get trackNumber => $composableBuilder(
+    column: $table.trackNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get discNumber => $composableBuilder(
+    column: $table.discNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get year =>
+      $composableBuilder(column: $table.year, builder: (column) => column);
+
+  GeneratedColumn<String> get searchKey =>
+      $composableBuilder(column: $table.searchKey, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get favoritedAt => $composableBuilder(
+    column: $table.favoritedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get genre =>
+      $composableBuilder(column: $table.genre, builder: (column) => column);
 }
 
 class $$MediaItemsTableTableTableManager
@@ -4568,6 +5176,15 @@ class $$MediaItemsTableTableTableManager
                 Value<String> availability = const Value.absent(),
                 Value<String?> source = const Value.absent(),
                 Value<String?> artworkPath = const Value.absent(),
+                Value<String?> albumId = const Value.absent(),
+                Value<String?> albumArtist = const Value.absent(),
+                Value<int?> trackNumber = const Value.absent(),
+                Value<int?> discNumber = const Value.absent(),
+                Value<int?> year = const Value.absent(),
+                Value<String?> searchKey = const Value.absent(),
+                Value<DateTime?> favoritedAt = const Value.absent(),
+                Value<String?> relativePath = const Value.absent(),
+                Value<String?> genre = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MediaItemsTableCompanion(
                 id: id,
@@ -4588,6 +5205,15 @@ class $$MediaItemsTableTableTableManager
                 availability: availability,
                 source: source,
                 artworkPath: artworkPath,
+                albumId: albumId,
+                albumArtist: albumArtist,
+                trackNumber: trackNumber,
+                discNumber: discNumber,
+                year: year,
+                searchKey: searchKey,
+                favoritedAt: favoritedAt,
+                relativePath: relativePath,
+                genre: genre,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -4610,6 +5236,15 @@ class $$MediaItemsTableTableTableManager
                 Value<String> availability = const Value.absent(),
                 Value<String?> source = const Value.absent(),
                 Value<String?> artworkPath = const Value.absent(),
+                Value<String?> albumId = const Value.absent(),
+                Value<String?> albumArtist = const Value.absent(),
+                Value<int?> trackNumber = const Value.absent(),
+                Value<int?> discNumber = const Value.absent(),
+                Value<int?> year = const Value.absent(),
+                Value<String?> searchKey = const Value.absent(),
+                Value<DateTime?> favoritedAt = const Value.absent(),
+                Value<String?> relativePath = const Value.absent(),
+                Value<String?> genre = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MediaItemsTableCompanion.insert(
                 id: id,
@@ -4630,6 +5265,15 @@ class $$MediaItemsTableTableTableManager
                 availability: availability,
                 source: source,
                 artworkPath: artworkPath,
+                albumId: albumId,
+                albumArtist: albumArtist,
+                trackNumber: trackNumber,
+                discNumber: discNumber,
+                year: year,
+                searchKey: searchKey,
+                favoritedAt: favoritedAt,
+                relativePath: relativePath,
+                genre: genre,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

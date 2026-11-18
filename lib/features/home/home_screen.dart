@@ -16,8 +16,10 @@ import '../../domain/models/media_item.dart';
 import '../../domain/repositories/library_repository.dart';
 import '../../shared/widgets/shared_label_scale.dart';
 import '../../shared/widgets/ui_kit.dart';
+import '../library/detail_screens.dart';
 import '../library/media_context_menu.dart';
 import '../library/media_song_row.dart';
+import '../library/playable.dart';
 import '../music_player/playback_notifier.dart';
 
 /// The library feeds the dashboard listens to.
@@ -116,13 +118,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final last = _lastShuffleTap;
     if (last != null && now.difference(last).inMilliseconds < 500) return;
     _lastShuffleTap = now;
-    final randomStart = items.isNotEmpty ? DateTime.now().microsecond % items.length : 0;
-    await ref.read(playbackNotifierProvider.notifier).loadQueue(
-          items,
-          startIndex: randomStart,
-          autoPlay: true,
-          shuffle: true,
-        );
+    await playCollection(ref.read(playbackNotifierProvider.notifier), items, shuffle: true);
+  }
+
+  void _openLiked() {
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const LikedSongsScreen()));
   }
 
   void _toggleExpanded(_Feed feed) {
@@ -162,11 +162,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // Continue listening: the one Volt block on the screen.
           if (hasCurrentItem) const SliverToBoxAdapter(child: _ContinueListeningSlab()),
 
-          // Quick actions (Shuffle all, Online, Downloads)
+          // Quick actions (Shuffle all, Liked, Online, Downloads)
           SliverToBoxAdapter(
             child: _QuickActions(
               songsLoading: songs == null,
               onShuffle: (songs == null || songs.isEmpty) ? null : () => _shuffleAll(songs),
+              onLiked: _openLiked,
             ),
           ),
 
@@ -228,11 +229,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           return MediaSongRow(
             item: items[index],
             onTap: () {
-              ref.read(playbackNotifierProvider.notifier).loadQueue(
-                    items,
-                    startIndex: index,
-                    autoPlay: true,
-                  );
+              playCollection(ref.read(playbackNotifierProvider.notifier), items, start: items[index]);
             },
           );
         },
@@ -656,6 +653,9 @@ class _ContinueListeningSlab extends ConsumerWidget {
 // Quick actions
 // ---------------------------------------------------------------------------
 
+/// Shuffle all, Liked (songs), Online and Downloads: four across, or two by
+/// two when four would leave a tile narrower than [_minTileWidth] (a 320 dp
+/// phone).
 class _QuickActions extends StatelessWidget {
   /// True until the songs feed first answers. The Shuffle slot then holds a
   /// placeholder of the same size so the other tiles do not reflow.
@@ -664,9 +664,13 @@ class _QuickActions extends StatelessWidget {
   /// Null hides the Shuffle tile (no songs in the library yet).
   final VoidCallback? onShuffle;
 
-  const _QuickActions({required this.songsLoading, required this.onShuffle});
+  /// Opens Liked songs.
+  final VoidCallback onLiked;
+
+  const _QuickActions({required this.songsLoading, required this.onShuffle, required this.onLiked});
 
   static const double _gap = AppSpacing.md12;
+  static const double _minTileWidth = 72;
 
   @override
   Widget build(BuildContext context) {
@@ -675,10 +679,11 @@ class _QuickActions extends StatelessWidget {
     final showShuffleSlot = songsLoading || shuffle != null;
     final labels = [
       if (shuffle != null && !songsLoading) 'Shuffle all',
+      'Liked',
       'Online',
       if (PlatformInfo.supportsDownloads) 'Downloads',
     ];
-    final slots = (showShuffleSlot ? 1 : 0) + 1 + (PlatformInfo.supportsDownloads ? 1 : 0);
+    final slots = (showShuffleSlot ? 1 : 0) + 2 + (PlatformInfo.supportsDownloads ? 1 : 0);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
@@ -691,7 +696,10 @@ class _QuickActions extends StatelessWidget {
         builder: (context, constraints) {
           // One size for every label: when one has to shrink to fit its
           // tile (320 dp at large text), they all shrink with it.
-          final tileWidth = (constraints.maxWidth - _gap * (slots - 1)) / slots;
+          final across = slots > 3 && (constraints.maxWidth - _gap * (slots - 1)) / slots < _minTileWidth
+              ? 2
+              : slots;
+          final tileWidth = (constraints.maxWidth - _gap * (across - 1)) / across;
           final labelScaler = sharedLabelScaler(
             context,
             labels: labels,
@@ -711,6 +719,14 @@ class _QuickActions extends StatelessWidget {
                 onTap: shuffle,
               ),
             _QuickActionTile(
+              icon: Icons.favorite_rounded,
+              label: 'Liked',
+              semanticLabel: 'Open Liked songs',
+              color: palette.favorite,
+              labelScaler: labelScaler,
+              onTap: onLiked,
+            ),
+            _QuickActionTile(
               icon: Icons.smart_display_rounded,
               label: 'Online',
               semanticLabel: 'Open Online',
@@ -728,12 +744,26 @@ class _QuickActions extends StatelessWidget {
                 onTap: () => context.go('/downloads'),
               ),
           ];
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          final rows = <Widget>[];
+          for (var start = 0; start < tiles.length; start += across) {
+            final row = tiles.sublist(start, (start + across).clamp(0, tiles.length));
+            rows.add(Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < across; i++) ...[
+                  if (i > 0) const SizedBox(width: _gap),
+                  Expanded(child: i < row.length ? row[i] : const SizedBox.shrink()),
+                ],
+              ],
+            ));
+          }
+          if (rows.length == 1) return rows.single;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              for (var i = 0; i < tiles.length; i++) ...[
-                if (i > 0) const SizedBox(width: _gap),
-                Expanded(child: tiles[i]),
+              for (var i = 0; i < rows.length; i++) ...[
+                if (i > 0) const SizedBox(height: _gap),
+                rows[i],
               ],
             ],
           );
