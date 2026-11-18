@@ -873,7 +873,8 @@ our chrome.
 ### 8.2 Theme mode and system bars
 
 - **Theme mode:** `MaterialApp(theme: AppTheme.lightTheme, darkTheme: AppTheme.darkTheme, themeMode: ThemeMode.system)`.
-  An optional Settings → Appearance (System / Dark / Light, default System) may be added later; the owner chose System.
+  Settings → Appearance (System / Dark / Light, default System) is built: `themeMode` reads
+  `themeModeSettingProvider`, so a choice applies at once (section 10.1).
 - **Edge-to-edge:** at startup, `SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)` (enforced on Android 15
   anyway).
 - **System bar styles.** Flutter reads the `AnnotatedRegion` at the top of the screen for the status bar and at the
@@ -984,6 +985,22 @@ Where each style applies:
      360x800 and 320dp, and at `textScaler` 1.3. Include "रेशम फिरिरी", "झिलिमिली साँझ", "क्षितिज पारि" and
      "Audit_Long_Tone_5min" in titles and the Home greeting. Check that no matra or conjunct clips and the mini player
      and nav labels do not overflow.
+
+### 10.1 As built: deliberate deviations
+
+The redesign shipped with light mode on (the old `lightThemeReady` gate and the legacy `AppColors` / static
+`AppTypography` getters are gone; `volt_usage_test.dart` keeps them out). Where the build departs from the sections
+above, on purpose:
+
+| Where | Spec | As built, and why |
+|---|---|---|
+| 7.6 song rows | Trailing ⋮ only | Rows at 360dp or wider with text below 1.15x keep the 48dp heart before the ⋮ (one-tap favourite, existing behaviour). Smaller rows drop it, so the artist keeps its width, and mark a favourite with a 16dp Flare heart before the meta line ("Favorite" in the row's label); the media sheet toggles it. |
+| 7.7 mini player | Previous and next at 38% at a queue end | Only Next dims: Previous always restarts the track or goes back (7.17). |
+| 7.8 Now Playing | `#421E78` glow for a real cover; footer with sleep timer | The glow stays the first cover gradient (section 3 "exactly as today"). The footer has speed and the queue; the app has no sleep timer yet. |
+| 7.8 kicker | One line | Shrinks as a whole on small phones at large text, so "7 / 8" is never cut. |
+| 7.10 media sheet | Share, Delete for every item | Share is hidden (no share bridge yet); Delete is offered for downloads only (phone media needs a native MediaStore delete request). Video titles show without their file extension, as on the cards. |
+| 7.14 Downloads | VoltButton "Download" under the link field | It reads "Choose quality" (YouTube) or "Inspect" (other links), because it opens the quality sheet or checks the link; the real "Download" is the VoltButton in the result card. Figures wrap only between chunks, each later chunk led by its "·" or "/". |
+| 7.17 notification | Mirrors the mini player exactly | On the last track with repeat off the notification drops Next, but the media session keeps `ACTION_SKIP_TO_NEXT`: without it Android 13+ moves Shuffle into Next's slot. A Next from there is ignored, like the app's disabled button. |
 
 ### Open risks
 

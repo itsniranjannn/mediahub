@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/downloads/known_platform_checker.dart';
@@ -283,6 +283,11 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       }
     });
 
+    // The masthead summary ("3 ACTIVE · 1.2 GB FREE").
+    final all = downloadsAsync.asData?.value ?? const <DownloadEntry>[];
+    final activeCount = all.where((t) => _isActiveState(t.state)).length;
+    final savedCount = all.where((t) => t.state == DownloadTaskState.completed.name).length;
+
     return Scaffold(
       body: SafeArea(
         bottom: false,
@@ -293,7 +298,11 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
               sliver: SliverList.list(
                 children: [
-                  const _Header(),
+                  _Header(
+                    active: activeCount,
+                    saved: savedCount,
+                    freeBytes: storageAsync.asData?.value.freeBytes,
+                  ),
                   _UrlCard(
                     controller: _urlController,
                     handedLink: _handedLink,
@@ -304,7 +313,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                     const SizedBox(height: AppSpacing.md12),
                     _Callout(
                       icon: Icons.error_outline_rounded,
-                      color: AppColors.error,
+                      tone: _Tone.error,
                       text: inspection.errorMessage!,
                     ),
                   ],
@@ -316,7 +325,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                     const SizedBox(height: AppSpacing.md12),
                     const _Callout(
                       icon: Icons.notifications_off_outlined,
-                      color: AppColors.warning,
+                      tone: _Tone.warning,
                       text:
                           'Notifications are disabled. Downloads still run in the background, but progress will not show in the status bar.',
                     ),
@@ -414,7 +423,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           children: [
             _CardHeader(
               icon: Icons.public_rounded,
-              color: canDownload ? AppColors.primary : AppColors.warning,
+              tone: canDownload ? _Tone.brand : _Tone.warning,
               title: 'Platform Link',
               subtitle: 'Host: ${info.uri.host}',
               trailing: PillTag(text: knownPlatform),
@@ -422,7 +431,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
             const SizedBox(height: AppSpacing.lg16),
             _Callout(
               icon: canDownload ? Icons.info_outline_rounded : Icons.warning_amber_rounded,
-              color: canDownload ? AppColors.primary : AppColors.warning,
+              tone: canDownload ? _Tone.brand : _Tone.warning,
               text: _platformNote(knownPlatform, info.uri, ytdlpOn: downloaderEnabled),
             ),
             const SizedBox(height: AppSpacing.md12),
@@ -444,22 +453,22 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
     final contentType = info.contentType ?? '';
     final IconData headerIcon;
-    final Color headerColor;
+    final _Tone headerTone;
     if (isWebPage) {
       headerIcon = Icons.language_rounded;
-      headerColor = AppColors.warning;
+      headerTone = _Tone.warning;
     } else if (!isDownloadable) {
       headerIcon = Icons.link_off_rounded;
-      headerColor = AppColors.error;
+      headerTone = _Tone.error;
     } else if (contentType.startsWith('video')) {
       headerIcon = Icons.video_file_rounded;
-      headerColor = AppColors.accent;
+      headerTone = _Tone.accent;
     } else if (contentType.startsWith('audio')) {
       headerIcon = Icons.audio_file_rounded;
-      headerColor = AppColors.primary;
+      headerTone = _Tone.brand;
     } else {
       headerIcon = Icons.insert_drive_file_rounded;
-      headerColor = AppColors.primary;
+      headerTone = _Tone.brand;
     }
 
     return SurfaceCard(
@@ -468,7 +477,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
         children: [
           _CardHeader(
             icon: headerIcon,
-            color: headerColor,
+            tone: headerTone,
             title: 'Inspection Result',
             subtitle: 'Host: ${info.uri.host}',
           ),
@@ -479,9 +488,11 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           ),
           _DetailLine(
             icon: Icons.data_usage_rounded,
-            text: info.contentLength != null
-                ? 'Size: ${(info.contentLength! / (1024 * 1024)).toStringAsFixed(2)} MB'
-                : 'Size: Unknown size',
+            text: 'Size: ',
+            figure: info.contentLength != null
+                ? '${(info.contentLength! / (1024 * 1024)).toStringAsFixed(2)} MB'
+                : null,
+            fallback: 'Unknown size',
           ),
           _DetailLine(
             icon: info.supportsRange ? Icons.pause_circle_outline_rounded : Icons.block_rounded,
@@ -493,7 +504,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           if (isWebPage) ...[
             const _Callout(
               icon: Icons.warning_amber_rounded,
-              color: AppColors.warning,
+              tone: _Tone.warning,
               text:
                   'This is a web page, not a media file. MediaHub can only download direct media files that you have the right to save.',
             ),
@@ -502,27 +513,26 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           ] else if (!isDownloadable) ...[
             _Callout(
               icon: Icons.block_rounded,
-              color: AppColors.error,
+              tone: _Tone.error,
               text: info.humanReadableReason ??
                   'This link cannot be downloaded as it is not a direct media file.',
             ),
           ] else ...[
             TextField(
               controller: _filenameController,
-              style: AppTypography.body,
+              style: context.typography.body,
               decoration: const InputDecoration(
                 labelText: 'File name',
                 prefixIcon: Icon(Icons.drive_file_rename_outline_rounded),
               ),
             ),
             const SizedBox(height: AppSpacing.md12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.file_download_rounded),
-                label: const Text('Download'),
-                onPressed: () => _startDownload(info),
-              ),
+            // The "get" action is the Volt button (DESIGN.md 7.2).
+            VoltButton(
+              expand: true,
+              icon: Icons.download_rounded,
+              label: 'Download',
+              onPressed: () => _startDownload(info),
             ),
           ],
         ],
@@ -595,7 +605,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
     addGroup('Active', active);
     addGroup('Queued / Paused', queuedOrPaused);
-    addGroup('Completed', completed);
+    addGroup('Saved', completed);
     addGroup('Failed / Cancelled', failed);
 
     final isVideoFilter = _kindFilter == 'video';
@@ -604,7 +614,8 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       if (hasInProgress) const _BackgroundNoticeSliver.top(),
       SliverPadding(
         key: const ValueKey('kind-filter'),
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+        // The chip row scrolls edge to edge with its own 16 dp gutters.
+        padding: EdgeInsets.zero,
         sliver: SliverToBoxAdapter(child: _buildKindFilter(counts)),
       ),
       if (tasks.isEmpty)
@@ -664,8 +675,11 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               TextSpan(text: label),
               TextSpan(
                 text: '  ${counts[value] ?? 0}',
-                // Selected: the label's own ink (from the chip theme).
+                // The count in DM Mono; selected keeps the label's own ink
+                // (from the chip theme).
                 style: TextStyle(
+                  fontFamily: AppTypography.dmMono,
+                  fontFamilyFallback: AppTypography.readingFallback,
                   color: selected ? null : palette.textMuted,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
@@ -678,14 +692,17 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.xs4),
-      child: Wrap(
-        spacing: AppSpacing.sm8,
-        runSpacing: AppSpacing.sm8,
+    // DESIGN.md 7.3: a filter row scrolls sideways with 16 dp gutters, so
+    // large text never pushes a chip onto a second line.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.xs4),
+      child: Row(
         children: [
           chip('All', null, Icons.apps_rounded),
+          const SizedBox(width: AppSpacing.sm8),
           chip('Video', 'video', Icons.videocam_rounded),
+          const SizedBox(width: AppSpacing.sm8),
           chip('Audio', 'audio', Icons.music_note_rounded),
         ],
       ),
@@ -745,10 +762,10 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _RowAction(
-            icon: Icons.refresh_rounded,
-            tooltip: 'Retry',
-            emphasized: true,
+          // DESIGN.md 7.14: Failed shows a Retry text button.
+          TextButton.icon(
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+            label: const Text('Retry'),
             onPressed: () async {
               final db = ref.read(appDatabaseProvider);
               await (db.update(db.downloadsTable)..where((tbl) => tbl.id.equals(task.id))).write(
@@ -786,8 +803,8 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
-        title: const Text('Delete Download'),
+        icon: Icon(Icons.delete_outline_rounded, color: ctx.palette.error),
+        title: const Text('Delete download?'),
         content: Text(
           'Delete "${breakableTitle(task.fileName)}"? Your other files are safe.',
           semanticsLabel: 'Delete "${task.fileName}"? Your other files are safe.',
@@ -797,11 +814,9 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
             onPressed: () => Navigator.of(ctx).pop(false),
             child: const Text('Cancel'),
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.error,
-              foregroundColor: AppColors.background,
-            ),
+          // A destructive confirm is a text button in error (DESIGN.md 7.10).
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: ctx.palette.error),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Delete'),
           ),
@@ -931,31 +946,41 @@ String? _kindOf(DownloadEntry task) {
   return mime.startsWith('video') ? 'video' : 'audio';
 }
 
-/// Icon and colour of the small badge on a row thumbnail.
-(IconData, Color) _stateVisual(String state) {
-  if (state == DownloadTaskState.completed.name) {
-    return (Icons.check_circle_rounded, AppColors.success);
-  } else if (_isActiveState(state)) {
-    return (Icons.downloading_rounded, AppColors.primary);
-  } else if (state == DownloadTaskState.paused.name) {
-    return (Icons.pause_circle_rounded, AppColors.warning);
-  } else if (state == DownloadTaskState.failed.name) {
-    return (Icons.error_rounded, AppColors.error);
-  } else if (state == DownloadTaskState.cancelled.name) {
-    return (Icons.cancel_rounded, AppColors.textMuted);
-  }
-  return (Icons.schedule_rounded, AppColors.textMuted);
+/// The colour role of a note, a tile glyph or a row state, resolved against
+/// the theme's palette by [_toneColor] (so the widgets using it stay const).
+enum _Tone { brand, accent, warning, error, success, secondary, muted }
+
+Color _toneColor(AppPalette p, _Tone tone) => switch (tone) {
+      _Tone.brand => p.primary,
+      _Tone.accent => p.accent,
+      _Tone.warning => p.warning,
+      _Tone.error => p.error,
+      _Tone.success => p.success,
+      _Tone.secondary => p.textSecondary,
+      _Tone.muted => p.textMuted,
+    };
+
+/// Icon and tone of a row's state line: always an icon and a word, never
+/// colour alone (DESIGN.md 7.14).
+(IconData, _Tone) _stateVisual(String state) {
+  if (state == DownloadTaskState.completed.name) return (Icons.check_circle_rounded, _Tone.success);
+  if (_isActiveState(state)) return (Icons.downloading_rounded, _Tone.brand);
+  if (state == DownloadTaskState.paused.name) return (Icons.pause_circle_rounded, _Tone.secondary);
+  if (state == DownloadTaskState.failed.name) return (Icons.error_rounded, _Tone.error);
+  if (state == DownloadTaskState.cancelled.name) return (Icons.cancel_rounded, _Tone.muted);
+  return (Icons.schedule_rounded, _Tone.warning);
 }
 
-/// Colour of the one-word status line under a row.
-Color _stateTextColor(String state) {
-  if (state == DownloadTaskState.completed.name) return AppColors.success;
-  if (state == DownloadTaskState.paused.name) return AppColors.warning;
-  if (state == DownloadTaskState.failed.name) return AppColors.error;
-  if (state == DownloadTaskState.finalizing.name) return AppColors.primary;
-  if (state == DownloadTaskState.cancelled.name) return AppColors.textMuted;
-  return AppColors.textSecondary;
-}
+/// Room a download row's actions take at most (two 48 dp buttons and the
+/// 8 dp gap before them).
+const double _kRowActionsWidth = 104 + AppSpacing.sm8;
+
+/// Below this width (at 1.0x text, scaled with the text) the figures leave
+/// the actions' side and take a line of their own.
+const double _kMinFiguresWidth = 150;
+
+/// No-break space: keeps a figure and its unit on one line ("412.0 MB").
+const String _nbsp = ' ';
 
 String _formatEta(Duration d) {
   if (d.inHours > 0) return '${d.inHours}h ${d.inMinutes.remainder(60)}m';
@@ -979,7 +1004,7 @@ String _formatStateText(String state, [DownloadEntry? task]) {
     case 'finalizing':
       return 'Finalizing...';
     case 'completed':
-      return 'Completed';
+      return 'Saved';
     case 'cancelled':
       return 'Cancelled';
     case 'failed':
@@ -1059,29 +1084,68 @@ class _HandedLink {
 // Private widgets
 // ---------------------------------------------------------------------------
 
+/// The tab masthead (DESIGN.md 7.14): "Downloads" in the display role and an
+/// overline summary such as "3 ACTIVE · 1.2 GB FREE".
 class _Header extends StatelessWidget {
-  const _Header();
+  /// Downloads running now (preparing, downloading or finalizing).
+  final int active;
+
+  /// Finished downloads, shown in the summary while nothing is running.
+  final int saved;
+
+  /// Free space on the phone; null until it is known.
+  final int? freeBytes;
+
+  const _Header({required this.active, required this.saved, this.freeBytes});
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
+    final free = freeBytes == null ? null : formatFileSize(freeBytes!);
+    final count = active > 0
+        ? (active, 'active')
+        : saved > 0
+            ? (saved, 'saved')
+            : null;
+    final shown = [
+      if (count != null) '${count.$1} ${count.$2.toUpperCase()}',
+      if (free != null) '${free.toUpperCase()} FREE',
+    ];
+    final spoken = [
+      if (count != null) '${count.$1} ${count.$2} ${count.$1 == 1 ? 'download' : 'downloads'}',
+      if (free != null) '$free free',
+    ];
+
     return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.xl20, bottom: AppSpacing.md12),
+      padding: const EdgeInsets.only(top: AppSpacing.xl20, bottom: AppSpacing.lg16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Semantics(header: true, child: Text('Downloads', style: AppTypography.display)),
-          const SizedBox(height: AppSpacing.xs4),
-          Text(
-            'Save music and videos from a link to enjoy offline.',
-            style: AppTypography.metadata,
+          // One line, scaled down rather than clipped at large text sizes.
+          Semantics(
+            header: true,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerStart,
+              child: Text('Downloads', style: type.display, maxLines: 1),
+            ),
           ),
+          if (shown.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.xs4),
+            Text(
+              shown.join(' · '),
+              semanticsLabel: spoken.join(', '),
+              style: type.overline.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-/// One card holding the link field (with paste) and the Inspect action.
+/// The link field (a stadium, with paste) and the main action under it.
 ///
 /// Keeps its own validation state and listens to [controller] itself, so a
 /// keystroke rebuilds only this card (and only when the error or the empty /
@@ -1235,96 +1299,117 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
     final canInspect = _inlineUrlError == null && _hasText;
     final linkHelperText = _linkHelperText;
     final handed = _holdsHandedLink ? widget.handedLink : null;
+    final type = context.typography;
+
+    // The search-style stadium (DESIGN.md 7.11 / 7.14): the theme's fill,
+    // outline and focus ring on a stadium instead of the 16 dp form radius.
+    final fieldTheme = Theme.of(context).inputDecorationTheme;
+    InputBorder? stadium(InputBorder? border) => border is OutlineInputBorder
+        ? border.copyWith(borderRadius: const BorderRadius.all(Radius.circular(AppSpacing.huge48)))
+        : border;
 
     return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.sm8),
-      child: SurfaceCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextField(
-              controller: widget.controller,
-              keyboardType: TextInputType.url,
-              autocorrect: false,
-              enableSuggestions: false,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _triggerMainAction(),
-              style: AppTypography.body,
-              decoration: InputDecoration(
-                labelText: 'Download link',
-                hintText: 'https://...',
-                errorText: _inlineUrlError,
-                errorMaxLines: 2,
-                helperText: _inlineUrlError == null ? linkHelperText : null,
-                helperMaxLines: 2,
-                prefixIcon: const Icon(Icons.link_rounded),
-                suffixIcon: IconButton(
+      padding: const EdgeInsets.only(top: AppSpacing.xs4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: widget.controller,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            enableSuggestions: false,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _triggerMainAction(),
+            style: type.body,
+            decoration: InputDecoration(
+              labelText: 'Download link',
+              // A label floating on a stadium's curved edge would be cut by
+              // it: "Download link" stays the placeholder (and the field's
+              // name for screen readers).
+              floatingLabelBehavior: FloatingLabelBehavior.never,
+              labelStyle: type.body.copyWith(color: context.palette.textMuted),
+              hintText: 'https://...',
+              errorText: _inlineUrlError,
+              errorMaxLines: 2,
+              helperText: _inlineUrlError == null ? linkHelperText : null,
+              helperMaxLines: 2,
+              contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.md12),
+              prefixIcon: const Padding(
+                padding: EdgeInsetsDirectional.only(start: AppSpacing.xs4),
+                child: Icon(Icons.link_rounded),
+              ),
+              suffixIcon: Padding(
+                padding: const EdgeInsetsDirectional.only(end: AppSpacing.xs4),
+                child: IconButton(
                   icon: const Icon(Icons.content_paste_rounded),
                   tooltip: 'Paste from clipboard',
                   onPressed: _pasteFromClipboard,
                 ),
               ),
+              border: stadium(fieldTheme.border),
+              enabledBorder: stadium(fieldTheme.enabledBorder),
+              disabledBorder: stadium(fieldTheme.disabledBorder),
+              focusedBorder: stadium(fieldTheme.focusedBorder),
+              errorBorder: stadium(fieldTheme.errorBorder),
+              focusedErrorBorder: stadium(fieldTheme.focusedErrorBorder),
             ),
-            if (handed != null) ...[
-              const SizedBox(height: AppSpacing.md12),
-              Semantics(
-                liveRegion: true,
-                child: _Callout(
-                  icon: handed.waiting ? Icons.schedule_rounded : Icons.input_rounded,
-                  color: AppColors.accent,
-                  tinted: false,
-                  dense: true,
-                  text: _handedLinkNote(handed),
-                ),
-              ),
-            ],
+          ),
+          if (handed != null) ...[
             const SizedBox(height: AppSpacing.md12),
-            if (isInspecting)
-              SizedBox(
-                height: AppSpacing.minTouchTarget,
-                child: Row(
-                  children: [
-                    const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
-                    ),
-                    const SizedBox(width: AppSpacing.md12),
-                    Expanded(
-                      child: Text(
-                        'Checking link...',
-                        style: AppTypography.metadata,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm8),
-                    OutlinedButton(
-                      onPressed: () {
-                        ref.read(inspectionProvider.notifier).cancel();
-                      },
-                      child: const Text('Cancel'),
-                    ),
-                  ],
-                ),
-              )
-            else
-              FilledButton(
-                onPressed: canInspect && !(_isYoutubeVideo && widget.busy) ? _triggerMainAction : null,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _isYoutubeVideo ? Icons.video_library_rounded : Icons.manage_search_rounded,
-                      size: 20,
-                    ),
-                    const SizedBox(width: AppSpacing.sm8),
-                    Flexible(child: Text(_isYoutubeVideo ? 'Choose quality' : 'Inspect')),
-                  ],
-                ),
+            Semantics(
+              liveRegion: true,
+              child: _Callout(
+                icon: handed.waiting ? Icons.schedule_rounded : Icons.input_rounded,
+                tone: _Tone.accent,
+                tinted: false,
+                dense: true,
+                text: _handedLinkNote(handed),
               ),
+            ),
           ],
-        ),
+          const SizedBox(height: AppSpacing.md12),
+          if (isInspecting)
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: VoltButton.height),
+              child: Row(
+                children: [
+                  const SizedBox(width: AppSpacing.xs4),
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                  const SizedBox(width: AppSpacing.md12),
+                  Expanded(
+                    child: Text(
+                      'Checking link...',
+                      style: type.metadata,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm8),
+                  OutlinedButton(
+                    onPressed: () {
+                      ref.read(inspectionProvider.notifier).cancel();
+                    },
+                    child: const Text('Cancel'),
+                  ),
+                ],
+              ),
+            )
+          else
+            // The one loud action of the screen (DESIGN.md 7.14): full width
+            // under the field. It names the next step: the quality choice for
+            // a YouTube video, a check of any other link (whose card then
+            // offers Download).
+            VoltButton(
+              expand: true,
+              icon: _isYoutubeVideo ? Icons.download_rounded : Icons.manage_search_rounded,
+              label: _isYoutubeVideo ? 'Choose quality' : 'Inspect',
+              onPressed: canInspect && !(_isYoutubeVideo && widget.busy) ? _triggerMainAction : null,
+            ),
+        ],
       ),
     );
   }
@@ -1366,23 +1451,27 @@ class _Stat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16, color: AppColors.textMuted),
+        Icon(icon, size: 16, color: palette.textMuted),
         const SizedBox(width: AppSpacing.xs4),
         Flexible(
           child: Text.rich(
             TextSpan(
               children: [
+                // Figures in DM Mono at 14 inside the metadata line.
                 TextSpan(
                   text: value,
-                  style: AppTypography.tabularFigures.copyWith(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w600,
+                  style: type.tabularFigures.copyWith(
+                    fontSize: 14,
+                    height: 20 / 14,
+                    color: palette.textPrimary,
                   ),
                 ),
-                TextSpan(text: ' $label', style: AppTypography.metadata),
+                TextSpan(text: ' $label', style: type.metadata),
               ],
             ),
             maxLines: 1,
@@ -1394,18 +1483,18 @@ class _Stat extends StatelessWidget {
   }
 }
 
-/// Small bordered note: tinted for warnings/errors, plain for information.
+/// Small note: tinted for warnings and errors, plain for information.
 /// [dense] trims the vertical padding for a slim one-or-two-line note.
 class _Callout extends StatelessWidget {
   final IconData icon;
-  final Color color;
+  final _Tone tone;
   final String text;
   final bool tinted;
   final bool dense;
 
   const _Callout({
     required this.icon,
-    required this.color,
+    required this.tone,
     required this.text,
     this.tinted = true,
     this.dense = false,
@@ -1413,14 +1502,17 @@ class _Callout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
+    final color = _toneColor(palette, tone);
     return Container(
       padding: dense
           ? const EdgeInsets.symmetric(horizontal: AppSpacing.md12, vertical: AppSpacing.sm8)
           : const EdgeInsets.all(AppSpacing.md12),
       decoration: BoxDecoration(
-        color: tinted ? color.withValues(alpha: 0.08) : AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-        border: Border.all(color: tinted ? color.withValues(alpha: 0.35) : AppColors.divider),
+        color: tinted ? color.withValues(alpha: 0.08) : palette.surface,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusThumb),
+        border: Border.all(color: tinted ? color.withValues(alpha: 0.35) : palette.divider),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1430,8 +1522,8 @@ class _Callout extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style: AppTypography.metadata.copyWith(
-                color: tinted ? AppColors.textPrimary : AppColors.textSecondary,
+              style: type.metadata.copyWith(
+                color: tinted ? palette.textPrimary : palette.textSecondary,
               ),
             ),
           ),
@@ -1464,7 +1556,7 @@ class _BackgroundNoticeSliver extends StatelessWidget {
       sliver: const SliverToBoxAdapter(
         child: _Callout(
           icon: Icons.info_outline_rounded,
-          color: AppColors.primary,
+          tone: _Tone.brand,
           tinted: false,
           dense: true,
           text:
@@ -1475,17 +1567,40 @@ class _BackgroundNoticeSliver extends StatelessWidget {
   }
 }
 
+/// Tonal tile ([AppPalette.primaryContainer], radius 14) holding a glyph:
+/// the leading tile of result cards and of rows without a cover.
+class _TypeTile extends StatelessWidget {
+  final IconData icon;
+  final _Tone tone;
+
+  const _TypeTile({required this.icon, required this.tone});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      width: _DownloadThumb.size,
+      height: _DownloadThumb.size,
+      decoration: BoxDecoration(
+        color: palette.primaryContainer,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusThumb),
+      ),
+      child: Icon(icon, size: 24, color: _toneColor(palette, tone)),
+    );
+  }
+}
+
 /// Icon tile + title + one metadata line, used at the top of result cards.
 class _CardHeader extends StatelessWidget {
   final IconData icon;
-  final Color color;
+  final _Tone tone;
   final String title;
   final String subtitle;
   final Widget? trailing;
 
   const _CardHeader({
     required this.icon,
-    required this.color,
+    required this.tone,
     required this.title,
     required this.subtitle,
     this.trailing,
@@ -1493,18 +1608,11 @@ class _CardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final type = context.typography;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-          ),
-          child: Icon(icon, size: 22, color: color),
-        ),
+        _TypeTile(icon: icon, tone: tone),
         const SizedBox(width: AppSpacing.md12),
         Expanded(
           child: Column(
@@ -1514,15 +1622,15 @@ class _CardHeader extends StatelessWidget {
                 header: true,
                 child: Text(
                   title,
-                  style: AppTypography.sectionTitle,
+                  style: type.sectionTitle,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const SizedBox(height: AppSpacing.xs4),
+              const SizedBox(height: 2),
               Text(
                 subtitle,
-                style: AppTypography.metadata,
+                style: type.metadata,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1538,25 +1646,44 @@ class _CardHeader extends StatelessWidget {
   }
 }
 
+/// One fact of an inspected link: icon, [text] and an optional [figure] set
+/// in DM Mono (or [fallback] in plain text when the figure is unknown).
 class _DetailLine extends StatelessWidget {
   final IconData icon;
   final String text;
+  final String? figure;
+  final String? fallback;
 
-  const _DetailLine({required this.icon, required this.text});
+  const _DetailLine({required this.icon, required this.text, this.figure, this.fallback});
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
+    final base = type.metadata.copyWith(color: palette.textPrimary);
+    final figure = this.figure;
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.sm8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: AppColors.textMuted),
+          Icon(icon, size: 18, color: palette.textMuted),
           const SizedBox(width: AppSpacing.sm8),
           Expanded(
-            child: Text(
-              text,
-              style: AppTypography.metadata.copyWith(color: AppColors.textPrimary),
+            child: Text.rich(
+              TextSpan(
+                style: base,
+                children: [
+                  TextSpan(text: text),
+                  if (figure != null)
+                    TextSpan(
+                      text: figure,
+                      style: type.tabularFigures.copyWith(fontSize: 14, height: 20 / 14, color: palette.textPrimary),
+                    )
+                  else if (fallback != null)
+                    TextSpan(text: fallback),
+                ],
+              ),
             ),
           ),
         ],
@@ -1575,7 +1702,7 @@ class _GroupLabel {
   Key get key => ValueKey<String>('h_$title');
 }
 
-/// "Completed  3" style label above each group of rows.
+/// "SAVED  3" kicker above each group of rows (the overline role).
 class _GroupHeader extends StatelessWidget {
   final String title;
   final int count;
@@ -1584,37 +1711,38 @@ class _GroupHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final overline = AppTypography.of(palette).overline;
     return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.md12, bottom: AppSpacing.sm8),
+      padding: const EdgeInsets.only(top: AppSpacing.lg16, bottom: AppSpacing.sm8),
       child: Semantics(
         header: true,
-        child: Text.rich(
-          TextSpan(
-            children: [
-              TextSpan(
-                text: title,
-                style: AppTypography.label.copyWith(
-                  color: AppColors.textSecondary,
-                  fontWeight: FontWeight.w600,
+        label: '$title, $count',
+        child: ExcludeSemantics(
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: title.toUpperCase(), style: overline),
+                TextSpan(
+                  text: '  $count',
+                  style: overline.copyWith(
+                    color: palette.textMuted,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ),
-              TextSpan(
-                text: '  $count',
-                style: AppTypography.label.copyWith(
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
+              ],
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
         ),
       ),
     );
   }
 }
 
-/// Icon-only row action; [emphasized] marks the main action of the row.
+/// Icon-only row action; [emphasized] marks the main action of the row
+/// with a tonal disc.
 class _RowAction extends StatelessWidget {
   final IconData icon;
   final String tooltip;
@@ -1630,23 +1758,25 @@ class _RowAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return IconButton(
       icon: Icon(icon),
       tooltip: tooltip,
       onPressed: onPressed,
       style: emphasized
           ? IconButton.styleFrom(
-              backgroundColor: AppColors.surfaceElevated,
-              foregroundColor: AppColors.textPrimary,
+              backgroundColor: palette.primaryContainer,
+              foregroundColor: palette.onPrimaryContainer,
             )
-          : IconButton.styleFrom(foregroundColor: AppColors.textSecondary),
+          : IconButton.styleFrom(foregroundColor: palette.textSecondary),
     );
   }
 }
 
-/// One download: thumbnail with state badge, title, type/quality pills,
-/// progress and the row actions. Watches only its own progress entry so a
-/// running download does not rebuild the whole screen.
+/// One download (DESIGN.md 7.14): cover or type tile, title, type and
+/// quality tags, a 4 dp progress bar, the state as an icon and a word,
+/// figures in DM Mono and the row actions. Watches only its own progress
+/// entry so a running download does not rebuild the whole screen.
 class _DownloadCard extends ConsumerWidget {
   final DownloadEntry task;
   final Widget actions;
@@ -1660,11 +1790,13 @@ class _DownloadCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
     final update = ref.watch(downloadProgressMapProvider.select((m) => m[task.id]));
     final isActive = _isActiveState(task.state);
     final isCompleted = task.state == DownloadTaskState.completed.name;
-    final isPausedOrQueued = task.state == DownloadTaskState.paused.name ||
-        task.state == DownloadTaskState.queued.name;
+    final isPaused = task.state == DownloadTaskState.paused.name;
+    final isPausedOrQueued = isPaused || task.state == DownloadTaskState.queued.name;
 
     int received = task.receivedBytes;
     int? total = task.totalBytes;
@@ -1685,29 +1817,46 @@ class _DownloadCard extends ConsumerWidget {
     final title = task.displayName.isNotEmpty ? task.displayName : task.fileName;
     final quality = task.qualityLabel;
 
-    String sizeText;
+    // "62%" in the figures role (textPrimary) while it runs or is paused...
+    final String? percentText =
+        knownTotal && (isActive || isPaused) ? '${(progressVal * 100).toStringAsFixed(0)}%' : null;
+
+    // ...and speed, time left and size at 12 in textMuted, as chunks: a
+    // number keeps its unit and a time its parts ("412.0 MB", "1m 45s" never
+    // split), words keep ordinary spaces, and every later chunk starts with
+    // its "· " or "/ ", so a narrow row wraps between chunks and no line ends
+    // on a separator.
+    String fig(String s) => s.replaceAll(' ', _nbsp);
+    final List<String> sizeChunks;
     if (isCompleted) {
-      sizeText = formatFileSize(task.receivedBytes > 0 ? task.receivedBytes : (total ?? 0));
+      sizeChunks = [fig(formatFileSize(task.receivedBytes > 0 ? task.receivedBytes : (total ?? 0)))];
     } else if (knownTotal) {
-      final pct = (progressVal * 100).toStringAsFixed(0);
-      sizeText = isActive || task.state == DownloadTaskState.paused.name
-          ? '${formatFileSize(received)} / ${formatFileSize(total)} ($pct%)'
-          : 'about ${formatFileSize(total)}';
+      sizeChunks = isActive || isPaused
+          ? [fig(formatFileSize(received)), '/$_nbsp${fig(formatFileSize(total))}']
+          : ['about ${fig(formatFileSize(total))}'];
     } else {
-      sizeText = received > 0 ? '${formatFileSize(received)} / size unknown' : 'Size unknown';
+      sizeChunks = received > 0 ? [fig(formatFileSize(received)), '/${_nbsp}size unknown'] : ['Size unknown'];
     }
+    final dotted = [
+      if (isActive && speed != null && speed > 0) '${fig(formatFileSize(speed.round()))}/s',
+      if (isActive && eta != null && eta.inSeconds > 0) '${fig(_formatEta(eta))} left',
+      sizeChunks.first,
+    ];
+    final detailChunks = [
+      for (final (i, part) in dotted.indexed) i == 0 ? part : '·$_nbsp$part',
+      ...sizeChunks.skip(1),
+    ];
+    final detailSpoken = detailChunks.join(' ').replaceAll(_nbsp, ' ');
 
-    final String? speedText = isActive && speed != null && speed > 0
-        ? '${formatFileSize(speed.round())}/s'
-            '${eta != null && eta.inSeconds > 0 ? " • ${_formatEta(eta)} left" : ""}'
-        : null;
-
-    // Progress bar (also while paused, so the user sees how far it got)
+    // Progress bar (also while paused, so the user sees how far it got).
     final showProgress = isActive || (isPausedOrQueued && received > 0);
     final failedWithCode = task.state == DownloadTaskState.failed.name && task.errorCode != null;
-    // Every state except "downloading" (which shows speed / ETA instead) keeps
-    // its status line: Preparing..., Merging video and audio..., Paused, etc.
-    final showStateText = !failedWithCode && task.state != DownloadTaskState.downloading.name;
+    // Every state except "downloading" (where the % and speed say it) shows
+    // its icon and word: Queued, Paused, Saved, Failed, Merging video and
+    // audio...
+    final showState = task.state != DownloadTaskState.downloading.name;
+    final (stateIcon, stateTone) = _stateVisual(task.state);
+    final stateColor = _toneColor(palette, stateTone);
 
     return SurfaceCard(
       padding: const EdgeInsets.all(AppSpacing.md12),
@@ -1727,11 +1876,11 @@ class _DownloadCard extends ConsumerWidget {
                     Text(
                       breakableTitle(title),
                       semanticsLabel: title,
-                      style: AppTypography.bodyStrong,
+                      style: type.bodyStrong,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: AppSpacing.xs4),
+                    const SizedBox(height: 2),
                     Wrap(
                       spacing: AppSpacing.sm8,
                       runSpacing: AppSpacing.xs4,
@@ -1741,13 +1890,13 @@ class _DownloadCard extends ConsumerWidget {
                           PillTag(
                             text: kind == 'video' ? 'Video' : 'Audio',
                             icon: kind == 'video' ? Icons.videocam_rounded : Icons.music_note_rounded,
-                            color: kind == 'video' ? AppColors.accent : AppColors.primary,
+                            color: kind == 'video' ? palette.accent : palette.primary,
                           ),
                         if (quality != null && quality.isNotEmpty)
-                          PillTag(text: quality, color: AppColors.textSecondary),
+                          PillTag(text: quality, color: palette.textSecondary),
                         Text(
                           task.host,
-                          style: AppTypography.metadata,
+                          style: type.metadata,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -1760,86 +1909,140 @@ class _DownloadCard extends ConsumerWidget {
           ),
           if (showProgress) ...[
             const SizedBox(height: AppSpacing.md12),
+            // 4 dp primary on surfacePressed (the progress theme); a paused
+            // or waiting bar is muted, and its word says why.
             LinearProgressIndicator(
               value: knownTotal ? progressVal : (isActive ? null : 0),
               minHeight: 4,
               borderRadius: BorderRadius.circular(2),
-              color: isActive ? AppColors.primary : AppColors.textMuted,
+              color: isActive ? palette.primary : palette.textMuted,
+              backgroundColor: palette.surfacePressed,
             ),
           ],
           const SizedBox(height: AppSpacing.sm8),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: AppSpacing.md12,
-                      runSpacing: AppSpacing.xs4,
-                      children: [
-                        Text(sizeText, style: AppTypography.tabularFigures),
-                        if (speedText != null)
-                          Text(
-                            speedText,
-                            style: AppTypography.tabularFigures.copyWith(color: AppColors.textMuted),
-                          ),
-                      ],
-                    ),
-                    if (failedWithCode) ...[
-                      const SizedBox(height: AppSpacing.xs4),
-                      Text(
-                        formatPlainErrorMessage(task.errorCode!, host: task.host),
-                        style: AppTypography.metadata.copyWith(color: AppColors.error),
-                      ),
-                      if (task.errorDetail != null && task.errorDetail!.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: AppSpacing.xs4),
-                          child: Text(
-                            'Reason: ${task.errorDetail}',
-                            style: AppTypography.caption,
-                          ),
-                        ),
-                    ] else if (showStateText) ...[
-                      const SizedBox(height: AppSpacing.xs4),
-                      Text(
-                        _formatStateText(task.state, task),
-                        style: AppTypography.label.copyWith(
-                          color: _stateTextColor(task.state),
-                          fontWeight: FontWeight.w600,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stateLine = <Widget>[
+                if (showState)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(stateIcon, size: 16, color: stateColor),
+                      const SizedBox(width: AppSpacing.xs4),
+                      Flexible(
+                        child: Text(
+                          _formatStateText(task.state, task),
+                          style: type.label.copyWith(fontSize: 13, height: 18 / 13, color: stateColor),
                         ),
                       ),
                     ],
+                  ),
+                if (percentText != null)
+                  Text(percentText, style: type.tabularFigures.copyWith(color: palette.textPrimary)),
+              ];
+              final figures = Semantics(
+                label: detailSpoken,
+                child: ExcludeSemantics(
+                  child: Wrap(
+                    // About one space of DM Mono at 12.
+                    spacing: 6,
+                    children: [
+                      for (final chunk in detailChunks)
+                        Text(
+                          chunk,
+                          style: type.tabularFigures.copyWith(
+                            fontSize: 12,
+                            height: 16 / 12,
+                            color: palette.textMuted,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+              // Beside the row actions the figures get what the buttons
+              // leave. On a small phone or at large text that is too little
+              // (each chunk on its own line), so the figures move under the
+              // state and actions and take the card's full width.
+              final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
+              final besideActions = constraints.maxWidth - _kRowActionsWidth;
+              final stacked = besideActions < _kMinFiguresWidth * textScale;
+              if (stacked) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Wrap(
+                            spacing: AppSpacing.md12,
+                            runSpacing: AppSpacing.xs4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: stateLine,
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.sm8),
+                        actions,
+                      ],
+                    ),
+                    figures,
                   ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(
+                    child: Wrap(
+                      spacing: AppSpacing.md12,
+                      runSpacing: AppSpacing.xs4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [...stateLine, figures],
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm8),
+                  actions,
+                ],
+              );
+            },
+          ),
+          if (failedWithCode) ...[
+            const SizedBox(height: AppSpacing.xs4),
+            Text(
+              formatPlainErrorMessage(task.errorCode!, host: task.host),
+              style: type.metadata,
+            ),
+            if (task.errorDetail != null && task.errorDetail!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.xs4),
+                child: Text(
+                  'Reason: ${task.errorDetail}',
+                  style: type.caption,
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm8),
-              actions,
-            ],
-          ),
+          ],
         ],
       ),
     );
   }
 }
 
-/// 64 dp rounded thumbnail with a state badge in the corner.
+/// 48 dp cover at radius 14 (DESIGN.md 7.14): the download's own thumbnail,
+/// the file's embedded art once saved, else the type tile (primary music
+/// glyph, accent video glyph). A saved file shows a small play disc.
 class _DownloadThumb extends StatelessWidget {
   final DownloadEntry task;
   final String? kind;
 
-  static const double _size = 64;
+  static const double size = 48;
 
   const _DownloadThumb({required this.task, required this.kind});
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final isVideo = kind == 'video';
     final placeholderIcon = isVideo ? Icons.movie_outlined : Icons.music_note_rounded;
-    final placeholder = _ThumbPlaceholder(
-      icon: placeholderIcon,
-      color: isVideo ? AppColors.accent : AppColors.primary,
-    );
+    final tile = _TypeTile(icon: placeholderIcon, tone: isVideo ? _Tone.accent : _Tone.brand);
     final thumb = task.thumbnailPath;
     final completed = task.state == DownloadTaskState.completed.name;
 
@@ -1847,87 +2050,45 @@ class _DownloadThumb extends StatelessWidget {
     if (thumb != null) {
       image = Image.file(
         File(thumb),
-        width: _size,
-        height: _size,
+        width: size,
+        height: size,
         fit: BoxFit.cover,
-        cacheWidth: 192,
+        cacheWidth: 144,
         gaplessPlayback: true,
-        errorBuilder: (_, _, _) => placeholder,
+        errorBuilder: (_, _, _) => tile,
       );
     } else if (completed && task.finalPath != null) {
       // Direct downloads: embedded cover art / a video frame from the file itself.
       image = ArtworkThumbnail(
         uri: task.finalPath!,
-        size: _size,
+        size: size,
         borderRadius: 0,
         placeholderIcon: placeholderIcon,
       );
     } else {
-      image = placeholder;
+      return tile;
     }
 
     return SizedBox(
-      width: _size,
-      height: _size,
+      width: size,
+      height: size,
       child: Stack(
-        clipBehavior: Clip.none,
         children: [
           ClipRRect(
-            borderRadius: BorderRadius.circular(AppSpacing.md12),
-            child: SizedBox(width: _size, height: _size, child: image),
+            borderRadius: BorderRadius.circular(AppSpacing.radiusThumb),
+            child: SizedBox(width: size, height: size, child: image),
           ),
           if (completed)
             Center(
               child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.45),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.play_arrow_rounded, size: 18, color: Colors.white),
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(color: palette.overlay, shape: BoxShape.circle),
+                child: Icon(Icons.play_arrow_rounded, size: 16, color: palette.onOverlay),
               ),
             ),
-          Positioned(
-            right: -AppSpacing.xs4,
-            bottom: -AppSpacing.xs4,
-            child: _StateBadge(state: task.state),
-          ),
         ],
       ),
-    );
-  }
-}
-
-class _ThumbPlaceholder extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-
-  const _ThumbPlaceholder({required this.icon, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: _DownloadThumb._size,
-      height: _DownloadThumb._size,
-      color: AppColors.surfaceElevated,
-      child: Icon(icon, size: 28, color: color),
-    );
-  }
-}
-
-class _StateBadge extends StatelessWidget {
-  final String state;
-
-  const _StateBadge({required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    final (icon, color) = _stateVisual(state);
-    return Container(
-      padding: const EdgeInsets.all(2),
-      decoration: const BoxDecoration(color: AppColors.surface, shape: BoxShape.circle),
-      child: Icon(icon, size: 18, color: color),
     );
   }
 }
@@ -1938,12 +2099,13 @@ class _SkeletonRows extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     Widget bar(double width, double height) => Container(
           width: width,
           height: height,
           decoration: BoxDecoration(
-            color: AppColors.surfacePressed,
-            borderRadius: BorderRadius.circular(6),
+            color: palette.surfacePressed,
+            borderRadius: BorderRadius.circular(AppSpacing.radiusBadge),
           ),
         );
 
@@ -1959,11 +2121,11 @@ class _SkeletonRows extends StatelessWidget {
                 child: Row(
                   children: [
                     Container(
-                      width: _DownloadThumb._size,
-                      height: _DownloadThumb._size,
+                      width: _DownloadThumb.size,
+                      height: _DownloadThumb.size,
                       decoration: BoxDecoration(
-                        color: AppColors.surfaceElevated,
-                        borderRadius: BorderRadius.circular(AppSpacing.md12),
+                        color: palette.surfaceElevated,
+                        borderRadius: BorderRadius.circular(AppSpacing.radiusThumb),
                       ),
                     ),
                     const SizedBox(width: AppSpacing.md12),

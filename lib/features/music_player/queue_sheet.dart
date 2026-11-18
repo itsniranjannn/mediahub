@@ -1,20 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
-import '../../core/widgets/artwork_thumbnail.dart';
 import '../../domain/models/media_item.dart';
 import '../../shared/widgets/ui_kit.dart';
 import 'playback_notifier.dart';
 
-const double _kRowRadius = AppSpacing.buttonRadius;
+const double _kRowRadius = AppSpacing.radiusThumb;
 const EdgeInsets _kRowInset = EdgeInsets.symmetric(horizontal: AppSpacing.sm8, vertical: 2);
-const double _kThumbSize = 44;
+
+/// Rows grow with the text instead of clipping it (docs/DESIGN.md 6).
+const double _kRowMinHeight = 64;
+
+/// The track-number column ("01"), where the current row shows the
+/// equaliser instead.
+const double _kIndexWidth = 32;
+
+/// The current row's leading bar (docs/DESIGN.md 7.6): 3 dp, 12 dp in from
+/// the row's top and bottom.
+const double _kNowBarWidth = 3;
+const double _kNowBarInset = AppSpacing.md12;
 
 /// The play queue, shown in the app's standard bottom sheet (surface colour,
-/// rounded top and drag handle come from the theme). Tap a row to jump to it,
-/// drag the handle to reorder, swipe left or tap the minus to remove.
+/// rounded top and drag handle come from the app theme, light or dark). Tap a
+/// row to jump to it, drag the grip to reorder, swipe left or tap the minus
+/// to remove.
 class QueueSheet extends ConsumerWidget {
   const QueueSheet({super.key});
 
@@ -84,11 +95,12 @@ class QueueSheet extends ConsumerWidget {
 
   /// The row being dragged lifts onto an elevated rounded surface. The surface
   /// uses the same inset and corners as a resting row, so it lines up with the
-  /// row's own tint instead of running edge to edge.
+  /// row's own shape instead of running edge to edge.
   static Widget _liftedRow(Widget child, int index, Animation<double> animation) {
     return AnimatedBuilder(
       animation: animation,
       builder: (context, child) {
+        final palette = context.palette;
         final t = Curves.easeOut.transform(animation.value);
         return Material(
           type: MaterialType.transparency,
@@ -98,9 +110,9 @@ class QueueSheet extends ConsumerWidget {
                 child: Padding(
                   padding: _kRowInset,
                   child: Material(
-                    color: AppColors.surfaceElevated,
+                    color: palette.surfaceElevated,
                     elevation: 8 * t,
-                    shadowColor: Colors.black,
+                    shadowColor: Theme.of(context).colorScheme.shadow,
                     borderRadius: BorderRadius.circular(_kRowRadius),
                   ),
                 ),
@@ -123,6 +135,7 @@ class _QueueHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final type = context.typography;
     final tracks = count == 1 ? '1 track' : '$count tracks';
     final subtitle = count > 1 ? '$tracks · Drag to reorder' : tracks;
 
@@ -137,7 +150,7 @@ class _QueueHeader extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            // One heading stop, "Current Queue / 1 track", like Now Playing's
+            // One heading stop, "Current queue / 1 track", like Now Playing's
             // header: on its own the shorter subtitle was read first.
             child: MergeSemantics(
               child: Column(
@@ -147,8 +160,8 @@ class _QueueHeader extends StatelessWidget {
                   Semantics(
                     header: true,
                     child: Text(
-                      'Current Queue',
-                      style: AppTypography.sectionTitle,
+                      'Current queue',
+                      style: type.sectionTitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -156,7 +169,7 @@ class _QueueHeader extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: AppTypography.metadata,
+                    style: type.metadata,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -197,17 +210,19 @@ class _EmptyQueue extends StatelessWidget {
   }
 }
 
-/// Revealed while a row is swiped to the left.
+/// Revealed while a row is swiped to the left: the error colour with an
+/// icon and a word, never colour alone.
 class _RemoveBackground extends StatelessWidget {
   const _RemoveBackground();
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return Padding(
       padding: _kRowInset,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: AppColors.error.withValues(alpha: 0.16),
+          color: palette.errorContainer,
           borderRadius: BorderRadius.circular(_kRowRadius),
         ),
         child: Padding(
@@ -218,13 +233,13 @@ class _RemoveBackground extends StatelessWidget {
               Flexible(
                 child: Text(
                   'Remove',
-                  style: AppTypography.button.copyWith(color: AppColors.error),
+                  style: context.typography.button.copyWith(color: palette.onErrorContainer),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: AppSpacing.sm8),
-              const Icon(Icons.delete_rounded, color: AppColors.error),
+              Icon(Icons.delete_rounded, color: palette.onErrorContainer),
             ],
           ),
         ),
@@ -233,54 +248,45 @@ class _RemoveBackground extends StatelessWidget {
   }
 }
 
-/// 44 dp cover on the 16 dp gutter; the current track wears the same
-/// equaliser veil as the playing row in every song list.
-class _QueueArtwork extends StatelessWidget {
-  final MediaItem item;
+/// The track number ("01") in the `index` type, or, on the current row, the
+/// equaliser glyph in primary in its place (docs/DESIGN.md 7.6).
+class _QueueIndex extends StatelessWidget {
+  final int index;
   final bool isCurrent;
 
-  const _QueueArtwork({required this.item, required this.isCurrent});
+  const _QueueIndex({required this.index, required this.isCurrent});
 
-  /// Same corners as the mini player's and song rows' covers.
-  static const double _radius = AppSpacing.sm8;
+  /// "01" ... "99", then "100".
+  static String label(int index) => (index + 1).toString().padLeft(2, '0');
 
   @override
   Widget build(BuildContext context) {
-    final art = ArtworkThumbnail(
-      uri: item.uri,
-      artworkPath: item.artworkPath,
-      size: _kThumbSize,
-      borderRadius: _radius,
-    );
-    if (!isCurrent) return art;
-
-    return SizedBox.square(
-      dimension: _kThumbSize,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          art,
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: AppColors.overlay,
-              borderRadius: BorderRadius.circular(_radius),
-            ),
-            child: const Icon(
+    final palette = context.palette;
+    return SizedBox(
+      width: _kIndexWidth,
+      child: isCurrent
+          ? Icon(
               Icons.graphic_eq_rounded,
-              color: AppColors.primary,
+              color: palette.primary,
               size: 20,
               semanticLabel: 'Now playing',
+            )
+          : FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label(index),
+                maxLines: 1,
+                style: context.typography.index,
+                textAlign: TextAlign.center,
+              ),
             ),
-          ),
-        ],
-      ),
     );
   }
 }
 
-/// One queue entry: cover (with an equaliser glyph for the current track),
-/// title / artist, remove button and drag handle. The header and Now
-/// Playing already give the position, so the row spends no width on it.
+/// One queue entry (docs/DESIGN.md 7.10): the track number (the equaliser on
+/// the current track, which also wears the 3 dp primary bar and a primary
+/// title), title / artist, the remove button and a 24 dp reorder grip.
 class _QueueRow extends StatelessWidget {
   final MediaItem item;
   final int index;
@@ -298,7 +304,10 @@ class _QueueRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
     final artist = item.artist ?? 'Unknown Artist';
+    final radius = BorderRadius.circular(_kRowRadius);
     return Padding(
       padding: _kRowInset,
       // One node per row, worded like a song row in the library: this label
@@ -306,7 +315,7 @@ class _QueueRow extends StatelessWidget {
       // below, and the current track is the selected one (its "Now playing"
       // glyph is not read on top of that). Not a container, so the list's
       // "Move up / down" actions stay on this node (the swipe is off while a
-      // screen reader runs). The remove button is its own; the drag handle is
+      // screen reader runs). The remove button is its own; the grip is
       // covered by those moves.
       child: Semantics(
         label: 'Song: ${item.title} by $artist',
@@ -314,62 +323,85 @@ class _QueueRow extends StatelessWidget {
         selected: isCurrent,
         onTap: onTap,
         child: Material(
-          color: isCurrent ? AppColors.primary.withValues(alpha: 0.12) : Colors.transparent,
-          borderRadius: BorderRadius.circular(_kRowRadius),
+          type: MaterialType.transparency,
+          borderRadius: radius,
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             excludeFromSemantics: true,
             onTap: onTap,
-            child: Padding(
-              // 8 dp row inset + 8 dp here = the 16 dp gutter of the header
-              padding: const EdgeInsets.fromLTRB(AppSpacing.sm8, AppSpacing.sm8, 0, AppSpacing.sm8),
-              child: Row(
-                children: [
-                  ExcludeSemantics(child: _QueueArtwork(item: item, isCurrent: isCurrent)),
-                  const SizedBox(width: AppSpacing.md12),
-                  Expanded(
-                    child: ExcludeSemantics(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            item.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTypography.bodyStrong.copyWith(
-                              color: isCurrent ? AppColors.primary : AppColors.textPrimary,
+            highlightColor: palette.surfacePressed,
+            child: Stack(
+              children: [
+                if (isCurrent)
+                  PositionedDirectional(
+                    start: 0,
+                    top: _kNowBarInset,
+                    bottom: _kNowBarInset,
+                    width: _kNowBarWidth,
+                    child: DecoratedBox(
+                      key: const ValueKey('queue_now_bar'),
+                      decoration: BoxDecoration(
+                        color: palette.primary,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: _kRowMinHeight),
+                  child: Padding(
+                    // 8 dp row inset + 8 dp here = the 16 dp gutter of the header
+                    padding: const EdgeInsetsDirectional.fromSTEB(AppSpacing.sm8, AppSpacing.sm8, 0, AppSpacing.sm8),
+                    child: Row(
+                      children: [
+                        ExcludeSemantics(child: _QueueIndex(index: index, isCurrent: isCurrent)),
+                        const SizedBox(width: AppSpacing.md12),
+                        Expanded(
+                          child: ExcludeSemantics(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  item.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: type.bodyStrong.copyWith(
+                                    color: isCurrent ? palette.primary : palette.textPrimary,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  artist,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: type.metadata,
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            artist,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTypography.metadata,
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.remove_circle_outline_rounded, size: 22),
+                          color: palette.textSecondary,
+                          tooltip: 'Remove from queue',
+                          onPressed: onRemove,
+                        ),
+                        ReorderableDragStartListener(
+                          index: index,
+                          child: SizedBox.square(
+                            dimension: AppSpacing.minTouchTarget,
+                            child: Icon(
+                              Icons.drag_handle_rounded,
+                              size: 24,
+                              color: palette.dragHandle,
+                            ),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.remove_circle_outline_rounded, size: 22),
-                    color: AppColors.textMuted,
-                    tooltip: 'Remove from queue',
-                    onPressed: onRemove,
-                  ),
-                  ReorderableDragStartListener(
-                    index: index,
-                    child: const SizedBox.square(
-                      dimension: AppSpacing.minTouchTarget,
-                      child: Icon(
-                        Icons.drag_handle_rounded,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mediahub/app/theme/app_colors.dart';
+import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_spacing.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/widgets/artwork_thumbnail.dart';
@@ -46,6 +46,9 @@ Future<void> _pumpRows(
   double textScale = 1.0,
   MediaItem? playing,
   bool showArtwork = true,
+  bool numbered = false,
+  ThemeData? theme,
+  Set<String> favorites = const {},
 }) async {
   tester.view.physicalSize = Size(width * 3, 800 * 3);
   tester.view.devicePixelRatio = 3;
@@ -55,10 +58,10 @@ Future<void> _pumpRows(
     ProviderScope(
       overrides: [
         currentMediaItemProvider.overrideWith((ref) => playing),
-        isFavoriteProvider.overrideWith((ref, id) => Stream.value(false)),
+        isFavoriteProvider.overrideWith((ref, id) => Stream.value(favorites.contains(id))),
       ],
       child: MaterialApp(
-        theme: AppTheme.darkTheme,
+        theme: theme ?? AppTheme.darkTheme,
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
           child: child!,
@@ -66,7 +69,8 @@ Future<void> _pumpRows(
         home: Scaffold(
           body: ListView(
             children: [
-              for (final item in items) MediaSongRow(item: item, showArtwork: showArtwork),
+              for (final (i, item) in items.indexed)
+                MediaSongRow(item: item, showArtwork: showArtwork, index: numbered ? i + 1 : null),
             ],
           ),
         ),
@@ -113,8 +117,8 @@ void main() {
         reason: 'reads "Bipana Thapa · 4:05", not a dot floating at the far end');
     expect(clockRect.right, lessThanOrEqualTo(tester.getRect(find.byType(FavoriteFeedbackButton)).left));
 
-    // 360 - 8 (pill inset) - 8 - 52 art - 12 - 4 - 48 heart - 48 more - 8 = 172 dp.
-    expect(title.width, greaterThanOrEqualTo(170));
+    // 360 - 16 - 48 art - 12 - 4 - 48 heart - 48 more - 4 = 180 dp.
+    expect(title.width, greaterThanOrEqualTo(178));
     expect(tester.renderObject<RenderParagraph>(find.text(_longTitle)).didExceedMaxLines, isTrue,
         reason: 'a long title still ellipsizes on one line');
   });
@@ -128,28 +132,37 @@ void main() {
       final row = tester.getRect(find.byWidgetPredicate((w) => w is MediaSongRow && w.item.id == item.id));
       expect(row.height, 64);
       expect(tester.getRect(_inRow(item, find.byType(ArtworkThumbnail))).left, AppSpacing.lg16);
+      expect(tester.getSize(_inRow(item, find.byType(ArtworkThumbnail))), const Size.square(48));
       expect(tester.widget<ArtworkThumbnail>(_inRow(item, find.byType(ArtworkThumbnail))).borderRadius,
-          AppSpacing.sm8);
+          AppSpacing.radiusArtSmall);
     }
   });
 
-  testWidgets('the playing row sits on an inset violet pill, like the queue', (tester) async {
+  /// The 3 dp now-playing bar on a row's leading edge.
+  Finder playingBar(MediaItem item, Color color) => _inRow(
+        item,
+        find.byWidgetPredicate((w) =>
+            w is DecoratedBox && w.decoration is BoxDecoration && (w.decoration as BoxDecoration).color == color),
+      );
+
+  testWidgets('the playing row has a 3 dp primary bar on its edge and a primary title, never colour alone',
+      (tester) async {
     final song = _song();
     final other = _song(id: 'song_2', title: 'Sunrise Over Phewa');
     await _pumpRows(tester, [song, other], playing: song);
 
-    Material pillOf(MediaItem item) => tester.widget<Material>(_inRow(item, find.byType(Material)).first);
-    Rect pillRect(MediaItem item) => tester.getRect(_inRow(item, find.byType(Material)).first);
+    final bar = playingBar(song, AppPalette.dark.primary);
+    expect(bar, findsOneWidget);
+    final barRect = tester.getRect(bar);
+    final row = tester.getRect(find.byWidgetPredicate((w) => w is MediaSongRow && w.item.id == song.id));
+    expect(barRect.width, MediaSongRow.playingBarWidth);
+    expect(barRect.left, row.left, reason: 'on the leading edge');
+    expect(barRect.top - row.top, MediaSongRow.playingBarInset);
+    expect(row.bottom - barRect.bottom, MediaSongRow.playingBarInset);
+    expect(playingBar(other, AppPalette.dark.primary), findsNothing);
 
-    final pill = pillOf(song);
-    expect(pill.color, AppColors.primary.withValues(alpha: 0.12));
-    expect(pill.borderRadius, BorderRadius.circular(AppSpacing.buttonRadius));
-    expect(pillRect(song).left, AppSpacing.sm8);
-    expect(pillRect(song).right, 360 - AppSpacing.sm8);
-    expect(pillRect(song).height, 62, reason: '1 dp above and below inside the 64 dp row');
-
-    expect(pillOf(other).color, Colors.transparent);
-    expect(tester.widget<Text>(_inRow(song, find.text('Resham Firiri'))).style?.color, AppColors.primary);
+    expect(tester.widget<Text>(_inRow(song, find.text('Resham Firiri'))).style?.color, AppPalette.dark.primary);
+    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget, reason: 'the equaliser over the art');
     // Screen readers hear "now playing" as the row's selected state; the
     // glyph's own label is no longer read on top of it.
     expect(find.semantics.byLabel(RegExp('^Song: Resham Firiri ')), isSemantics(isSelected: true));
@@ -192,6 +205,34 @@ void main() {
         expect(size.width, greaterThanOrEqualTo(AppSpacing.minTouchTarget));
         expect(size.height, greaterThanOrEqualTo(AppSpacing.minTouchTarget));
       }
+    }
+  });
+
+  testWidgets('a small row gives the heart button room to the artist and marks a favourite instead',
+      (tester) async {
+    final fav = _song(id: 'fav', artist: 'Himal Sessions');
+    final plain = _song(id: 'plain', artist: 'Himal Sessions');
+
+    // Roomy (360 dp, 1.0x): the 48 dp heart button on every row.
+    await _pumpRows(tester, [fav, plain], favorites: {'fav'});
+    await tester.pump();
+    expect(find.byType(FavoriteFeedbackButton), findsNWidgets(2));
+    expect(find.byIcon(Icons.favorite_rounded), findsOneWidget, reason: 'the filled heart button');
+
+    for (final (width, scale) in [(320.0, 1.0), (360.0, 1.3)]) {
+      await _pumpRows(tester, [fav, plain], width: width, textScale: scale, favorites: {'fav'});
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(FavoriteFeedbackButton), findsNothing, reason: '$width dp at ${scale}x');
+      // A 16 dp Flare heart before the favourite's meta line, read as part of the row.
+      final mark = tester.widget<Icon>(_inRow(fav, find.byIcon(Icons.favorite_rounded)));
+      expect(mark.color, AppPalette.dark.favorite);
+      expect(mark.size, closeTo(16 * scale, 0.01));
+      expect(_inRow(plain, find.byIcon(Icons.favorite_rounded)), findsNothing);
+      expect(find.bySemanticsLabel(RegExp(r'^Song: Resham Firiri by Himal Sessions, 4:05, Favorite$')), findsOneWidget);
+      // The artist shows in full where the heart used to take its room.
+      _expectFullyShown(tester, _inRow(plain, find.text('Himal Sessions')));
+      expect(find.byTooltip('More actions'), findsNWidgets(2), reason: 'the ⋮ stays');
     }
   });
 
@@ -248,22 +289,68 @@ void main() {
       of: find.byIcon(Icons.graphic_eq_rounded),
       matching: find.byType(DecoratedBox),
     ).first);
-    expect((veil.decoration as BoxDecoration).color, AppColors.overlay);
+    expect((veil.decoration as BoxDecoration).color, AppPalette.dark.overlay);
 
-    // Violet on the veil over pure white, the worst real cover: >= 3:1.
-    final behind = Color.alphaBlend(AppColors.overlay, Colors.white);
-    expect(_contrast(AppColors.primary, behind), greaterThanOrEqualTo(3.0));
-    expect(tester.widget<Icon>(find.byIcon(Icons.graphic_eq_rounded)).semanticLabel, 'Now playing');
+    // Volt on the veil over pure white, the worst real cover: >= 3:1.
+    final behind = Color.alphaBlend(AppPalette.dark.overlay, Colors.white);
+    final glyph = tester.widget<Icon>(find.byIcon(Icons.graphic_eq_rounded));
+    expect(glyph.color, AppPalette.dark.primary);
+    expect(_contrast(glyph.color!, behind), greaterThanOrEqualTo(3.0));
+    expect(glyph.semanticLabel, 'Now playing');
   });
 
-  testWidgets('"Downloaded" is teal at regular weight, not the violet of "now playing"', (tester) async {
+  testWidgets('on paper the bar and title are Ultraviolet; the veil glyph stays Volt on ink', (tester) async {
+    final song = _song();
+    await _pumpRows(tester, [song], playing: song, theme: AppTheme.lightTheme);
+
+    expect(playingBar(song, AppPalette.light.primary), findsOneWidget);
+    expect(tester.widget<Text>(find.text('Resham Firiri')).style?.color, AppPalette.light.primary);
+    final glyph = tester.widget<Icon>(find.byIcon(Icons.graphic_eq_rounded));
+    expect(glyph.color, AppPalette.dark.primary, reason: 'the veil is ink in both themes');
+    expect(tester.widget<Icon>(find.byIcon(Icons.more_vert_rounded)).color ?? AppPalette.light.textSecondary,
+        AppPalette.light.textSecondary);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('album and playlist lists show "01" track numbers in DM Mono, the equaliser on the playing one',
+      (tester) async {
+    final song = _song();
+    final other = _song(id: 'song_2', title: 'Sunrise Over Phewa');
+    await _pumpRows(tester, [song, other], playing: other, numbered: true);
+
+    expect(find.byType(ArtworkThumbnail), findsNothing);
+    final number = tester.widget<Text>(find.text('01'));
+    expect(number.style?.fontFamily, 'DMMono');
+    expect(number.style?.color, AppPalette.dark.textMuted);
+    expect(find.text('02'), findsNothing, reason: 'the playing row shows the equaliser instead');
+    expect(_inRow(other, find.byIcon(Icons.graphic_eq_rounded)), findsOneWidget);
+    expect(tester.getRect(find.text('01')).center.dx, closeTo(AppSpacing.lg16 + MediaSongRow.indexWidth / 2, 0.5));
+    for (final item in [song, other]) {
+      expect(tester.getSize(find.byWidgetPredicate((w) => w is MediaSongRow && w.item.id == item.id)).height, 64);
+    }
+  });
+
+  testWidgets('the length is DM Mono at the meta line size', (tester) async {
+    await _pumpRows(tester, [_song()]);
+    final clock = tester.widget<Text>(find.text(' · 4:05'));
+    final span = clock.textSpan! as TextSpan;
+    final figures = span.children!.last as TextSpan;
+    expect(figures.text, '4:05');
+    expect(figures.style?.fontFamily, 'DMMono');
+    expect(figures.style?.fontSize, 14);
+    expect(figures.style?.color, AppPalette.dark.textMuted);
+  });
+
+  testWidgets('"Downloaded" is Ice at regular weight with a 16 dp glyph, not the primary of "now playing"', (tester) async {
     await _pumpRows(tester, [_song(source: 'download')], width: 480);
 
     final label = tester.widget<Text>(find.text('Downloaded'));
-    expect(label.style?.color, AppColors.accent);
+    expect(label.style?.color, AppPalette.dark.accent);
     expect(label.style?.fontWeight, isNot(FontWeight.w600));
-    expect(tester.widget<Icon>(find.byIcon(Icons.download_done_rounded)).color, AppColors.accent);
-    expect(_contrast(AppColors.accent, AppColors.background), greaterThanOrEqualTo(4.5));
+    final marker = tester.widget<Icon>(find.byIcon(Icons.download_done_rounded));
+    expect(marker.color, AppPalette.dark.accent);
+    expect(marker.size, 16);
+    expect(_contrast(AppPalette.dark.accent, AppPalette.dark.background), greaterThanOrEqualTo(4.5));
   });
 
   testWidgets('a missing download keeps its marker muted', (tester) async {
@@ -272,7 +359,7 @@ void main() {
       [_song(source: 'download', availability: MediaAvailability.missing)],
       width: 480,
     );
-    expect(tester.widget<Icon>(find.byIcon(Icons.download_done_rounded)).color, AppColors.textMuted);
+    expect(tester.widget<Icon>(find.byIcon(Icons.download_done_rounded)).color, AppPalette.dark.textMuted);
   });
 
   group('title lines', () {

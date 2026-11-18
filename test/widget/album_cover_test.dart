@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mediahub/app/theme/app_colors.dart';
+import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_spacing.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/permissions/media_permission_service.dart';
@@ -19,6 +19,7 @@ import 'package:mediahub/features/music_player/music_screen.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/shared/widgets/artwork_placeholder.dart';
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
+import 'package:mediahub/shared/widgets/ui_kit.dart';
 import 'package:mocktail/mocktail.dart';
 
 class _MockLibraryRepository extends Mock implements LibraryRepository {}
@@ -87,7 +88,7 @@ void main() {
     });
   }
 
-  Future<void> pump(WidgetTester tester, Widget home, {List<Override> extra = const []}) async {
+  Future<void> pump(WidgetTester tester, Widget home, {List<Override> extra = const [], ThemeData? theme}) async {
     tester.view.physicalSize = const Size(360 * 3, 800 * 3);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
@@ -99,7 +100,7 @@ void main() {
           isFavoriteProvider.overrideWith((ref, id) => Stream.value(false)),
           ...extra,
         ],
-        child: MaterialApp(theme: AppTheme.darkTheme, home: home),
+        child: MaterialApp(theme: theme ?? AppTheme.darkTheme, home: home),
       ),
     );
     await tester.pump();
@@ -130,13 +131,13 @@ void main() {
     expect(find.text(_album), findsOneWidget);
   });
 
-  testWidgets('the album header uses the tile\'s song, 16 dp corners and the shared separator', (tester) async {
+  testWidgets('the album header uses the tile\'s song, the thumbnail radius and the shared separator', (tester) async {
     mockArtwork();
     await pump(tester, AlbumDetailScreen(album: _group));
 
     final hero = tester.widget<ArtworkThumbnail>(find.byType(ArtworkThumbnail));
     expect(hero.uri, _coverUri, reason: 'not songs.first (${_songs.first.uri})');
-    expect(hero.borderRadius, AppSpacing.lg16);
+    expect(hero.borderRadius, AppSpacing.radiusThumb);
     expect(hero.placeholderSeed, ArtworkPlaceholder.albumSeed(_album));
     expect(find.text('2 songs · 8 min'), findsOneWidget);
 
@@ -144,35 +145,72 @@ void main() {
     expect(heroTint(ArtworkTint.surfaceGradient(ArtworkPlaceholder.albumSeed(_album))), findsOneWidget);
   });
 
-  testWidgets('a real cover switches the header and glow to the neutral violet once it loads', (tester) async {
+  /// The hard print offset under the hero cover (DESIGN.md 7.1).
+  Finder printOffset(Color color) => find.byWidgetPredicate((w) {
+        if (w is! DecoratedBox || w.decoration is! BoxDecoration) return false;
+        final shadows = (w.decoration as BoxDecoration).boxShadow;
+        return shadows != null &&
+            shadows.length == 1 &&
+            shadows.single.offset == const Offset(6, 6) &&
+            shadows.single.blurRadius == 0 &&
+            shadows.single.color == color;
+      });
+
+  testWidgets('a real cover switches the header to the neutral hero tint once it loads', (tester) async {
     mockArtwork(withArt: _coverUri);
     await pump(tester, AlbumDetailScreen(album: _group));
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(heroTint(AppColors.heroGradient), findsOneWidget);
-    final glow = find.byWidgetPredicate((w) =>
-        w is AnimatedContainer &&
-        w.decoration is BoxDecoration &&
-        ((w.decoration! as BoxDecoration).boxShadow?.single.color == AppColors.primaryBase.withValues(alpha: 0.28)));
-    expect(glow, findsOneWidget);
+    expect(heroTint(AppPalette.dark.heroGradient), findsOneWidget);
+    // No soft glow: the cover sits on the hard Volt print offset.
+    expect(printOffset(AppPalette.dark.printShadow), findsOneWidget);
   });
 
-  testWidgets('Play is the solid primary button and Shuffle the tonal one, from the theme', (tester) async {
+  testWidgets('on paper the header is the lavender wash and the print offset is ink', (tester) async {
+    mockArtwork(withArt: _coverUri);
+    await pump(tester, AlbumDetailScreen(album: _group), theme: AppTheme.lightTheme);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(heroTint(AppPalette.light.heroGradient), findsOneWidget);
+    expect(printOffset(AppPalette.light.printShadow), findsOneWidget);
+    expect(AppPalette.light.printShadow, const Color(0xFF180A2E));
+    final kicker = tester.widget<Text>(find.text('ALBUM'));
+    expect(kicker.style?.color, AppPalette.light.primary);
+  });
+
+  testWidgets('"Play all" is the Volt button and plays the album; Shuffle is the tonal one', (tester) async {
     mockArtwork();
     await pump(tester, AlbumDetailScreen(album: _group));
 
-    Material fill(String label) => tester.widget<Material>(
-          find
-              .descendant(
-                // FilledButton.icon / .tonalIcon are FilledButton subclasses.
-                of: find.ancestor(of: find.text(label), matching: find.byWidgetPredicate((w) => w is FilledButton)),
-                matching: find.byType(Material),
-              )
-              .first,
-        );
-    expect(fill('Play').color, AppColors.primary);
+    final play = tester.widget<VoltButton>(find.widgetWithText(VoltButton, 'Play all'));
+    expect(play.onPressed, isNotNull);
+    expect(play.icon, Icons.play_arrow_rounded);
+
+    final shuffle = tester.widget<Material>(
+      find
+          .descendant(
+            of: find.ancestor(of: find.text('Shuffle'), matching: find.byWidgetPredicate((w) => w is FilledButton)),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
     // Bijuli's tonal pair (DESIGN.md 2.3): deep violet fill, pale Volt label.
-    expect(fill('Shuffle').color, AppPalette.dark.secondaryContainer);
-    expect(fill('Shuffle').textStyle?.color, AppPalette.dark.onSecondaryContainer);
+    expect(shuffle.color, AppPalette.dark.secondaryContainer);
+    expect(shuffle.textStyle?.color, AppPalette.dark.onSecondaryContainer);
+  });
+
+  testWidgets('album songs show track numbers, not covers, and nothing overflows at 1.3x on 320 dp', (tester) async {
+    mockArtwork();
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await pump(tester, AlbumDetailScreen(album: _group));
+    tester.view.physicalSize = const Size(320 * 3, 800 * 3);
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('01'), findsOneWidget);
+    expect(find.text('02'), findsOneWidget);
+    // Only the hero cover; the rows carry numbers instead.
+    expect(find.byType(ArtworkThumbnail), findsOneWidget);
   });
 }

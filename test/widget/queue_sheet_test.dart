@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mediahub/app/theme/app_colors.dart';
+import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_spacing.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/widgets/artwork_thumbnail.dart';
@@ -40,10 +40,20 @@ void main() {
 
   final queue = [_song(1), _song(2, title: _longTitle), _song(3)];
 
-  Future<void> pumpQueue(WidgetTester tester, {int current = 1}) async {
-    tester.view.physicalSize = const Size(360 * 3, 800 * 3);
+  Future<void> pumpQueue(
+    WidgetTester tester, {
+    int current = 1,
+    ThemeData? theme,
+    double width = 360,
+    double textScale = 1,
+  }) async {
+    tester.view.physicalSize = Size(width * 3, 800 * 3);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
+    if (textScale != 1) {
+      tester.platformDispatcher.textScaleFactorTestValue = textScale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    }
 
     final state = domain.PlaybackState(
       currentItemId: queue[current].id,
@@ -55,50 +65,64 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [playbackNotifierProvider.overrideWith(() => _FakePlayback(state))],
-        child: MaterialApp(theme: AppTheme.darkTheme, home: const Scaffold(body: QueueSheet())),
+        child: MaterialApp(theme: theme ?? AppTheme.darkTheme, home: const Scaffold(body: QueueSheet())),
       ),
     );
     await tester.pump();
   }
 
-  testWidgets('covers start on the 16 dp gutter, with no position column', (tester) async {
+  // DESIGN.md 7.10: queue rows show their track number and a reorder grip
+  // (the covers they had before are gone).
+  testWidgets('track numbers sit in a 32 dp column on the 16 dp gutter, like the header', (tester) async {
     await pumpQueue(tester);
     expect(tester.takeException(), isNull);
 
-    final covers = tester.widgetList<ArtworkThumbnail>(find.byType(ArtworkThumbnail)).toList();
-    expect(covers, hasLength(queue.length));
-    for (final cover in find.byType(ArtworkThumbnail).evaluate()) {
-      expect(tester.getRect(find.byWidget(cover.widget)).left, AppSpacing.lg16);
+    expect(find.byType(ArtworkThumbnail), findsNothing);
+    expect(find.text('01'), findsOneWidget);
+    expect(find.text('03'), findsOneWidget);
+    expect(find.text('02'), findsNothing, reason: 'the current row shows the equaliser in its place');
+    for (final n in ['01', '03']) {
+      // Centred in the 32 dp column that starts on the gutter.
+      expect(tester.getRect(find.text(n)).center.dx, closeTo(AppSpacing.lg16 + 16, 0.5));
     }
-    expect(tester.getRect(find.text('Current Queue')).left, AppSpacing.lg16, reason: 'the same gutter as the header');
-    for (final n in ['1', '2', '3']) {
-      expect(find.text(n), findsNothing, reason: 'the header and Now Playing give the position');
-    }
+    expect(tester.getRect(find.text('Current queue')).left, AppSpacing.lg16, reason: 'the same gutter as the header');
+    final figures = tester.widget<Text>(find.text('01')).style!;
+    expect(figures.fontFamily, 'DMMono', reason: 'the index role');
+    expect(figures.color, AppPalette.dark.textMuted);
   });
 
-  testWidgets('titles get the width the number column used to take', (tester) async {
+  testWidgets('titles get the width left after the number, remove button and grip', (tester) async {
     await pumpQueue(tester);
-    // 360 - 8 inset - 8 - 44 cover - 12 - 48 remove - 48 drag - 8 inset.
-    expect(tester.getSize(find.text(_longTitle)).width, greaterThanOrEqualTo(184 - 0.5));
+    // 360 - 8 inset - 8 - 32 number - 12 - 48 remove - 48 grip - 8 inset.
+    expect(tester.getSize(find.text(_longTitle)).width, greaterThanOrEqualTo(196 - 0.5));
   });
 
-  testWidgets('the current track wears the equaliser veil on its cover, like the song lists', (tester) async {
+  testWidgets('the current track: a 3 dp primary bar, the equaliser for its number, a primary title', (tester) async {
     await pumpQueue(tester);
 
     final glyph = find.byIcon(Icons.graphic_eq_rounded);
     expect(glyph, findsOneWidget);
     expect(tester.widget<Icon>(glyph).semanticLabel, 'Now playing');
-    expect(tester.widget<Icon>(glyph).color, AppColors.primary);
+    expect(tester.widget<Icon>(glyph).color, AppPalette.dark.primary);
 
-    final veil = tester.widget<DecoratedBox>(find.ancestor(of: glyph, matching: find.byType(DecoratedBox)).first);
-    expect((veil.decoration as BoxDecoration).color, AppColors.overlay);
-    // Laid over the current row's cover, at the same size.
-    final currentCover = tester.getRect(find.byWidgetPredicate((w) => w is ArtworkThumbnail && w.uri == queue[1].uri));
-    expect(tester.getRect(find.ancestor(of: glyph, matching: find.byType(DecoratedBox)).first), currentCover);
+    final bar = find.byKey(const ValueKey('queue_now_bar'));
+    expect(bar, findsOneWidget);
+    expect(tester.getSize(bar).width, 3);
+    expect(((tester.widget<DecoratedBox>(bar).decoration) as BoxDecoration).color, AppPalette.dark.primary);
+    // 12 dp in from the row's top and bottom, on the leading edge of the row.
+    final barRect = tester.getRect(bar);
+    final rowRect = tester.getRect(find.ancestor(of: bar, matching: find.byType(InkWell)).first);
+    expect(barRect.left, AppSpacing.sm8);
+    expect(barRect.top, rowRect.top + 12);
+    expect(barRect.bottom, rowRect.bottom - 12);
 
-    // Keeps the remove button, drag handle and the selected state.
+    expect(tester.widget<Text>(find.text(_longTitle)).style!.color, AppPalette.dark.primary);
+    expect(tester.widget<Text>(find.text('Song 1')).style!.color, AppPalette.dark.textPrimary);
+
+    // Keeps the remove button, the grip and the selected state.
     expect(find.byTooltip('Remove from queue'), findsNWidgets(queue.length));
     expect(find.byIcon(Icons.drag_handle_rounded), findsNWidgets(queue.length));
+    expect(tester.widget<Icon>(find.byIcon(Icons.drag_handle_rounded).first).color, AppPalette.dark.dragHandle);
     bool? selected(String title) => tester
         .widget<Semantics>(find
             .ancestor(
@@ -111,4 +135,29 @@ void main() {
     expect(selected(_longTitle), isTrue);
     expect(selected('Song 1'), isFalse);
   });
+
+  testWidgets('in the light theme the queue is on paper, with Ultraviolet (not Volt) for the current track',
+      (tester) async {
+    await pumpQueue(tester, theme: AppTheme.lightTheme);
+    const paper = AppPalette.light;
+    expect(tester.widget<Text>(find.text(_longTitle)).style!.color, paper.primary);
+    expect(tester.widget<Text>(find.text('Song 1')).style!.color, paper.textPrimary);
+    expect(tester.widget<Icon>(find.byIcon(Icons.graphic_eq_rounded)).color, paper.primary);
+    expect(tester.widget<Text>(find.text('Current queue')).style!.color, paper.textPrimary);
+    expect(
+      ((tester.widget<DecoratedBox>(find.byKey(const ValueKey('queue_now_bar'))).decoration) as BoxDecoration).color,
+      paper.primary,
+    );
+  });
+
+  for (final width in [320.0, 360.0]) {
+    testWidgets('holds at 1.3x text on $width dp', (tester) async {
+      await pumpQueue(tester, width: width, textScale: 1.3);
+      expect(tester.takeException(), isNull);
+      expect(find.text('03'), findsOneWidget);
+      // Rows grow with the text instead of clipping it.
+      final row = tester.getRect(find.ancestor(of: find.text('Song 1'), matching: find.byType(InkWell)).first);
+      expect(row.height, greaterThanOrEqualTo(64));
+    });
+  }
 }

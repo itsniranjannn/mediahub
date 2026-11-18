@@ -307,7 +307,7 @@ void main() {
 
       expect(find.text('Finished Song'), findsOneWidget);
       expect(find.text('example.com'), findsOneWidget);
-      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('Saved'), findsOneWidget, reason: 'the state word (DESIGN.md 7.14)');
       // audio/video is shown as a chip on every row
       expect(find.text('Audio'), findsOneWidget);
 
@@ -319,7 +319,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       // Delete confirmation dialog
-      expect(find.text('Delete Download'), findsOneWidget);
+      expect(find.text('Delete download?'), findsOneWidget);
       expect(find.text('Delete "finished.mp3"? Your other files are safe.'), findsOneWidget);
 
       // Confirm Delete
@@ -397,7 +397,7 @@ void main() {
       await tester.tap(find.byTooltip('Delete'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('Delete Download'), findsOneWidget);
+      expect(find.text('Delete download?'), findsOneWidget);
 
       await tester.tap(find.text('Delete'));
       await settle(tester);

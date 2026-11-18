@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
@@ -15,6 +15,7 @@ import '../online/online_screen.dart' show confirmClearYouTubeData;
 import '../online/online_settings.dart';
 import '../online/online_web_view.dart' show onlineDataClearerProvider;
 import 'settings_notifier.dart';
+import 'theme_mode_setting.dart';
 
 const String _appVersion = '1.0.0';
 
@@ -23,17 +24,19 @@ const String _appVersion = '1.0.0';
 const double _leadingSlot = 40;
 const double _rowTextInset = AppSpacing.lg16 + _leadingSlot + AppSpacing.md12;
 
-/// Corner radius shared by the 40 dp icon tiles (card headings, app identity).
-const BorderRadius _badgeRadius = BorderRadius.all(Radius.circular(AppSpacing.md12));
+/// Corner radius of the 40 dp tiles (card headings, app identity): the tile
+/// radius of DESIGN.md 7.1.
+const BorderRadius _tileRadius = BorderRadius.all(Radius.circular(AppSpacing.radiusThumb));
 
 /// Space between two cards. The card headings carry the hierarchy, so there
 /// are no separate group labels above the cards.
 const double _cardGap = AppSpacing.xl20;
 
-TextStyle get _rowTitleStyle => AppTypography.body.copyWith(fontWeight: FontWeight.w500);
+/// Row titles: the body role a step heavier (app strings, so Atkinson).
+TextStyle _rowTitleStyle(AppTextStyles type) => type.body.copyWith(fontWeight: FontWeight.w500);
 
 /// Settings, opened from the gear in the Home header: one card each for
-/// playback, downloads, privacy and app info.
+/// appearance, playback, YouTube, downloads, privacy and app info.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -83,7 +86,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           child: Text(
             'Settings',
-            style: AppTypography.sectionTitle,
+            style: context.typography.sectionTitle,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -103,6 +106,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             const _Header(),
             const SizedBox(height: AppSpacing.xxl24),
+            const _AppearanceCard(),
+            const SizedBox(height: _cardGap),
             const _PlaybackCard(),
             const SizedBox(height: _cardGap),
             const _OnlineCard(),
@@ -121,19 +126,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
+/// The masthead: "Settings" in the display role (one line, scaled down
+/// rather than clipped at large text) and what is in here.
 class _Header extends StatelessWidget {
   const _Header();
 
   @override
   Widget build(BuildContext context) {
+    final type = context.typography;
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.xs4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Semantics(header: true, child: Text('Settings', style: AppTypography.display)),
+          Semantics(
+            header: true,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerStart,
+              child: Text('Settings', style: type.display, maxLines: 1),
+            ),
+          ),
           const SizedBox(height: AppSpacing.xs4),
-          Text('Playback, YouTube, downloads and your privacy.', style: AppTypography.metadata),
+          Text('Look, playback, YouTube, downloads and your privacy.', style: type.metadata),
         ],
       ),
     );
@@ -143,6 +158,63 @@ class _Header extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Groups
 // ---------------------------------------------------------------------------
+
+/// Settings → Appearance: follow the phone (the default), or always dark or
+/// always light ([themeModeSettingProvider]).
+class _AppearanceCard extends ConsumerWidget {
+  const _AppearanceCard();
+
+  static const List<(ThemeMode, IconData, String, String)> _options = [
+    (ThemeMode.system, Icons.brightness_auto_outlined, 'System', 'Dark or light, the same as your phone.'),
+    (ThemeMode.dark, Icons.dark_mode_outlined, 'Dark', 'Always dark.'),
+    (ThemeMode.light, Icons.light_mode_outlined, 'Light', 'Always light.'),
+  ];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(themeModeSettingProvider);
+    final type = context.typography;
+
+    return _SettingsCard(
+      children: [
+        const _CardHeading(
+          icon: Icons.palette_outlined,
+          title: 'Appearance',
+          subtitle: 'How MediaHub looks. The player stays dark either way.',
+        ),
+        const _CardDivider.underHeading(),
+        RadioGroup<ThemeMode>(
+          groupValue: mode,
+          onChanged: (value) {
+            if (value != null) ref.read(themeModeSettingProvider.notifier).set(value);
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (i, (value, icon, title, subtitle)) in _options.indexed) ...[
+                if (i > 0) const _CardDivider.betweenRows(),
+                RadioListTile<ThemeMode>(
+                  key: ValueKey('appearance_${value.name}'),
+                  value: value,
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  contentPadding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.md12, 0),
+                  minVerticalPadding: AppSpacing.md12,
+                  horizontalTitleGap: AppSpacing.md12,
+                  secondary: _RowIcon(icon),
+                  title: Text(title, style: _rowTitleStyle(type)),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(subtitle, style: type.metadata),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _PlaybackCard extends ConsumerWidget {
   const _PlaybackCard();
@@ -156,11 +228,12 @@ class _PlaybackCard extends ConsumerWidget {
       children: [
         const _CardHeading(
           icon: Icons.headphones_rounded,
-          title: 'Audio & Headset',
+          title: 'Audio & headset',
           subtitle: 'How playback reacts to your headphones.',
         ),
         const _CardDivider.underHeading(),
         _SwitchRow(
+          icon: Icons.restart_alt_rounded,
           title: 'Resume when headphones reconnect',
           subtitle: 'Picks up where you left off if they reconnect within 10 minutes of being disconnected.',
           value: resumeOnReconnect,
@@ -200,19 +273,21 @@ class _OnlineCard extends ConsumerWidget {
         ),
         const _CardDivider.underHeading(),
         _SwitchRow(
+          icon: Icons.play_circle_outline_rounded,
           title: 'Background play',
           subtitle: 'Keeps the sound going with the screen off or while you use another app.',
           value: background,
           onChanged: (v) => ref.read(onlineBackgroundPlayProvider.notifier).set(v),
         ),
-        const _CardDivider.betweenRows(hasLeadingIcon: false),
+        const _CardDivider.betweenRows(),
         _SwitchRow(
+          icon: Icons.picture_in_picture_alt_rounded,
           title: 'Auto picture-in-picture',
           subtitle: 'Shows the video in a small window when you leave the app while it plays.',
           value: autoPip,
           onChanged: (v) => ref.read(onlineAutoPipProvider.notifier).set(v),
         ),
-        const _CardDivider.betweenRows(hasLeadingIcon: false),
+        const _CardDivider.betweenRows(),
         _NavRow(
           icon: Icons.delete_sweep_outlined,
           title: 'Clear YouTube data',
@@ -230,6 +305,7 @@ class _PersonalToolsCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final type = context.typography;
     final personalState = ref.watch(personalToolsProvider);
     final personalNotifier = ref.read(personalToolsProvider.notifier);
     final status = personalState.updateStatus;
@@ -240,12 +316,13 @@ class _PersonalToolsCard extends ConsumerWidget {
       children: [
         const _CardHeading(
           icon: Icons.link_rounded,
-          color: AppColors.accent,
+          accent: true,
           title: 'Personal tools',
           subtitle: 'Save public videos and music from a web link.',
         ),
         const _CardDivider.underHeading(),
         _SwitchRow(
+          icon: Icons.download_for_offline_outlined,
           title: 'Enable web link downloader',
           subtitle: 'Personal use only. May break third-party service terms and is the user\'s own '
               'responsibility. Only public media without authentication is supported.',
@@ -260,16 +337,21 @@ class _PersonalToolsCard extends ConsumerWidget {
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const _CardDivider.betweenRows(hasLeadingIcon: false),
+                    const _CardDivider.betweenRows(),
                     ListTile(
                       minVerticalPadding: AppSpacing.md12,
                       contentPadding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.md12, 0),
-                      title: Text('yt-dlp engine version', style: _rowTitleStyle),
-                      subtitle: Text(
-                        personalState.ytDlpVersion.isEmpty ? 'Loading...' : personalState.ytDlpVersion,
-                        style: AppTypography.tabularFigures,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      horizontalTitleGap: AppSpacing.md12,
+                      leading: const _RowIcon(Icons.memory_rounded),
+                      title: Text('yt-dlp engine version', style: _rowTitleStyle(type)),
+                      subtitle: Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          personalState.ytDlpVersion.isEmpty ? 'Loading...' : personalState.ytDlpVersion,
+                          style: type.tabularFigures,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       trailing: personalState.isUpdating
                           ? const SizedBox(
@@ -412,7 +494,7 @@ class _AboutCard extends StatelessWidget {
         const _CardDivider.underHeading(),
         _NavRow(
           icon: Icons.bug_report_outlined,
-          title: 'Diagnostics Log',
+          title: 'Diagnostics log',
           subtitle: 'Recent app events (playback, downloads, network), handy when something goes wrong.',
           onTap: () {
             context.push('/diagnostics');
@@ -460,27 +542,31 @@ class _SettingsCard extends StatelessWidget {
   }
 }
 
-/// Card title row: tinted icon badge, title and a one-line explanation.
+/// Card title row: a tonal icon tile, the title and a one-line explanation.
 class _CardHeading extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
-  final Color color;
+
+  /// Draws the glyph in the accent (Ice) instead of the brand primary.
+  final bool accent;
 
   const _CardHeading({
     required this.icon,
     required this.title,
     required this.subtitle,
-    this.color = AppColors.primary,
+    this.accent = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.lg16),
       child: Row(
         children: [
-          _IconBadge(icon: icon, color: color),
+          _IconTile(icon: icon, color: accent ? palette.accent : palette.primary),
           const SizedBox(width: AppSpacing.md12),
           Expanded(
             child: Column(
@@ -489,10 +575,10 @@ class _CardHeading extends StatelessWidget {
               children: [
                 Semantics(
                   header: true,
-                  child: Text(title, style: AppTypography.sectionTitle),
+                  child: Text(title, style: type.sectionTitle),
                 ),
                 const SizedBox(height: 2),
-                Text(subtitle, style: AppTypography.metadata),
+                Text(subtitle, style: type.metadata),
               ],
             ),
           ),
@@ -502,11 +588,12 @@ class _CardHeading extends StatelessWidget {
   }
 }
 
-class _IconBadge extends StatelessWidget {
+/// 40 dp tonal tile ([AppPalette.primaryContainer]) holding a [color] glyph.
+class _IconTile extends StatelessWidget {
   final IconData icon;
   final Color color;
 
-  const _IconBadge({required this.icon, required this.color});
+  const _IconTile({required this.icon, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -514,15 +601,15 @@ class _IconBadge extends StatelessWidget {
       width: _leadingSlot,
       height: _leadingSlot,
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: _badgeRadius,
+        color: context.palette.primaryContainer,
+        borderRadius: _tileRadius,
       ),
       child: Icon(icon, size: 22, color: color),
     );
   }
 }
 
-/// Plain row icon centred in the same 40 dp slot as the heading badge.
+/// Plain row icon centred in the same 40 dp slot as the heading tile.
 class _RowIcon extends StatelessWidget {
   final IconData icon;
 
@@ -532,7 +619,7 @@ class _RowIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: _leadingSlot,
-      child: Center(child: Icon(icon, size: 22, color: AppColors.textSecondary)),
+      child: Center(child: Icon(icon, size: 22, color: context.palette.textSecondary)),
     );
   }
 }
@@ -558,15 +645,17 @@ class _CardDivider extends StatelessWidget {
   }
 }
 
-/// Toggle row. No leading icon (the card heading carries it), so the text gets
-/// the full card width on narrow phones.
+/// Toggle row with the same leading icon slot as the other rows, so every
+/// row in a card starts its text on one column.
 class _SwitchRow extends StatelessWidget {
+  final IconData icon;
   final String title;
   final String subtitle;
   final bool value;
   final ValueChanged<bool> onChanged;
 
   const _SwitchRow({
+    required this.icon,
     required this.title,
     required this.subtitle,
     required this.value,
@@ -575,13 +664,17 @@ class _SwitchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final type = context.typography;
     return SwitchListTile(
       contentPadding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.md12, 0),
       minVerticalPadding: AppSpacing.md12,
-      title: Text(title, style: _rowTitleStyle),
+      horizontalTitleGap: AppSpacing.md12,
+      secondary: _RowIcon(icon),
+      controlAffinity: ListTileControlAffinity.trailing,
+      title: Text(title, style: _rowTitleStyle(type)),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 2),
-        child: Text(subtitle, style: AppTypography.metadata),
+        child: Text(subtitle, style: type.metadata),
       ),
       value: value,
       onChanged: onChanged,
@@ -606,16 +699,18 @@ class _NavRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
     return ListTile(
       minVerticalPadding: AppSpacing.md12,
       horizontalTitleGap: AppSpacing.md12,
       leading: _RowIcon(icon),
-      title: Text(title, style: _rowTitleStyle),
+      title: Text(title, style: _rowTitleStyle(type)),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 2),
-        child: Text(subtitle, style: AppTypography.metadata),
+        child: Text(subtitle, style: type.metadata),
       ),
-      trailing: Icon(trailingIcon, color: AppColors.textMuted),
+      trailing: Icon(trailingIcon, color: palette.textMuted),
       onTap: onTap,
     );
   }
@@ -631,17 +726,18 @@ class _InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final type = context.typography;
     return ListTile(
       minVerticalPadding: AppSpacing.sm8,
       horizontalTitleGap: AppSpacing.md12,
       leading: _RowIcon(icon),
-      title: Text(title, style: _rowTitleStyle),
-      subtitle: Text(body, style: AppTypography.metadata),
+      title: Text(title, style: _rowTitleStyle(type)),
+      subtitle: Text(body, style: type.metadata),
     );
   }
 }
 
-/// Teal call-out: the things MediaHub never does. The wording is chosen per
+/// Tonal call-out: the things MediaHub never does. The wording is chosen per
 /// platform by the caller so it only promises what that platform delivers.
 class _PromiseNote extends StatelessWidget {
   final String title;
@@ -651,6 +747,8 @@ class _PromiseNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg16,
@@ -662,25 +760,24 @@ class _PromiseNote extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(AppSpacing.md12),
           decoration: BoxDecoration(
-            color: AppColors.accent.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-            border: Border.all(color: AppColors.accent.withValues(alpha: 0.28)),
+            color: palette.primaryContainer,
+            borderRadius: BorderRadius.circular(AppSpacing.radiusThumb),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 1),
-                child: Icon(Icons.verified_user_outlined, size: 22, color: AppColors.accent),
+              Padding(
+                padding: const EdgeInsets.only(top: 1),
+                child: Icon(Icons.verified_user_outlined, size: 22, color: palette.primary),
               ),
               const SizedBox(width: AppSpacing.md12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: AppTypography.bodyStrong),
+                    Text(title, style: type.bodyStrong),
                     const SizedBox(height: 2),
-                    Text(body, style: AppTypography.metadata),
+                    Text(body, style: type.metadata),
                   ],
                 ),
               ),
@@ -696,8 +793,14 @@ class _PromiseNote extends StatelessWidget {
 class _AppIdentity extends StatelessWidget {
   const _AppIdentity();
 
+  /// The app icon in miniature (DESIGN.md 7.16): the ultraviolet-to-ink
+  /// diagonal with the Volt play glyph, the same in both themes.
+  static const AppPalette _icon = AppPalette.dark;
+
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.lg16),
       child: MergeSemantics(
@@ -706,46 +809,39 @@ class _AppIdentity extends StatelessWidget {
             Container(
               width: _leadingSlot,
               height: _leadingSlot,
-              decoration: const BoxDecoration(
-                gradient: AppColors.primaryGradient,
-                borderRadius: _badgeRadius,
+              decoration: BoxDecoration(
+                gradient: _icon.heroGradient,
+                borderRadius: _tileRadius,
               ),
-              child: const Icon(Icons.play_arrow_rounded, size: 26, color: AppColors.onPrimary),
+              child: Icon(Icons.play_arrow_rounded, size: 26, color: _icon.primary),
             ),
             const SizedBox(width: AppSpacing.md12),
-            // Name on the left, pill pinned right. Both are loose-flexible so at
-            // large text scales the name ellipsizes and the pill scales down
-            // instead of the row overflowing.
+            // The name gets the whole width; the version and the pill share
+            // the line under it and wrap at large text instead of squeezing
+            // the name.
             Expanded(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Flexible(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Semantics(
-                          header: true,
-                          child: Text(
-                            AppConfig.appName,
-                            style: AppTypography.sectionTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text('Version $_appVersion', style: AppTypography.tabularFigures),
-                      ],
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      AppConfig.appName,
+                      style: type.sectionTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const SizedBox(width: AppSpacing.sm8),
-                  const Flexible(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: PillTag(text: 'Family use', icon: Icons.people_outline_rounded),
-                    ),
+                  const SizedBox(height: 2),
+                  Wrap(
+                    spacing: AppSpacing.sm8,
+                    runSpacing: AppSpacing.xs4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text('Version $_appVersion', style: type.tabularFigures),
+                      const PillTag(text: 'Family use', icon: Icons.people_outline_rounded),
+                    ],
                   ),
                 ],
               ),
@@ -767,12 +863,14 @@ class _UpdateStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
     final failed = text.startsWith('Update failed') || text.startsWith('Reset failed');
     final color = failed
-        ? AppColors.error
+        ? palette.error
         : updating
-            ? AppColors.textSecondary
-            : AppColors.success;
+            ? palette.textSecondary
+            : palette.success;
     final icon = failed
         ? Icons.error_outline_rounded
         : updating
@@ -787,7 +885,7 @@ class _UpdateStatus extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.only(top: 1),
+              padding: const EdgeInsets.only(top: 2),
               child: Icon(icon, size: 16, color: color),
             ),
             const SizedBox(width: AppSpacing.sm8),
@@ -795,7 +893,7 @@ class _UpdateStatus extends StatelessWidget {
               child: SelectionArea(
                 child: Text(
                   text,
-                  style: AppTypography.metadata.copyWith(color: color),
+                  style: type.metadata.copyWith(color: color),
                 ),
               ),
             ),

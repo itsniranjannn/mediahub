@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_config.dart';
+import '../features/settings/theme_mode_setting.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 import 'theme/font_licenses.dart';
@@ -49,11 +50,10 @@ class _MediaHubAppState extends ConsumerState<MediaHubApp> {
       title: AppConfig.appName,
       debugShowCheckedModeBanner: false,
       // Follows the phone, paper by day and ink at night (docs/DESIGN.md
-      // 8.2), once every screen reads the palette; ink until then
-      // (AppTheme.lightThemeReady).
+      // 8.2), unless Settings → Appearance pins dark or light.
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: AppTheme.themeMode,
+      themeMode: ref.watch(themeModeSettingProvider),
       routerConfig: router,
     );
   }

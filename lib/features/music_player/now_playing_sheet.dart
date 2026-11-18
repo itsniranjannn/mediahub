@@ -5,8 +5,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
+import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/services/artwork_presence.dart';
@@ -17,18 +18,23 @@ import '../../domain/models/media_item.dart';
 import '../../domain/models/playback_state.dart' as domain;
 import '../../shared/widgets/artwork_placeholder.dart';
 import '../../shared/widgets/favorite_feedback_button.dart';
+import '../../shared/widgets/ui_kit.dart';
 import '../library/media_context_menu.dart';
 import 'playback_notifier.dart';
 import 'queue_sheet.dart';
 
-/// Largest edge of the cover art on Now Playing. Phones are narrower than
-/// this, so the cover takes the full content width and lines up with the
-/// 16 dp edges of the title and seek bar (328 dp on a 360 dp screen).
-const double _kArtworkMaxSize = 400;
-const double _kArtworkRadius = 24;
+/// Largest edge of the cover art on Now Playing (docs/DESIGN.md 7.8: screen
+/// width - 32, at most 360). Phones are narrower than this, so the cover
+/// takes the full content width and lines up with the 16 dp edges of the
+/// title and seek bar (328 dp on a 360 dp screen).
+const double _kArtworkMaxSize = 360;
+const double _kArtworkRadius = AppSpacing.radiusCover;
+
+/// The hard "print offset" under the cover: 6x6 dp, no blur.
+const Offset _kPrintOffset = Offset(6, 6);
 
 /// Top corners of the sheet (matches the global bottom sheet shape).
-const double _kSheetRadius = 28;
+const double _kSheetRadius = AppSpacing.radiusSheet;
 
 /// Strip above the app bar that holds the grabber pill, so the pill never
 /// shares space with the title at any text size.
@@ -36,18 +42,22 @@ const double _kGrabberStripHeight = AppSpacing.lg16;
 
 /// Below this body height (at 1x text) the content scrolls instead of the
 /// artwork shrinking any further (landscape phones, split screen).
-const double _kCompactBodyHeight = 440;
+const double _kCompactBodyHeight = 480;
 
 /// Vertical rhythm of the player body. The favourite snackbar is placed from
 /// the same numbers, so keep them here.
 const double _kBodyTopPadding = AppSpacing.sm8;
-const double _kBodyBottomPadding = AppSpacing.xxl24;
-const double _kArtworkGap = AppSpacing.xxl24;
+const double _kBodyBottomPadding = AppSpacing.sm8;
+const double _kArtworkGap = AppSpacing.xl20;
 const double _kSectionGap = AppSpacing.md12;
-const double _kPlayButtonSize = 72;
+const double _kPlayButtonSize = VoltDisc.large;
 
-/// How far the elapsed / total labels are drawn above their layout slot, so
-/// they sit about 14 dp under the seek track and 24 dp above the controls.
+/// The footer (speed, Up next) under the transport.
+const double _kFooterGap = AppSpacing.xs4;
+const double _kFooterHeight = AppSpacing.minTouchTarget;
+
+/// How far the elapsed / remaining labels are drawn above their layout slot,
+/// so they sit about 14 dp under the seek track and 24 dp above the controls.
 const double _kSeekLabelLift = AppSpacing.md12;
 
 /// Snackbar distance from the bottom while the body scrolls (the default of
@@ -71,37 +81,39 @@ const double _kBackdropMaxLuma = 0.40;
 
 const List<double> _kSpeeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
+/// Opacity of a transport control with nowhere to go.
+const double _kDisabledAlpha = 0.38;
+
 /// Dark veil over the blurred cover and the glow. The header band stays dark
-/// (82 %) so the title and queue position read over any cover, even a white
-/// one; it opens up (60 %) only in the band around the artwork, where the
-/// colour of the song shows, and closes again towards the title and the
-/// controls. Contrast where the text sits is checked in
-/// test/widget/now_playing_backdrop_test.dart.
-final LinearGradient _kBackdropScrim = LinearGradient(
-  begin: Alignment.topCenter,
-  end: Alignment.bottomCenter,
-  colors: [
-    AppColors.background.withValues(alpha: 0.82),
-    AppColors.background.withValues(alpha: 0.82),
-    AppColors.background.withValues(alpha: 0.6),
-    AppColors.background.withValues(alpha: 0.9),
-    AppColors.background,
-  ],
-  stops: const [0.0, 0.16, 0.26, 0.72, 1.0],
-);
+/// (82 %) so the kicker reads over any cover, even a white one; it opens up
+/// (60 %) only in the band around the artwork, where the colour of the song
+/// shows, and closes again towards the title and the controls. Contrast
+/// where the text sits is checked in test/widget/now_playing_backdrop_test.dart.
+LinearGradient _backdropScrim(AppPalette p) => LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        p.background.withValues(alpha: 0.82),
+        p.background.withValues(alpha: 0.82),
+        p.background.withValues(alpha: 0.6),
+        p.background.withValues(alpha: 0.9),
+        p.background,
+      ],
+      stops: const [0.0, 0.16, 0.26, 0.72, 1.0],
+    );
 
 /// The veil while the body scrolls (landscape, split screen): text can then
 /// pass over every band, so it never opens up below the header's 82 %.
-final LinearGradient _kScrollingBackdropScrim = LinearGradient(
-  begin: Alignment.topCenter,
-  end: Alignment.bottomCenter,
-  colors: [
-    AppColors.background.withValues(alpha: 0.82),
-    AppColors.background.withValues(alpha: 0.9),
-    AppColors.background,
-  ],
-  stops: const [0.0, 0.72, 1.0],
-);
+LinearGradient _scrollingBackdropScrim(AppPalette p) => LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        p.background.withValues(alpha: 0.82),
+        p.background.withValues(alpha: 0.9),
+        p.background,
+      ],
+      stops: const [0.0, 0.72, 1.0],
+    );
 
 /// Whether the player body scrolls instead of shrinking the artwork any
 /// further. [bodyHeight] is the height inside the safe area.
@@ -111,6 +123,18 @@ bool _bodyScrolls(BuildContext context, double bodyHeight) {
   return bodyHeight < compactBelow;
 }
 
+/// "NOW PLAYING · 3 / 24" (docs/DESIGN.md 7.8), or just "NOW PLAYING" for a
+/// queue of one.
+@visibleForTesting
+String nowPlayingKicker(domain.PlaybackState s) {
+  final length = s.queue.length;
+  if (s.currentItem == null || length <= 1) return 'NOW PLAYING';
+  return 'NOW PLAYING · ${s.queueIndex + 1} / $length';
+}
+
+/// The stage (docs/DESIGN.md 7.8): always ink, in both themes, with light
+/// status bar icons. The queue and media sheets it opens follow the app
+/// theme.
 class NowPlayingSheet extends ConsumerWidget {
   const NowPlayingSheet({super.key});
 
@@ -125,113 +149,143 @@ class NowPlayingSheet extends ConsumerWidget {
         : Duration(milliseconds: currentItem?.durationMs ?? 0);
 
     final queueLength = playbackState.queue.length;
-    final queuePosition = currentItem != null && queueLength > 1
-        ? '${playbackState.queueIndex + 1} of $queueLength'
-        : null;
+    // Read as before the kicker: "Now Playing", then "3 of 24".
+    final headerLabel = currentItem != null && queueLength > 1
+        ? 'Now Playing\n${playbackState.queueIndex + 1} of $queueLength'
+        : 'Now Playing';
 
+    // Sheets opened from the stage come from this context, outside the
+    // stage's dark theme below, so they use the app's theme.
+    final sheetContext = context;
     void close() => Navigator.of(context).pop();
 
-    return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(_kSheetRadius)),
-      child: Scaffold(
-        backgroundColor: AppColors.background,
-        extendBodyBehindAppBar: true,
-        appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(kToolbarHeight + _kGrabberStripHeight),
-          child: SafeArea(
-            bottom: false,
-            child: Column(
-              children: [
-                const _Grabber(),
-                Expanded(
-                  child: AppBar(
-                    // the SafeArea above already handles the top inset
-                    primary: false,
-                    backgroundColor: Colors.transparent,
-                    surfaceTintColor: Colors.transparent,
-                    elevation: 0,
-                    scrolledUnderElevation: 0,
-                    automaticallyImplyLeading: false,
-                    leading: IconButton(
-                      tooltip: 'Collapse Now Playing',
-                      icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 30),
-                      onPressed: close,
+    return Theme(
+      data: AppTheme.darkTheme,
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: AppTheme.barsOnInk,
+        child: Builder(
+          builder: (context) {
+            final palette = context.palette;
+            return ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(_kSheetRadius)),
+              child: Scaffold(
+                backgroundColor: palette.background,
+                extendBodyBehindAppBar: true,
+                appBar: PreferredSize(
+                  preferredSize: const Size.fromHeight(kToolbarHeight + _kGrabberStripHeight),
+                  child: SafeArea(
+                    bottom: false,
+                    child: Column(
+                      children: [
+                        const _Grabber(),
+                        Expanded(
+                          child: AppBar(
+                            // the SafeArea above already handles the top inset
+                            primary: false,
+                            backgroundColor: Colors.transparent,
+                            surfaceTintColor: Colors.transparent,
+                            elevation: 0,
+                            scrolledUnderElevation: 0,
+                            automaticallyImplyLeading: false,
+                            systemOverlayStyle: AppTheme.barsOnInk,
+                            leading: IconButton(
+                              tooltip: 'Collapse Now Playing',
+                              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 30),
+                              onPressed: close,
+                            ),
+                            centerTitle: true,
+                            title: _StageKicker(
+                              text: nowPlayingKicker(playbackState),
+                              semanticsLabel: headerLabel,
+                            ),
+                            actions: [
+                              // On a wide screen the menu hangs from this
+                              // button (its own context is the anchor).
+                              Builder(
+                                builder: (buttonContext) => IconButton(
+                                  tooltip: 'More options',
+                                  icon: const Icon(Icons.more_vert_rounded),
+                                  color: palette.textSecondary,
+                                  onPressed: currentItem != null
+                                      ? () => MediaContextMenu.show(
+                                            sheetContext,
+                                            ref,
+                                            currentItem,
+                                            anchorContext: buttonContext,
+                                          )
+                                      : null,
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.xs4),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    centerTitle: true,
-                    title: _SheetTitle(subtitle: queuePosition),
-                    actions: [
-                      _SpeedMenu(
-                        speed: playbackState.speed,
-                        onSelected: (speed) => notifier.setSpeed(speed),
-                      ),
-                      IconButton(
-                        tooltip: 'View Queue',
-                        icon: const Icon(Icons.queue_music_rounded),
-                        color: AppColors.textSecondary,
-                        onPressed: () => _openQueue(context),
-                      ),
-                      const SizedBox(width: AppSpacing.xs4),
-                    ],
                   ),
                 ),
-              ],
-            ),
-          ),
-        ),
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            _ArtworkBackdrop(item: currentItem),
-            GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              // A shortcut: screen readers close with "Collapse Now Playing".
-              // In the tree, the detector made one sheet-sized node that
-              // merged the title, artist, heart and times into one label.
-              excludeFromSemantics: true,
-              onVerticalDragEnd: (details) {
-                if (details.primaryVelocity != null &&
-                    details.primaryVelocity! > _kCloseFlingVelocity) {
-                  close();
-                }
-              },
-              child: SafeArea(
-                child: _NowPlayingBody(
-                  item: currentItem,
-                  onMore: currentItem != null
-                      ? () => MediaContextMenu.show(context, ref, currentItem)
-                      : null,
-                  onClose: close,
-                  seekBar: _SeekBar(
-                    fallbackPosition: playbackState.position,
-                    duration: duration,
-                  ),
-                  controls: _TransportControls(
-                    isPlaying: playbackState.isPlaying,
-                    shuffle: playbackState.shuffle,
-                    repeatMode: playbackState.repeatMode,
-                    onShuffle: () => notifier.toggleShuffle(),
-                    onPrevious: () => notifier.skipToPrevious(),
-                    onPlayPause: () {
-                      if (playbackState.isPlaying) {
-                        notifier.pause();
-                      } else {
-                        notifier.play();
-                      }
-                    },
-                    onNext: () => notifier.skipToNext(),
-                    onRepeat: () => notifier.cycleRepeatMode(),
-                  ),
+                body: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _ArtworkBackdrop(item: currentItem),
+                    GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      // A shortcut: screen readers close with "Collapse Now
+                      // Playing". In the tree, the detector made one
+                      // sheet-sized node that merged the title, artist,
+                      // heart and times into one label.
+                      excludeFromSemantics: true,
+                      onVerticalDragEnd: (details) {
+                        if (details.primaryVelocity != null && details.primaryVelocity! > _kCloseFlingVelocity) {
+                          close();
+                        }
+                      },
+                      child: SafeArea(
+                        child: _NowPlayingBody(
+                          item: currentItem,
+                          onClose: close,
+                          seekBar: _SeekBar(
+                            fallbackPosition: playbackState.position,
+                            duration: duration,
+                          ),
+                          controls: _TransportControls(
+                            isPlaying: playbackState.isPlaying,
+                            shuffle: playbackState.shuffle,
+                            repeatMode: playbackState.repeatMode,
+                            canSkipNext: canSkipNextIn(playbackState),
+                            onShuffle: () => notifier.toggleShuffle(),
+                            onPrevious: () => notifier.skipToPrevious(),
+                            onPlayPause: () {
+                              if (playbackState.isPlaying) {
+                                notifier.pause();
+                              } else {
+                                notifier.play();
+                              }
+                            },
+                            onNext: () => notifier.skipToNext(),
+                            onRepeat: () => notifier.cycleRepeatMode(),
+                          ),
+                          footer: _StageFooter(
+                            speed: playbackState.speed,
+                            onSpeed: (speed) => notifier.setSpeed(speed),
+                            onQueue: () => _openQueue(sheetContext),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
   }
 
   void _openQueue(BuildContext context) {
-    // Uses the global sheet style (surface, 28 dp corners, drag handle).
+    // Uses the global sheet style (surface, 28 dp corners, drag handle) of
+    // the app theme: [context] is outside the stage's dark theme.
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -245,35 +299,28 @@ class NowPlayingSheet extends ConsumerWidget {
   }
 }
 
-/// "Now Playing" with the queue position underneath.
-class _SheetTitle extends StatelessWidget {
-  final String? subtitle;
+/// The overline kicker in the top bar, in textSecondary (never textMuted on
+/// the stage). A screen reader hears "Now Playing, 3 of 24" rather than the
+/// dot and slash. Where it does not fit (a small phone at large text) it
+/// shrinks as a whole, so the queue position is never the part cut off.
+class _StageKicker extends StatelessWidget {
+  final String text;
+  final String semanticsLabel;
 
-  const _SheetTitle({this.subtitle});
+  const _StageKicker({required this.text, required this.semanticsLabel});
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = this.subtitle;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'Now Playing',
-          style: AppTypography.bodyStrong,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        if (subtitle != null)
-          Text(
-            subtitle,
-            style: AppTypography.caption.copyWith(
-              color: AppColors.textSecondary,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-      ],
+    final palette = context.palette;
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Text(
+        text,
+        semanticsLabel: semanticsLabel,
+        style: context.typography.overline.copyWith(color: palette.textSecondary),
+        maxLines: 1,
+        softWrap: false,
+      ),
     );
   }
 }
@@ -296,7 +343,7 @@ class _Grabber extends StatelessWidget {
               width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: AppColors.textPrimary.withValues(alpha: 0.28),
+                color: context.palette.dragHandle,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -404,6 +451,7 @@ class _ArtworkBackdropState extends State<_ArtworkBackdrop> {
   @override
   Widget build(BuildContext context) {
     final image = _image;
+    final palette = context.palette;
     return RepaintBoundary(
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -431,7 +479,7 @@ class _ArtworkBackdropState extends State<_ArtworkBackdrop> {
               ),
               DecoratedBox(
                 decoration: BoxDecoration(
-                  gradient: scrolls ? _kScrollingBackdropScrim : _kBackdropScrim,
+                  gradient: scrolls ? _scrollingBackdropScrim(palette) : _backdropScrim(palette),
                 ),
               ),
             ],
@@ -445,7 +493,8 @@ class _ArtworkBackdropState extends State<_ArtworkBackdrop> {
 /// Two soft radial glows on the canvas: the light stop of a cover palette
 /// around the artwork and its deep stop to the right. [seed] is the song's
 /// uri, the same one its placeholder cover uses; null gives the neutral
-/// violet. The colours drift on a change (instantly with reduced motion).
+/// violet. The colours drift over 600 ms on a change (instantly with reduced
+/// motion).
 class _PaletteGlow extends StatelessWidget {
   final String? seed;
 
@@ -459,10 +508,12 @@ class _PaletteGlow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The stage is always ink: the dark palette's glows, in both themes.
+    final palette = context.palette;
     final seed = this.seed;
-    final fallback = AppColors.artworkGradients.first.colors;
-    final light = seed == null ? fallback.first : ArtworkTint.light(seed);
-    final deep = seed == null ? fallback.last : ArtworkTint.deep(seed);
+    final fallback = palette.artworkGradients.first.colors;
+    final light = seed == null ? fallback.first : ArtworkTint.light(seed, palette);
+    final deep = seed == null ? fallback.last : ArtworkTint.deep(seed, palette);
     final duration = MotionTokens.duration(context, MotionTokens.ambient);
 
     Widget glow(Alignment center, double radius, Color color, double alpha) {
@@ -480,7 +531,7 @@ class _PaletteGlow extends StatelessWidget {
     }
 
     return ColoredBox(
-      color: AppColors.background,
+      color: palette.background,
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -616,35 +667,38 @@ Future<Uint8List?> _coverBytes(String uri, String? artworkPath) async {
   return ArtworkService.instance.getArtwork(uri, size: 512);
 }
 
-/// Lays out artwork, track info, seek bar and controls. On tall screens the
-/// artwork takes whatever height is left (up to [_kArtworkMaxSize]); on short
-/// ones the content scrolls so nothing overflows.
+/// Lays out artwork, track info, seek bar, controls and the footer. On tall
+/// screens the artwork takes whatever height is left (up to
+/// [_kArtworkMaxSize]); on short ones the content scrolls so nothing
+/// overflows.
 class _NowPlayingBody extends StatelessWidget {
   final MediaItem? item;
-  final VoidCallback? onMore;
   final VoidCallback onClose;
   final Widget seekBar;
   final Widget controls;
+  final Widget footer;
 
   const _NowPlayingBody({
     required this.item,
-    required this.onMore,
     required this.onClose,
     required this.seekBar,
     required this.controls,
+    required this.footer,
   });
 
   /// Distance from the bottom of the body to just above the title row in the
   /// regular layout, so the favourite confirmation never covers the heart.
   /// Sized for the tallest row: a two-line title over the artist.
-  static double _snackMarginAboveInfo(TextScaler scaler) {
+  static double _snackMarginAboveInfo(TextScaler scaler, AppTextStyles type) {
     double line(TextStyle style) => scaler.scale(style.fontSize!) * (style.height ?? 1);
     final infoHeight = math.max(
       AppSpacing.minTouchTarget,
-      2 * line(AppTypography.playerTitle) + AppSpacing.xs4 + line(AppTypography.body),
+      2 * line(type.playerTitle) + AppSpacing.xs4 + line(type.body),
     );
-    final seekBarHeight = AppSpacing.minTouchTarget + line(AppTypography.tabularFigures);
+    final seekBarHeight = AppSpacing.minTouchTarget + line(type.tabularFigures);
     return _kBodyBottomPadding +
+        _kFooterHeight +
+        _kFooterGap +
         _kPlayButtonSize +
         _kSectionGap +
         seekBarHeight +
@@ -659,13 +713,12 @@ class _NowPlayingBody extends StatelessWidget {
     // Never higher than half the screen: the root messenger also lays the
     // snackbar out in the app shell behind this sheet.
     final snackMargin = math.min(
-      _snackMarginAboveInfo(textScaler),
+      _snackMarginAboveInfo(textScaler, context.typography),
       MediaQuery.sizeOf(context).height / 2,
     );
 
     Widget info(double snackBottomMargin) => _TrackInfo(
           item: item,
-          onMore: onMore,
           snackBottomMargin: snackBottomMargin,
         );
 
@@ -698,6 +751,8 @@ class _NowPlayingBody extends StatelessWidget {
                     seekBar,
                     const SizedBox(height: _kSectionGap),
                     controls,
+                    const SizedBox(height: _kFooterGap),
+                    footer,
                   ],
                 ),
               ),
@@ -732,6 +787,8 @@ class _NowPlayingBody extends StatelessWidget {
                 seekBar,
                 const SizedBox(height: _kSectionGap),
                 controls,
+                const SizedBox(height: _kFooterGap),
+                footer,
               ],
             ),
           ),
@@ -797,7 +854,8 @@ class _WidthLimit extends StatelessWidget {
   }
 }
 
-/// The big cover: 24 dp corners, a soft shadow, and the shared Hero tag.
+/// The big cover: 24 dp corners on the hard 6x6 dp Volt print offset (no
+/// soft shadow), and the shared Hero tag.
 class _NowPlayingArtwork extends StatelessWidget {
   final MediaItem? item;
   final double size;
@@ -807,6 +865,7 @@ class _NowPlayingArtwork extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final item = this.item;
+    final palette = context.palette;
     // too small to be worth drawing (very short windows)
     if (size < AppSpacing.huge48) return SizedBox.square(dimension: size);
 
@@ -814,14 +873,10 @@ class _NowPlayingArtwork extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: AppColors.surfaceElevated,
+        color: palette.surfaceElevated,
         borderRadius: BorderRadius.circular(_kArtworkRadius),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.45),
-            blurRadius: 40,
-            offset: const Offset(0, 18),
-          ),
+          BoxShadow(color: palette.printShadow, offset: _kPrintOffset, blurRadius: 0),
         ],
       ),
       child: ClipRRect(
@@ -836,12 +891,12 @@ class _NowPlayingArtwork extends StatelessWidget {
                   borderRadius: _kArtworkRadius,
                 )
               : DecoratedBox(
-                  decoration: const BoxDecoration(gradient: AppColors.heroGradient),
+                  decoration: BoxDecoration(gradient: palette.heroGradient),
                   child: Center(
                     child: Icon(
                       Icons.music_note_rounded,
                       size: size * 0.32,
-                      color: AppColors.primary,
+                      color: palette.primary,
                     ),
                   ),
                 ),
@@ -851,23 +906,23 @@ class _NowPlayingArtwork extends StatelessWidget {
   }
 }
 
-/// Title and artist on the left, favourite and "more" on the right.
+/// Title and artist on the left, the favourite heart on the right.
 class _TrackInfo extends StatelessWidget {
   final MediaItem? item;
-  final VoidCallback? onMore;
 
   /// Where the favourite confirmation sits, measured from the bottom.
   final double snackBottomMargin;
 
   const _TrackInfo({
     required this.item,
-    required this.onMore,
     required this.snackBottomMargin,
   });
 
   @override
   Widget build(BuildContext context) {
     final item = this.item;
+    final palette = context.palette;
+    final type = context.typography;
     final title = item?.title ?? 'No track playing';
     final shownTitle = breakableTitle(title);
     return Row(
@@ -884,14 +939,14 @@ class _TrackInfo extends StatelessWidget {
                 Text(
                   shownTitle,
                   semanticsLabel: shownTitle == title ? null : title,
-                  style: AppTypography.playerTitle,
+                  style: type.playerTitle,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: AppSpacing.xs4),
                 Text(
                   item?.artist ?? 'Unknown Artist',
-                  style: AppTypography.body.copyWith(color: AppColors.textSecondary),
+                  style: type.body.copyWith(color: palette.textSecondary),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -916,12 +971,6 @@ class _TrackInfo extends StatelessWidget {
           )
         else
           const SizedBox(width: AppSpacing.minTouchTarget, height: AppSpacing.minTouchTarget),
-        IconButton(
-          tooltip: 'More options',
-          icon: const Icon(Icons.more_vert_rounded),
-          color: AppColors.textSecondary,
-          onPressed: onMore,
-        ),
       ],
     );
   }
@@ -949,8 +998,12 @@ class _SingleNodeHeart extends StatelessWidget {
   }
 }
 
-/// Seek bar with elapsed / total time. Only this part listens to the position
-/// stream, so the cover and the backdrop are not rebuilt four times a second.
+/// Seek bar (docs/DESIGN.md 7.8 / 7.12) with the elapsed time at the left and
+/// the remaining time ("-2:41") at the right. The track, thumb and overlay
+/// come from the dark theme's slider: 4 dp (the played part 6), Volt on
+/// #382664, a 14 dp thumb growing to 20 while dragged. Only this part listens
+/// to the position stream, so the cover and the backdrop are not rebuilt
+/// four times a second.
 class _SeekBar extends ConsumerStatefulWidget {
   final Duration fallbackPosition;
   final Duration duration;
@@ -966,6 +1019,8 @@ class _SeekBarState extends ConsumerState<_SeekBar> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final figures = context.typography.tabularFigures;
     final positionAsync = ref.watch(throttledPositionStreamProvider);
     final position = positionAsync.value ?? widget.fallbackPosition;
     final duration = widget.duration;
@@ -976,51 +1031,42 @@ class _SeekBarState extends ConsumerState<_SeekBar> {
         : 1.0;
     final sliderValue = currentPositionMs.clamp(0.0, maxDurationMs);
     final isDragging = _dragValue != null;
+    final elapsed = Duration(milliseconds: sliderValue.toInt());
+    final remaining = duration.inMilliseconds > 0 ? '-${formatClock(duration - elapsed)}' : formatClock(Duration.zero);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            trackHeight: 4,
-            activeTrackColor: AppColors.primary,
-            inactiveTrackColor: AppColors.textPrimary.withValues(alpha: 0.16),
-            thumbColor: AppColors.textPrimary,
-            overlayColor: AppColors.primary.withValues(alpha: 0.2),
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: AppSpacing.lg16),
-          ),
-          child: SizedBox(
-            height: AppSpacing.minTouchTarget,
-            // One node: "Playback position, 1:46 of 5:00, slider". Without
-            // the name a screen reader read only the value.
-            child: MergeSemantics(
-              child: Semantics(
-                label: 'Playback position',
-                child: Slider(
-                  // track spans the full content width, aligned with the title
-                  padding: EdgeInsets.zero,
-                  min: 0.0,
-                  max: maxDurationMs,
-                  value: sliderValue,
-                  // "1:46 of 5:00": the slider says both times, so the labels
-                  // under it are left out and the position is read once.
-                  semanticFormatterCallback: (value) {
-                    final at = formatClock(Duration(milliseconds: value.toInt()));
-                    return duration.inMilliseconds > 0 ? '$at of ${formatClock(duration)}' : at;
-                  },
-                  onChanged: (val) {
-                    setState(() {
-                      _dragValue = val;
-                    });
-                  },
-                  onChangeEnd: (val) {
-                    ref.read(playbackNotifierProvider.notifier).seek(Duration(milliseconds: val.toInt()));
-                    setState(() {
-                      _dragValue = null;
-                    });
-                  },
-                ),
+        SizedBox(
+          height: AppSpacing.minTouchTarget,
+          // One node: "Playback position, 1:46 of 5:00, slider". Without
+          // the name a screen reader read only the value.
+          child: MergeSemantics(
+            child: Semantics(
+              label: 'Playback position',
+              child: Slider(
+                // track spans the full content width, aligned with the title
+                padding: EdgeInsets.zero,
+                min: 0.0,
+                max: maxDurationMs,
+                value: sliderValue,
+                // "1:46 of 5:00": the slider says both times, so the labels
+                // under it are left out and the position is read once.
+                semanticFormatterCallback: (value) {
+                  final at = formatClock(Duration(milliseconds: value.toInt()));
+                  return duration.inMilliseconds > 0 ? '$at of ${formatClock(duration)}' : at;
+                },
+                onChanged: (val) {
+                  setState(() {
+                    _dragValue = val;
+                  });
+                },
+                onChangeEnd: (val) {
+                  ref.read(playbackNotifierProvider.notifier).seek(Duration(milliseconds: val.toInt()));
+                  setState(() {
+                    _dragValue = null;
+                  });
+                },
               ),
             ),
           ),
@@ -1038,15 +1084,13 @@ class _SeekBarState extends ConsumerState<_SeekBar> {
               child: Row(
                 children: [
                   Text(
-                    formatClock(Duration(milliseconds: sliderValue.toInt())),
-                    style: AppTypography.tabularFigures.copyWith(
-                      color: isDragging ? AppColors.textPrimary : AppColors.textSecondary,
-                    ),
+                    formatClock(elapsed),
+                    style: figures.copyWith(color: isDragging ? palette.textPrimary : palette.textSecondary),
                   ),
                   const Spacer(),
                   Text(
-                    formatClock(duration),
-                    style: AppTypography.tabularFigures,
+                    remaining,
+                    style: figures.copyWith(color: palette.textSecondary),
                   ),
                 ],
               ),
@@ -1058,11 +1102,15 @@ class _SeekBarState extends ConsumerState<_SeekBar> {
   }
 }
 
-/// Shuffle, previous, play / pause, next, repeat.
+/// Shuffle 48, previous 56, the 72 dp Volt disc, next 56, repeat 48.
 class _TransportControls extends StatelessWidget {
   final bool isPlaying;
   final bool shuffle;
   final domain.PlaybackRepeatMode repeatMode;
+
+  /// False on the last track with repeat off: Next is shown at 38 % and
+  /// disabled, as in the mini player and the notification.
+  final bool canSkipNext;
   final VoidCallback onShuffle;
   final VoidCallback onPrevious;
   final VoidCallback onPlayPause;
@@ -1073,6 +1121,7 @@ class _TransportControls extends StatelessWidget {
     required this.isPlaying,
     required this.shuffle,
     required this.repeatMode,
+    required this.canSkipNext,
     required this.onShuffle,
     required this.onPrevious,
     required this.onPlayPause,
@@ -1098,16 +1147,19 @@ class _TransportControls extends StatelessWidget {
             tooltip: 'Previous track',
             onPressed: onPrevious,
           ),
-          _PlayPauseButton(isPlaying: isPlaying, onPressed: onPlayPause),
+          VoltDisc(
+            size: _kPlayButtonSize,
+            icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            tooltip: isPlaying ? 'Pause' : 'Play',
+            onPressed: onPlayPause,
+          ),
           _SkipButton(
             icon: Icons.skip_next_rounded,
             tooltip: 'Next track',
-            onPressed: onNext,
+            onPressed: canSkipNext ? onNext : null,
           ),
           _ModeToggleButton(
-            icon: repeatMode == domain.PlaybackRepeatMode.one
-                ? Icons.repeat_one_rounded
-                : Icons.repeat_rounded,
+            icon: repeatMode == domain.PlaybackRepeatMode.one ? Icons.repeat_one_rounded : Icons.repeat_rounded,
             active: repeatMode != domain.PlaybackRepeatMode.off,
             tooltip: 'Repeat mode: ${repeatMode.name}',
             onPressed: onRepeat,
@@ -1118,7 +1170,8 @@ class _TransportControls extends StatelessWidget {
   }
 }
 
-/// Shuffle / repeat: violet with a dot underneath while on.
+/// Shuffle / repeat (docs/DESIGN.md 7.2): on is a primary glyph with a 4 dp
+/// primary dot 2 dp under it; off is a textPrimary glyph, no dot.
 class _ModeToggleButton extends StatelessWidget {
   final IconData icon;
   final bool active;
@@ -1132,8 +1185,14 @@ class _ModeToggleButton extends StatelessWidget {
     required this.onPressed,
   });
 
+  static const double _glyph = 24;
+  static const double _dot = 4;
+
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    // The glyph is centred in the 48 dp target; the dot starts 2 dp below it.
+    const dotBottom = (AppSpacing.minTouchTarget - _glyph) / 2 - 2 - _dot;
     return SizedBox.square(
       dimension: AppSpacing.minTouchTarget,
       child: Stack(
@@ -1142,22 +1201,22 @@ class _ModeToggleButton extends StatelessWidget {
         children: [
           IconButton(
             tooltip: tooltip,
-            iconSize: 24,
-            icon: Icon(icon, color: active ? AppColors.primary : AppColors.textSecondary),
+            iconSize: _glyph,
+            icon: Icon(icon, color: active ? palette.primary : palette.textPrimary),
             onPressed: onPressed,
           ),
           Positioned(
-            bottom: AppSpacing.xs4,
+            bottom: dotBottom,
             child: IgnorePointer(
               child: AnimatedOpacity(
                 opacity: active ? 1 : 0,
                 duration: MotionTokens.duration(context, MotionTokens.feedback),
                 curve: MotionTokens.easeOut,
                 child: Container(
-                  width: 4,
-                  height: 4,
-                  decoration: const BoxDecoration(
-                    color: AppColors.primary,
+                  width: _dot,
+                  height: _dot,
+                  decoration: BoxDecoration(
+                    color: palette.primary,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -1170,21 +1229,23 @@ class _ModeToggleButton extends StatelessWidget {
   }
 }
 
-/// Previous / next: 32 dp glyphs on a 56 dp target.
+/// Previous / next: 36 dp glyphs on a 56 dp target; 38 % while disabled.
 class _SkipButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const _SkipButton({required this.icon, required this.tooltip, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return IconButton(
       tooltip: tooltip,
-      iconSize: 32,
+      iconSize: 36,
       style: IconButton.styleFrom(
-        foregroundColor: AppColors.textPrimary,
+        foregroundColor: palette.textPrimary,
+        disabledForegroundColor: palette.textPrimary.withValues(alpha: _kDisabledAlpha),
         minimumSize: const Size.square(56),
       ),
       icon: Icon(icon),
@@ -1193,59 +1254,39 @@ class _SkipButton extends StatelessWidget {
   }
 }
 
-/// 72 dp violet disc with dark ink, glowing softly.
-class _PlayPauseButton extends StatelessWidget {
-  final bool isPlaying;
-  final VoidCallback onPressed;
+/// Under the transport: playback speed at the start, Up next (the queue) at
+/// the end.
+class _StageFooter extends StatelessWidget {
+  final double speed;
+  final ValueChanged<double> onSpeed;
+  final VoidCallback onQueue;
 
-  const _PlayPauseButton({required this.isPlaying, required this.onPressed});
+  const _StageFooter({required this.speed, required this.onSpeed, required this.onQueue});
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.32),
-            blurRadius: 28,
-            offset: const Offset(0, 10),
+    final palette = context.palette;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 420, minHeight: _kFooterHeight),
+      child: Row(
+        children: [
+          _SpeedMenu(speed: speed, onSelected: onSpeed),
+          const Spacer(),
+          IconButton(
+            tooltip: 'View Queue',
+            icon: const Icon(Icons.queue_music_rounded),
+            color: palette.textSecondary,
+            onPressed: onQueue,
           ),
         ],
-      ),
-      child: IconButton.filled(
-        tooltip: isPlaying ? 'Pause' : 'Play',
-        iconSize: 40,
-        style: IconButton.styleFrom(
-          backgroundColor: AppColors.primary,
-          foregroundColor: AppColors.onPrimary,
-          fixedSize: const Size.square(_kPlayButtonSize),
-          shape: const CircleBorder(),
-        ),
-        icon: AnimatedSwitcher(
-          duration: MotionTokens.duration(context, MotionTokens.feedback),
-          transitionBuilder: (child, animation) => FadeTransition(
-            opacity: animation,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.7, end: 1.0).animate(animation),
-              child: child,
-            ),
-          ),
-          child: Icon(
-            isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-            key: ValueKey<bool>(isPlaying),
-            color: AppColors.onPrimary,
-          ),
-        ),
-        onPressed: onPressed,
       ),
     );
   }
 }
 
 /// Speed picker. At 1x it is a plain speed icon; at any other speed the
-/// button shows the speed itself in a small violet chip, sized to stay inside
-/// its own touch target.
+/// button shows the speed itself in a small tinted chip, sized to stay
+/// inside its own touch target.
 class _SpeedMenu extends StatelessWidget {
   final double speed;
   final ValueChanged<double> onSelected;
@@ -1254,6 +1295,8 @@ class _SpeedMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
     final isNormal = speed == 1.0;
     return PopupMenuButton<double>(
       tooltip: 'Playback Speed',
@@ -1261,7 +1304,7 @@ class _SpeedMenu extends StatelessWidget {
       position: PopupMenuPosition.under,
       onSelected: onSelected,
       icon: isNormal
-          ? const Icon(Icons.speed_rounded, color: AppColors.textSecondary)
+          ? Icon(Icons.speed_rounded, color: palette.textSecondary)
           : _SpeedChip(label: '${speed}x'),
       itemBuilder: (context) => [
         for (final s in _kSpeeds)
@@ -1272,16 +1315,15 @@ class _SpeedMenu extends StatelessWidget {
               children: [
                 SizedBox(
                   width: AppSpacing.xxl24,
-                  child: s == speed
-                      ? const Icon(Icons.check_rounded, size: 18, color: AppColors.primary)
-                      : null,
+                  child: s == speed ? Icon(Icons.check_rounded, size: 18, color: palette.primary) : null,
                 ),
                 const SizedBox(width: AppSpacing.sm8),
                 Text(
                   '${s}x',
-                  style: AppTypography.body.copyWith(
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                    color: s == speed ? AppColors.primary : AppColors.textPrimary,
+                  style: type.tabularFigures.copyWith(
+                    fontSize: 16,
+                    height: 24 / 16,
+                    color: s == speed ? palette.primary : palette.textPrimary,
                   ),
                 ),
               ],
@@ -1300,9 +1342,10 @@ class _SpeedChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return DecoratedBox(
       decoration: ShapeDecoration(
-        color: AppColors.primary.withValues(alpha: 0.16),
+        color: palette.primary.withValues(alpha: 0.16),
         shape: const StadiumBorder(),
       ),
       child: Padding(
@@ -1314,13 +1357,9 @@ class _SpeedChip extends StatelessWidget {
           label,
           maxLines: 1,
           softWrap: false,
-          // the app bar has a fixed height; grow only a little with the text
+          // the footer has a fixed height; grow only a little with the text
           textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.2),
-          style: AppTypography.label.copyWith(
-            color: AppColors.primary,
-            fontWeight: FontWeight.w600,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
+          style: context.typography.tabularFigures.copyWith(color: palette.primary),
         ),
       ),
     );

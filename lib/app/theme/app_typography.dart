@@ -103,10 +103,8 @@ class AppTextStyles {
 /// The Bijuli type scale: five bundled families (pubspec.yaml) and the roles
 /// in [AppTextStyles].
 ///
-/// Use [of] with a palette (or `context.typography`) in new code. The static
-/// getters ([display], [body], [metadata] ...) are the same styles coloured
-/// for [AppPalette.dark]; they keep the existing call sites working until the
-/// screens move to the palette-aware styles.
+/// Get the roles with [of] and a palette, or `context.typography` (the
+/// surrounding theme's palette).
 abstract final class AppTypography {
   /// Families as registered in pubspec.yaml.
   static const String unbounded = 'Unbounded';
@@ -342,29 +340,6 @@ abstract final class AppTypography {
       ),
     );
   }
-
-  // Dark-palette styles under the names the screens already use.
-
-  static TextStyle get display => _dark.display;
-  static TextStyle get greeting => _dark.greeting;
-  static TextStyle get screenTitle => _dark.screenTitle;
-  static TextStyle get playerTitle => _dark.playerTitle;
-  static TextStyle get cardTitle => _dark.cardTitle;
-  static TextStyle get sectionTitle => _dark.sectionTitle;
-  static TextStyle get body => _dark.body;
-  static TextStyle get bodyStrong => _dark.bodyStrong;
-  static TextStyle get metadata => _dark.metadata;
-  static TextStyle get label => _dark.label;
-  static TextStyle get chipLabel => _dark.chipLabel;
-  static TextStyle get button => _dark.button;
-  static TextStyle get caption => _dark.caption;
-
-  /// Tabular figures for time and progress text.
-  static TextStyle get tabularFigures => _dark.tabularFigures;
-  static TextStyle get index => _dark.index;
-  static TextStyle get overline => _dark.overline;
-  static TextStyle get badge => _dark.badge;
-  static TextStyle get figureLarge => _dark.figureLarge;
 }
 
 /// `context.typography`: [AppTypography.of] the surrounding theme's palette.

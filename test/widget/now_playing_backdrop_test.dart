@@ -8,7 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mediahub/app/theme/app_colors.dart';
+import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/services/artwork_service.dart';
 import 'package:mediahub/domain/models/media_item.dart';
@@ -70,7 +70,10 @@ double _contrast(Color a, Color b) {
 
 Color _over(Color fg, double alpha, Color bg) => Color.alphaBlend(fg.withValues(alpha: alpha), bg);
 
-bool _isCanvas(Color c) => (c.toARGB32() & 0xFFFFFF) == (AppColors.background.toARGB32() & 0xFFFFFF);
+/// The stage is ink in both themes: every colour below is the dark palette's.
+const _stage = AppPalette.dark;
+
+bool _isCanvas(Color c) => (c.toARGB32() & 0xFFFFFF) == (_stage.background.toARGB32() & 0xFFFFFF);
 
 final _scrimFinder = find.byWidgetPredicate((widget) {
   if (widget is! DecoratedBox) return false;
@@ -110,11 +113,11 @@ double _minAlpha(LinearGradient g, double t0, double t1) {
 /// the strongest point of any palette glow.
 List<(String, Color)> _backdrops() => [
       ('white cover', Colors.white),
-      for (final g in AppColors.artworkGradients)
+      for (final g in _stage.artworkGradients)
         (
           'glow ${g.colors.first}',
           _over(g.colors.first, ArtworkTint.backdropLightAlpha,
-              _over(g.colors.last, ArtworkTint.backdropDeepAlpha, AppColors.background)),
+              _over(g.colors.last, ArtworkTint.backdropDeepAlpha, _stage.background)),
         ),
     ];
 
@@ -139,6 +142,7 @@ void main() {
     double textScale = 1,
     Set<String> embeddedArt = const {},
     bool settle = true,
+    ThemeData? theme,
   }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = size;
@@ -169,7 +173,7 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: MaterialApp(theme: AppTheme.darkTheme, home: const NowPlayingSheet()),
+        child: MaterialApp(theme: theme ?? AppTheme.darkTheme, home: const NowPlayingSheet()),
       ),
     );
     if (settle) await tester.pumpAndSettle();
@@ -187,13 +191,13 @@ void main() {
     return gradient.colors.first.withValues(alpha: 1);
   }
 
-  final neutralViolet = AppColors.artworkGradients.first.colors.first;
+  final neutralViolet = _stage.artworkGradients.first.colors.first;
 
   group('Now Playing backdrop contrast where the text sits', () {
     const screens = [
       _Screen('360x800 phone, button navigation', Size(360, 776), bottomInset: 48),
       _Screen('360x640 phone', Size(360, 616), bottomInset: 48),
-      _Screen('shortest body before it scrolls', Size(360, 560), bottomInset: 48),
+      _Screen('shortest body before it scrolls', Size(360, 600), bottomInset: 48),
       _Screen('412x915 phone, gesture navigation', Size(412, 891), bottomInset: 24),
       _Screen('tablet', Size(800, 1256), bottomInset: 24),
       _Screen('360x800 phone, text at 130 %', Size(360, 776), bottomInset: 48, textScale: 1.3),
@@ -212,7 +216,9 @@ void main() {
           textScale: screen.textScale,
         );
         expect(tester.takeException(), isNull);
-        expect(find.text('1 of 8'), findsOneWidget);
+        // DESIGN.md 7.8: one overline kicker instead of "Now Playing" over "1 of 8".
+        expect(find.text('NOW PLAYING · 1 / 8'), findsOneWidget);
+        expect(find.byType(SingleChildScrollView).evaluate().isNotEmpty, screen.name.endsWith('(scrolls)'));
 
         final scrim = (tester.widget<DecoratedBox>(_scrimFinder).decoration as BoxDecoration).gradient!
             as LinearGradient;
@@ -232,7 +238,7 @@ void main() {
           final t1 = scrolls ? 1.0 : (rect.bottom - backdrop.top) / backdrop.height;
           final alpha = _minAlpha(scrim, t0, t1);
           for (final (name, under) in _backdrops()) {
-            final behind = _over(AppColors.background, alpha, under);
+            final behind = _over(_stage.background, alpha, under);
             final ratio = _contrast(Color.alphaBlend(color, behind), behind);
             if (ratio < required) {
               failures.add('$label on $name under a ${alpha.toStringAsFixed(2)} veil: '
@@ -261,11 +267,11 @@ void main() {
           check(label, rect, style.color!, isIcon || large ? 3.0 : 4.5);
         }
         // The played part of the seek bar is the one part that shows state.
-        check('seek bar', tester.getRect(find.byType(Slider)), AppColors.primary, 3.0);
+        check('seek bar', tester.getRect(find.byType(Slider)), _stage.sliderActive, 3.0);
 
         expect(
           checked,
-          containsAll(<String>['Now Playing', '1 of 8', 'Test Artist', '0:15', '5:54', 'seek bar']),
+          containsAll(<String>['NOW PLAYING · 1 / 8', 'Test Artist', '0:15', '-5:39', 'seek bar']),
         );
         expect(failures, isEmpty, reason: failures.join('\n'));
       });
@@ -418,13 +424,14 @@ void main() {
       expect(tester.getSize(find.text(_longTitle)).height, 60, reason: 'two 30 dp lines');
       final artist = tester.widget<Text>(find.text('Test Artist'));
       expect(artist.style!.fontSize, 16, reason: 'body is 16/24 in the Bijuli scale');
-      expect(artist.style!.color, AppColors.textSecondary);
+      expect(artist.style!.color, _stage.textSecondary);
     });
 
-    testWidgets('seek labels use the short clock', (tester) async {
+    testWidgets('seek labels use the short clock: elapsed, and the time left (DESIGN.md 7.8)', (tester) async {
       await pumpSheet(tester, _playing([_song(1)]));
       expect(find.text('0:15'), findsOneWidget);
-      expect(find.text('5:54'), findsOneWidget);
+      expect(find.text('-5:39'), findsOneWidget, reason: '5:54 - 0:15');
+      expect(find.text('5:54'), findsNothing);
       expect(find.text('00:15'), findsNothing);
     });
 
@@ -439,7 +446,7 @@ void main() {
       final gapToControls = controls.top - label.bottom;
       expect(gapToTrack, greaterThan(0), reason: 'under the track');
       expect(gapToTrack, lessThan(gapToControls), reason: 'closer to the bar than to the controls');
-      expect(tester.getRect(find.text('5:54')).top, label.top);
+      expect(tester.getRect(find.text('-5:39')).top, label.top);
 
       // Moved by paint only: the slider keeps its 48 dp touch target, and a
       // tap on a label still reaches the slider.
@@ -460,5 +467,97 @@ void main() {
         expect(snackBottom, lessThanOrEqualTo(heart.top));
       });
     }
+
+    testWidgets('the cover sits on the hard 6x6 Volt print offset, no soft shadow', (tester) async {
+      await pumpSheet(tester, _playing([_song(1)]));
+      final cover = tester.widget<Container>(
+        find.ancestor(of: find.byType(Hero), matching: find.byType(Container)).first,
+      );
+      final shadows = (cover.decoration! as BoxDecoration).boxShadow!;
+      expect(shadows, hasLength(1));
+      expect(shadows.single.offset, const Offset(6, 6));
+      expect(shadows.single.blurRadius, 0);
+      expect(shadows.single.color, _stage.printShadow);
+      expect(tester.getSize(find.byType(Hero)), const Size(328, 328), reason: 'screen width - 32');
+    });
+
+    testWidgets('kicker "NOW PLAYING · 3 / 24" in the overline, read as "Now Playing, 3 of 24"', (tester) async {
+      final queue = [for (var i = 1; i <= 24; i++) _song(i)];
+      await pumpSheet(tester, _playing(queue, index: 2));
+      final kicker = tester.widget<Text>(find.text('NOW PLAYING · 3 / 24'));
+      expect(kicker.semanticsLabel, 'Now Playing\n3 of 24');
+      expect(kicker.style!.fontFamily, 'DMMono');
+      expect(kicker.style!.color, _stage.textSecondary, reason: 'never textMuted on the stage');
+      expect(nowPlayingKicker(_playing([_song(1)])), 'NOW PLAYING');
+    });
+
+    testWidgets('top bar: collapse and more; footer: speed and the queue', (tester) async {
+      await pumpSheet(tester, _playing([_song(1), _song(2)]));
+      final kicker = tester.getRect(find.text('NOW PLAYING · 1 / 2'));
+      final collapse = tester.getRect(find.byTooltip('Collapse Now Playing'));
+      final more = tester.getRect(find.byTooltip('More options'));
+      expect(more.center.dy, closeTo(collapse.center.dy, 1));
+      expect(kicker.center.dy, closeTo(collapse.center.dy, 1));
+      final play = tester.getRect(find.byTooltip('Play'));
+      for (final tooltip in ['Playback Speed', 'View Queue']) {
+        expect(tester.getRect(find.byTooltip(tooltip)).top, greaterThan(play.bottom), reason: tooltip);
+      }
+    });
+
+    testWidgets('Next is disabled on the last track with repeat off, and back with repeat on', (tester) async {
+      final queue = [_song(1), _song(2)];
+      final container = await pumpSheet(tester, _playing(queue, index: 1));
+      IconButton next() => tester.widget<IconButton>(
+            find.ancestor(of: find.byIcon(Icons.skip_next_rounded), matching: find.byType(IconButton)),
+          );
+      IconButton previous() => tester.widget<IconButton>(
+            find.ancestor(of: find.byIcon(Icons.skip_previous_rounded), matching: find.byType(IconButton)),
+          );
+      expect(next().onPressed, isNull);
+      expect(previous().onPressed, isNotNull, reason: 'Previous restarts or goes back');
+
+      (container.read(playbackNotifierProvider.notifier) as _FakePlayback)
+          .emit(_playing(queue, index: 1).copyWith(repeatMode: domain.PlaybackRepeatMode.all));
+      await tester.pump();
+      expect(next().onPressed, isNotNull);
+
+      (container.read(playbackNotifierProvider.notifier) as _FakePlayback).emit(_playing(queue, index: 0));
+      await tester.pump();
+      expect(next().onPressed, isNotNull);
+    });
+
+    testWidgets('shuffle and repeat show their state: primary glyph and dot when on', (tester) async {
+      final container = await pumpSheet(tester, _playing([_song(1), _song(2)]));
+      Color glyph(IconData icon) => tester.widget<Icon>(find.byIcon(icon)).color!;
+      expect(glyph(Icons.shuffle_rounded), _stage.textPrimary);
+      expect(glyph(Icons.repeat_rounded), _stage.textPrimary);
+
+      (container.read(playbackNotifierProvider.notifier) as _FakePlayback).emit(
+        _playing([_song(1), _song(2)]).copyWith(shuffle: true, repeatMode: domain.PlaybackRepeatMode.one),
+      );
+      await tester.pumpAndSettle();
+      expect(glyph(Icons.shuffle_rounded), _stage.primary);
+      expect(glyph(Icons.repeat_one_rounded), _stage.primary);
+      expect(find.byTooltip('Shuffle enabled'), findsOneWidget);
+      expect(find.byTooltip('Repeat mode: one'), findsOneWidget);
+    });
+
+    testWidgets('the stage stays ink in the light theme; the queue sheet it opens is on paper', (tester) async {
+      await pumpSheet(tester, _playing([_song(1), _song(2)]), theme: AppTheme.lightTheme);
+      final stage = tester.element(find.byType(Slider));
+      expect(Theme.of(stage).brightness, Brightness.dark);
+      expect(tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor, _stage.background);
+      expect(tester.widget<Text>(find.text('Song 1')).style!.color, _stage.textPrimary);
+      final bars = tester.widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+        find.byWidgetPredicate((w) => w is AnnotatedRegion<SystemUiOverlayStyle>).first,
+      );
+      expect(bars.value, AppTheme.barsOnInk);
+
+      await tester.tap(find.byTooltip('View Queue'));
+      await tester.pumpAndSettle();
+      final queue = tester.element(find.text('Current queue'));
+      expect(Theme.of(queue).brightness, Brightness.light);
+      expect(tester.widget<Text>(find.text('Current queue')).style!.color, AppPalette.light.textPrimary);
+    });
   });
 }

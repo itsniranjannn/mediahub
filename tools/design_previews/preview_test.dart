@@ -1,8 +1,13 @@
 // Preview renders for design reviews (not part of the test suite).
 // Besides the screens: a 'components' sheet (type roles, Volt widgets,
-// chips, switches, inputs, badges, the Ink Dock), a dialog with a snackbar,
-// and the Online tab's toolbar and menu over a stand-in WebView. Several
-// scenes also render at 320 dp and at 1.3x text.
+// chips, switches, inputs, badges), a dialog with a snackbar, the Online
+// tab's toolbar and menu over a stand-in WebView, the real shell (Ink Dock
+// with the mini player and nav, shell_*), the video player (video_*, one on a
+// white frame) and the media sheet from a row, a video card and Now Playing
+// (sheet_*, popup_song_land). Several scenes also render at 320 dp, at 1.3x
+// text, and both at once (*_320_13). Downloads, Settings, Diagnostics and the
+// quality sheet render from test/widget/downloads_settings_themes_test.dart
+// (run it with the same PREVIEW_OUT).
 // The bundled Bijuli fonts + MaterialIcons, 360x800 dp at 3x, every scene in
 // the ink (dark) and the paper (light) theme: <scene>_dark.png and
 // <scene>_light.png (PREVIEW_THEMES=dark or =light renders one). Some titles
@@ -25,7 +30,9 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:mediahub/app/app_shell.dart';
 import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/app/theme/app_typography.dart';
@@ -36,14 +43,19 @@ import 'package:mediahub/core/storage/settings_store.dart';
 import 'package:mediahub/data/database/app_database.dart';
 import 'package:mediahub/data/repositories/library_repository_impl.dart';
 import 'package:mediahub/domain/models/media_item.dart';
+import 'package:mediahub/domain/models/download_state.dart';
 import 'package:mediahub/domain/models/playback_state.dart' as domain;
 import 'package:mediahub/domain/models/playlist_and_groups.dart';
 import 'package:mediahub/domain/models/video_progress.dart';
 import 'package:mediahub/domain/repositories/library_repository.dart';
 import 'package:mediahub/domain/repositories/playback_repository.dart';
+import 'package:mediahub/domain/repositories/video_engine.dart';
+import 'package:mediahub/domain/repositories/video_progress_repository.dart';
+import 'package:mediahub/features/downloads/downloads_notifier.dart';
 import 'package:mediahub/features/home/home_screen.dart';
 import 'package:mediahub/features/library/detail_screens.dart';
 import 'package:mediahub/features/library/library_notifier.dart';
+import 'package:mediahub/features/library/media_context_menu.dart';
 import 'package:mediahub/features/music_player/mini_player.dart';
 import 'package:mediahub/features/music_player/music_audio_handler.dart';
 import 'package:mediahub/features/music_player/music_screen.dart';
@@ -55,6 +67,7 @@ import 'package:mediahub/features/online/online_screen.dart';
 import 'package:mediahub/features/online/online_settings.dart';
 import 'package:mediahub/features/online/online_web_view.dart';
 import 'package:mediahub/features/video_player/video_player_notifier.dart';
+import 'package:mediahub/features/video_player/video_player_screen.dart';
 import 'package:mediahub/features/video_player/videos_screen.dart';
 import 'package:mediahub/shared/widgets/artwork_placeholder.dart';
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
@@ -504,70 +517,6 @@ Widget componentsSheet(BuildContext context) {
   );
 }
 
-/// The Ink Dock with a stand-in mini player row and the five destinations.
-Widget componentsDock() => InkDock(
-      miniPlayer: SizedBox(
-        height: InkDock.miniPlayerHeight,
-        child: Builder(
-          builder: (context) {
-            final p = context.palette;
-            final t = AppTypography.of(p);
-            return Row(
-              children: [
-                const SizedBox(width: 12),
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(color: p.surfacePressed, borderRadius: BorderRadius.circular(10)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('रेशम फिरिरी', style: t.bodyStrong.copyWith(color: p.onDock), maxLines: 1),
-                      Text('Narayan Gopal', style: t.metadata.copyWith(color: p.onDockMuted), maxLines: 1),
-                    ],
-                  ),
-                ),
-                IconButton(onPressed: () {}, icon: const Icon(Icons.skip_previous_rounded, size: 28)),
-                VoltDisc(icon: Icons.pause_rounded, size: VoltDisc.small, onPressed: () {}),
-                IconButton(onPressed: () {}, icon: const Icon(Icons.skip_next_rounded, size: 28)),
-                const SizedBox(width: 4),
-              ],
-            );
-          },
-        ),
-      ),
-      navigation: NavigationBar(
-        selectedIndex: 3,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home_rounded), label: 'Home'),
-          NavigationDestination(
-            icon: Icon(Icons.music_note_outlined),
-            selectedIcon: Icon(Icons.music_note_rounded),
-            label: 'Music',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.video_library_outlined),
-            selectedIcon: Icon(Icons.video_library_rounded),
-            label: 'Videos',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.smart_display_outlined),
-            selectedIcon: Icon(Icons.smart_display_rounded),
-            label: 'Online',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.file_download_outlined),
-            selectedIcon: Icon(Icons.file_download_rounded),
-            label: 'Downloads',
-          ),
-        ],
-      ),
-    );
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late MockRepo repo;
@@ -980,7 +929,8 @@ void main() {
       await unmount(tester);
     });
 
-    // The foundation pieces on one tall sheet, over the Ink Dock.
+    // The foundation pieces on one tall sheet (the real Ink Dock is in the
+    // shell scenes).
     for (final (name, width, height, scale) in [
       ('components', 360.0, 2900.0, 1.0),
       ('components_320', 320.0, 3100.0, 1.0),
@@ -989,7 +939,7 @@ void main() {
       testWidgets(name, (tester) async {
         phone(tester, width: width, height: height, textScale: scale);
         await tester.pumpWidget(app(
-          Scaffold(body: Builder(builder: componentsSheet), bottomNavigationBar: componentsDock()),
+          Scaffold(body: Builder(builder: componentsSheet)),
         ));
         await settle(tester);
         await shot(tester, name);
@@ -1163,6 +1113,238 @@ void main() {
       expect(tester.takeException(), isNull);
       await unmount(tester);
     });
+
+    // ---- 320 dp at 1.3x, the smallest phone at large text ----------------
+
+    for (final (name, height) in [('music_list_320_13', 800.0), ('home_320_13', 2100.0)]) {
+      testWidgets(name, (tester) async {
+        phone(tester, width: 320, height: height, textScale: 1.3);
+        await tester.pumpWidget(name.startsWith('home')
+            ? app(const HomeScreen(), state: playing(1, isPlaying: false), library: HomeRepo(songs, videos))
+            : app(const MusicScreen(), state: playing(2)));
+        await settle(tester);
+        await shot(tester, name);
+        expect(tester.takeException(), isNull);
+        await unmount(tester);
+      });
+    }
+
+    // Android: the third quick tile (Downloads); all three labels share one size.
+    testWidgets('home_android_320_13', (tester) async {
+      phone(tester, width: 320, height: 900, textScale: 1.3);
+      PlatformInfo.debugIsAndroid = true;
+      addTearDown(PlatformInfo.resetForTests);
+      await tester.pumpWidget(
+        app(const HomeScreen(), state: playing(1, isPlaying: false), library: HomeRepo(songs, videos)),
+      );
+      await settle(tester);
+      await shot(tester, 'home_android_320_13');
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    });
+
+    for (final (name, index) in [('now_playing_320_13', 6), ('now_playing_320_13_nepali', 3)]) {
+      testWidgets(name, (tester) async {
+        phone(tester, width: 320, textScale: 1.3);
+        await tester.pumpWidget(app(const NowPlayingSheet(), state: playing(index)));
+        await settle(tester);
+        await shot(tester, name);
+        expect(tester.takeException(), isNull);
+        await unmount(tester);
+      });
+    }
+
+    testWidgets('queue_320_13', (tester) async {
+      phone(tester, width: 320, textScale: 1.3);
+      await tester.pumpWidget(app(
+        Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  useSafeArea: true,
+                  clipBehavior: Clip.antiAlias,
+                  builder: (_) => const FractionallySizedBox(heightFactor: 0.7, child: QueueSheet()),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+        state: playing(2),
+      ));
+      await tester.tap(find.text('open'));
+      await settle(tester);
+      await shot(tester, 'queue_320_13');
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    });
+
+    testWidgets('album_detail_320_13', (tester) async {
+      phone(tester, width: 320, height: 1100, textScale: 1.3);
+      await tester.pumpWidget(app(AlbumDetailScreen(album: albums.last), state: playing(3)));
+      await settle(tester);
+      await shot(tester, 'album_detail_320_13');
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    });
+
+    // ---- the media sheet ("media dropdown", DESIGN.md 7.10) ---------------
+
+    final menuOverrides = [
+      mediaMenuPlatformProvider.overrideWithValue(_PipPlatform()),
+      mediaFileDeleterProvider.overrideWithValue(_AllDeleter()),
+    ];
+    // From a song row's ⋮ (a favourite, झिलिमिली साँझ), and the popup that
+    // replaces the sheet in landscape.
+    for (final (name, width, height, scale) in [
+      ('sheet_song', 360.0, 800.0, 1.0),
+      ('sheet_song_320_13', 320.0, 800.0, 1.3),
+      ('popup_song_land', 800.0, 400.0, 1.0),
+    ]) {
+      testWidgets(name, (tester) async {
+        phone(tester, width: width, height: height, textScale: scale);
+        await tester.pumpWidget(app(const MusicScreen(), state: playing(2), overrides: menuOverrides));
+        await settle(tester);
+        await tester.tap(find.byIcon(Icons.more_vert_rounded).at(name.startsWith('popup') ? 1 : 3));
+        await settle(tester);
+        await shot(tester, name);
+        expect(tester.takeException(), isNull);
+        await unmount(tester);
+      });
+    }
+
+    // From Now Playing's ⋮: the sheet follows the app theme, not the stage.
+    testWidgets('sheet_from_now_playing_320_13', (tester) async {
+      phone(tester, width: 320, textScale: 1.3);
+      await tester.pumpWidget(app(const NowPlayingSheet(), state: playing(4), overrides: menuOverrides));
+      await settle(tester);
+      await tester.tap(find.byTooltip('More options'));
+      await settle(tester);
+      await shot(tester, 'sheet_from_now_playing_320_13');
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    });
+
+    testWidgets('sheet_video', (tester) async {
+      phone(tester, height: 900);
+      final state = LibraryState(
+        permissionState: MediaPermissionState.granted,
+        status: LibraryStatus.success,
+        items: [videos[2], videos[0], videos[1]],
+      );
+      await tester.pumpWidget(app(
+        const VideosScreen(),
+        overrides: [
+          ...menuOverrides,
+          videoLibraryProvider.overrideWith(() => FakeVideoNotifier(state)),
+          allVideoProgressStreamProvider.overrideWith((ref) => Stream.value(const [])),
+        ],
+      ));
+      await settle(tester);
+      await tester.tap(find.byIcon(Icons.more_vert_rounded).first);
+      await settle(tester);
+      await shot(tester, 'sheet_video');
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    });
+
+    // ---- the real shell: the Ink Dock (mini player + nav) over Music -------
+
+    for (final (name, width, scale, index) in [
+      ('shell', 360.0, 1.0, 2),
+      ('shell_320_13', 320.0, 1.3, 3),
+      ('shell_320_13_last', 320.0, 1.3, songs.length - 1),
+    ]) {
+      testWidgets(name, (tester) async {
+        phone(tester, width: width, textScale: scale);
+        tester.view.padding = const FakeViewPadding(bottom: 48 * 3, top: 24 * 3);
+        PlatformInfo.debugIsAndroid = true;
+        addTearDown(PlatformInfo.resetForTests);
+        final router = GoRouter(
+          initialLocation: '/music',
+          routes: [
+            StatefulShellRoute.indexedStack(
+              builder: (context, state, shell) => AppShell(navigationShell: shell),
+              branches: [
+                StatefulShellBranch(routes: [GoRoute(path: '/home', builder: (c, s) => const HomeScreen())]),
+                StatefulShellBranch(routes: [GoRoute(path: '/music', builder: (c, s) => const MusicScreen())]),
+                for (final n in ['videos', 'online', 'downloads'])
+                  StatefulShellBranch(routes: [
+                    GoRoute(path: '/$n', builder: (c, s) => Scaffold(body: Center(child: Text('page $n')))),
+                  ]),
+              ],
+            ),
+          ],
+        );
+        addTearDown(router.dispose);
+        await tester.pumpWidget(ProviderScope(
+          overrides: [
+            libraryRepositoryProvider.overrideWithValue(repo),
+            mediaPermissionServiceProvider.overrideWithValue(perm),
+            appDatabaseProvider.overrideWithValue(db),
+            audioHandlerProvider.overrideWithValue(makeHandler()),
+            playbackRepositoryProvider.overrideWithValue(playbackRepo),
+            playbackNotifierProvider.overrideWith(() => FakePlayback(playing(index))),
+            throttledPositionStreamProvider.overrideWith((ref) => Stream.value(const Duration(seconds: 74))),
+            isFavoriteProvider.overrideWith((ref, id) => Stream.value(id == 'song_0' || id == 'song_3')),
+            downloadsStreamProvider.overrideWith((ref) => Stream.value([_download('a'), _download('b')])),
+          ],
+          child: RepaintBoundary(
+            key: shotKey,
+            child: MaterialApp.router(debugShowCheckedModeBanner: false, theme: previewThemeData, routerConfig: router),
+          ),
+        ));
+        await settle(tester);
+        await shot(tester, name);
+        expect(tester.takeException(), isNull);
+        await unmount(tester);
+      });
+    }
+
+    // ---- the video stage (ink in both themes), portrait and landscape ------
+
+    for (final (name, w, h, scale, white) in [
+      ('video', 360.0, 800.0, 1.0, false),
+      ('video_320_13', 320.0, 700.0, 1.3, false),
+      ('video_land_13', 800.0, 360.0, 1.3, false),
+      // A white frame: the controls must still read (white on overlay).
+      ('video_white_land', 800.0, 360.0, 1.0, true),
+    ]) {
+      testWidgets(name, (tester) async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMessageHandler(
+          'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle',
+          (_) async => const StandardMessageCodec().encodeMessage(<Object?>[null]),
+        );
+        phone(tester, width: w, height: h, textScale: scale);
+        final item = MediaItem(
+          id: 'v',
+          title: 'Audit_Long_Tone_5min झिलिमिली साँझ family trip.mp4',
+          artist: 'x',
+          durationMs: 300000,
+          uri: 'file:///v.mp4',
+          mediaType: MediaType.video,
+          sizeBytes: 1,
+          dateAdded: DateTime(2026),
+        );
+        await tester.pumpWidget(app(
+          VideoPlayerScreen(item: item),
+          overrides: [
+            videoEngineProvider.overrideWith((ref) => _PreviewEngine(white: white)),
+            videoProgressRepositoryProvider.overrideWithValue(_NoProgress()),
+          ],
+        ));
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        await shot(tester, name);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(seconds: 4));
+      });
+    }
   }
 
   for (final theme in previewThemes) {
@@ -1171,4 +1353,101 @@ void main() {
       scenes();
     });
   }
+}
+
+/// Picture-in-picture is offered (the video sheet shows its row).
+class _PipPlatform extends MediaMenuPlatform {
+  @override
+  Future<bool> isPipSupported() async => true;
+}
+
+/// Every item can be deleted (the sheet shows "Delete from phone").
+class _AllDeleter implements MediaFileDeleter {
+  @override
+  bool canDelete(MediaItem item) => true;
+  @override
+  Future<void> delete(MediaItem item) async {}
+}
+
+/// A running download, for the dock's Downloads badge.
+DownloadEntry _download(String id) => DownloadEntry(
+      id: id,
+      url: 'https://example.com/$id',
+      host: 'example.com',
+      displayName: id,
+      fileName: id,
+      state: DownloadTaskState.downloading.name,
+      receivedBytes: 0,
+      supportsRange: false,
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+      engine: 'http',
+    );
+
+/// A playing 16:9 video at 1:14 of 5:00: a warm gradient frame, or a white
+/// one ([white]) to check the controls over the brightest picture.
+class _PreviewEngine implements VideoEngine {
+  _PreviewEngine({this.white = false});
+
+  final bool white;
+  final _pos = StreamController<Duration>.broadcast();
+  final _playing = StreamController<bool>.broadcast();
+  final _err = StreamController<String?>.broadcast();
+  bool _init = false;
+  @override
+  Future<void> initialize(String uri) async => _init = true;
+  @override
+  bool get isInitialized => _init;
+  @override
+  bool get isPlaying => true;
+  @override
+  Duration get position => const Duration(minutes: 1, seconds: 14);
+  @override
+  Duration get duration => const Duration(minutes: 5);
+  @override
+  double get aspectRatio => 16 / 9;
+  @override
+  Size get videoSize => const Size(1920, 1080);
+  @override
+  Stream<Duration> get positionStream => _pos.stream;
+  @override
+  Stream<bool> get isPlayingStream => _playing.stream;
+  @override
+  Stream<String?> get errorStream => _err.stream;
+  @override
+  Widget buildPlayerWidget({BoxFit fit = BoxFit.contain}) => Center(
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: white
+              ? const ColoredBox(color: Colors.white)
+              : DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(colors: [Colors.orange.shade200, Colors.teal.shade700]),
+                  ),
+                ),
+        ),
+      );
+  @override
+  Future<void> play() async {}
+  @override
+  Future<void> pause() async {}
+  @override
+  Future<void> seekTo(Duration position) async {}
+  @override
+  Future<void> setPlaybackSpeed(double speed) async {}
+  @override
+  Future<void> dispose() async {}
+}
+
+class _NoProgress implements VideoProgressRepository {
+  @override
+  Future<VideoProgress?> getProgress(String mediaId) async => null;
+  @override
+  Future<void> saveProgress(VideoProgress progress) async {}
+  @override
+  Future<void> deleteProgress(String mediaId) async {}
+  @override
+  Future<List<VideoProgress>> getAllProgress() async => [];
+  @override
+  Stream<List<VideoProgress>> watchAllProgress() => Stream.value([]);
 }

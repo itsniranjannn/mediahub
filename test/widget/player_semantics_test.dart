@@ -456,9 +456,10 @@ void main() {
       // The labels under the bar are not read on top of the slider.
       expect(_labelled('1:46'), findsNothing);
       expect(_labelled('5:00'), findsNothing);
-      // They still show.
+      // They still show: elapsed, and the time left (DESIGN.md 7.8).
       expect(find.text('1:46'), findsOneWidget);
-      expect(find.text('5:00'), findsOneWidget);
+      expect(find.text('-3:14'), findsOneWidget);
+      expect(_labelled('3:14'), findsNothing);
       handle.dispose();
     });
 
@@ -532,7 +533,7 @@ void main() {
     testWidgets('the header is one heading stop, read before Close, with one track or many', (tester) async {
       final handle = tester.ensureSemantics();
       await pumpQueue(tester, [_song(1)]);
-      final one = find.semantics.byLabel('Current Queue\n1 track');
+      final one = find.semantics.byLabel('Current queue\n1 track');
       expect(one, findsOne);
       expect(one, isSemantics(isHeader: true));
       expect(find.semantics.byLabel('1 track'), findsNothing, reason: 'the subtitle is no longer read first, alone');
@@ -540,7 +541,7 @@ void main() {
       // A fresh ProviderScope (the same one would keep the first queue).
       await tester.pumpWidget(const SizedBox.shrink());
       await pumpQueue(tester, [_song(1), _song(2), _song(3)]);
-      expect(find.semantics.byLabel('Current Queue\n3 tracks · Drag to reorder'), isSemantics(isHeader: true));
+      expect(find.semantics.byLabel('Current queue\n3 tracks · Drag to reorder'), isSemantics(isHeader: true));
       handle.dispose();
     });
 

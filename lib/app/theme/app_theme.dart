@@ -10,22 +10,16 @@ import 'app_typography.dart';
 
 /// The Bijuli themes (docs/DESIGN.md sections 2.3, 7 and 8), both built from
 /// an [AppPalette] by one recipe: [darkTheme] (ink) and [lightTheme] (paper).
-/// The app follows the phone ([themeMode]) once [lightThemeReady] is on.
+/// The app follows the phone by default ([themeMode]); Settings → Appearance
+/// can pin it to dark or light (`themeModeSettingProvider`).
 ///
 /// Each theme carries its palette as an extension (`context.palette`). The
 /// Ink Dock, Now Playing and the video player wrap themselves in
 /// `Theme(data: AppTheme.darkTheme)`, so they look the same in both modes.
 abstract final class AppTheme {
-  /// Whether every screen reads its colours from `context.palette` /
-  /// `context.typography` yet (DESIGN.md 10, step 5). Until then most screens
-  /// still paint the dark-only `AppColors`, which would draw near-white text
-  /// on paper, so the app stays on ink whatever the phone says. Turning this
-  /// on is the last step of the screen migration; nothing else changes.
-  static const bool lightThemeReady = false;
-
-  /// The `MaterialApp.themeMode`: the phone's setting (DESIGN.md 8.2) once
-  /// [lightThemeReady], ink until then.
-  static const ThemeMode themeMode = lightThemeReady ? ThemeMode.system : ThemeMode.dark;
+  /// The default `MaterialApp.themeMode`: the phone's own setting, paper by
+  /// day and ink at night (DESIGN.md 8.2). Settings → Appearance overrides it.
+  static const ThemeMode themeMode = ThemeMode.system;
 
   /// System bars over ink: light icons (Android), light content (iOS). The
   /// dark theme's app bars, the Ink Dock, Now Playing and the video player.

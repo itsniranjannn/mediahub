@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/platform/device_controls.dart';
 import '../core/platform_info.dart';
+import '../domain/models/download_state.dart';
+import '../features/downloads/downloads_notifier.dart';
 import '../features/music_player/mini_player.dart';
+import '../shared/widgets/shared_label_scale.dart';
 import '../shared/widgets/ui_kit.dart';
-import 'theme/app_colors.dart';
+import 'theme/app_palette.dart';
 import 'theme/app_spacing.dart';
-import 'theme/app_theme.dart';
 import 'theme/app_typography.dart';
 import 'theme/motion_tokens.dart';
 
@@ -48,33 +51,24 @@ class AppShell extends StatelessWidget {
         valueListenable: DeviceControls.inPip,
         builder: (context, inPip, body) => Scaffold(
           body: body,
-          // The mini player and the nav are ink in both themes (DESIGN.md
-          // 7.7): they still paint the dark AppColors, and the dark theme
-          // gives them the matching glass, so they read the same on a phone
-          // in light mode. The bar style keeps the Android navigation bar's
-          // icons light over them.
+          // The Ink Dock (DESIGN.md 7.7): the mini player and the nav on one
+          // ink slab in both themes. InkDock wraps them in the dark theme and
+          // keeps the Android navigation bar's icons light over it. The body
+          // ends above the dock (no extendBody), so no screen has to pad its
+          // last row clear of it.
           bottomNavigationBar: inPip
               ? null
-              : Theme(
-                  data: AppTheme.darkTheme,
-                  child: AnnotatedRegion<SystemUiOverlayStyle>(
-                    value: AppTheme.barsOnInk,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Persistent mini-player above the bottom nav. On the Online
-                        // tab a playing YouTube video is right there, so it is not
-                        // repeated in the mini player.
-                        MiniPlayer(
-                          key: const ValueKey('mini_player_slot'),
-                          hideExternal: navigationShell.currentIndex == onlineBranchIndex,
-                        ),
-                        _CustomBottomNavBar(
-                          currentIndex: navigationShell.currentIndex,
-                          onTap: _onTap,
-                        ),
-                      ],
-                    ),
+              : InkDock(
+                  // Persistent mini-player above the bottom nav. On the Online
+                  // tab a playing YouTube video is right there, so it is not
+                  // repeated in the mini player.
+                  miniPlayer: MiniPlayer(
+                    key: const ValueKey('mini_player_slot'),
+                    hideExternal: navigationShell.currentIndex == onlineBranchIndex,
+                  ),
+                  navigation: _InkNavBar(
+                    currentIndex: navigationShell.currentIndex,
+                    onTap: _onTap,
                   ),
                 ),
         ),
@@ -89,10 +83,14 @@ class _NavItemData {
   final IconData activeIcon;
   final IconData inactiveIcon;
 
+  /// Shows the active-downloads count dot.
+  final bool downloads;
+
   const _NavItemData({
     required this.label,
     required this.activeIcon,
     required this.inactiveIcon,
+    this.downloads = false,
   });
 }
 
@@ -123,83 +121,227 @@ List<_NavItemData> get _navItems {
         label: 'Downloads',
         activeIcon: Icons.file_download_rounded,
         inactiveIcon: Icons.file_download_outlined,
+        downloads: true,
       ),
   ];
 }
 
-class _CustomBottomNavBar extends StatelessWidget {
+/// The dock's navigation (DESIGN.md 7.7): 64 dp plus the system inset, every
+/// label shown. The selected tab sits in a 56x32 Volt pill with a filled ink
+/// icon and an onDock label; the others are outline icons and labels in
+/// onDockMuted.
+///
+/// Drawn here rather than with [NavigationBar], whose indicator is a fixed
+/// 64x32 that fades in on each tab: this one is the spec's 56x32 and slides
+/// from tab to tab (240 ms, [MotionTokens.emphasized]; instant with reduced
+/// motion). It lives in the always-ink dock, so the Volt pill needs no ink
+/// edge.
+class _InkNavBar extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
 
-  const _CustomBottomNavBar({
+  const _InkNavBar({
     required this.currentIndex,
+    required this.onTap,
+  });
+
+  static const double height = InkDock.navigationHeight;
+  static const Size indicatorSize = Size(56, 32);
+
+  /// The pill's distance from the top of the bar: 6 + 32 + 4 + 16 + 6 = 64.
+  static const double indicatorTop = 6;
+  static const double labelGap = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _navItems;
+    final palette = context.palette;
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final selected = currentIndex.clamp(0, items.length - 1);
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      // Grows with large text instead of clipping the labels.
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: height),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final slot = constraints.maxWidth / items.length;
+            // One size for all five labels: when one has to shrink to fit
+            // its slot (320 dp at large text), they all shrink with it.
+            final labelScaler = sharedLabelScaler(
+              context,
+              labels: [for (final item in items) item.label],
+              style: context.typography.label,
+              maxWidth: slot - AppSpacing.xs4,
+            );
+            return Stack(
+              children: [
+                AnimatedPositioned(
+                  duration: MotionTokens.duration(context, MotionTokens.page),
+                  curve: MotionTokens.emphasized,
+                  top: indicatorTop,
+                  left: slot * selected + (slot - indicatorSize.width) / 2,
+                  width: indicatorSize.width,
+                  height: indicatorSize.height,
+                  child: DecoratedBox(
+                    key: const ValueKey('nav_indicator'),
+                    decoration: ShapeDecoration(color: palette.navIndicator, shape: const StadiumBorder()),
+                  ),
+                ),
+                // Ink for the splashes: the dock's fill would hide the
+                // scaffold's own.
+                Material(
+                  type: MaterialType.transparency,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (var i = 0; i < items.length; i++)
+                        Expanded(
+                          child: _NavDestination(
+                            item: items[i],
+                            selected: i == selected,
+                            labelScaler: labelScaler,
+                            onTap: () => onTap(i),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _NavDestination extends StatelessWidget {
+  final _NavItemData item;
+  final bool selected;
+  final TextScaler labelScaler;
+  final VoidCallback onTap;
+
+  const _NavDestination({
+    required this.item,
+    required this.selected,
+    required this.labelScaler,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final items = _navItems;
-    final feedbackDuration = MotionTokens.duration(context, MotionTokens.feedback);
+    final palette = context.palette;
+    final type = context.typography;
+    final icon = Icon(
+      selected ? item.activeIcon : item.inactiveIcon,
+      color: selected ? palette.onNavIndicator : palette.onDockMuted,
+      size: 24,
+    );
 
-    return GlassContainer(
-      border: const Border(top: BorderSide(color: AppColors.divider)),
-      child: Padding(
-        padding: EdgeInsets.only(
-          top: AppSpacing.sm8,
-          bottom: MediaQuery.paddingOf(context).bottom + AppSpacing.xs4,
-        ),
-        child: Row(
-          children: List.generate(items.length, (index) {
-            final isSelected = index == currentIndex;
-            final item = items[index];
-
-            return Expanded(
-              child: Semantics(
-                label: '${item.label} Tab',
-                selected: isSelected,
-                button: true,
-                child: InkResponse(
-                  onTap: () => onTap(index),
-                  radius: 36,
-                  highlightShape: BoxShape.circle,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Pill indicator behind the icon, like Material 3 navigation.
-                      AnimatedContainer(
-                        duration: feedbackDuration,
-                        curve: MotionTokens.easeOut,
-                        width: isSelected ? 56 : 40,
-                        height: 30,
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? AppColors.primary.withValues(alpha: 0.18)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(15),
-                        ),
-                        child: Icon(
-                          isSelected ? item.activeIcon : item.inactiveIcon,
-                          color: isSelected ? AppColors.primary : AppColors.textMuted,
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      AnimatedDefaultTextStyle(
-                        duration: feedbackDuration,
-                        curve: MotionTokens.easeOut,
-                        style: AppTypography.label.copyWith(
-                          fontSize: 11,
-                          color: isSelected ? AppColors.textPrimary : AppColors.textMuted,
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                        ),
-                        child: Text(item.label),
-                      ),
-                    ],
+    return Semantics(
+      label: '${item.label} Tab',
+      selected: selected,
+      button: true,
+      child: InkResponse(
+        onTap: onTap,
+        radius: 36,
+        highlightShape: BoxShape.circle,
+        highlightColor: Colors.transparent,
+        splashColor: palette.onDock.withValues(alpha: 0.12),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.xs4 / 2,
+            _InkNavBar.indicatorTop,
+            AppSpacing.xs4 / 2,
+            _InkNavBar.indicatorTop,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox.fromSize(
+                size: _InkNavBar.indicatorSize,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    icon,
+                    if (item.downloads)
+                      const PositionedDirectional(top: 0, start: 34, child: _DownloadsBadge()),
+                  ],
+                ),
+              ),
+              const SizedBox(height: _InkNavBar.labelGap),
+              // One line at every text size, at the size all five labels
+              // share ([labelScaler]); the FittedBox only guards against
+              // sub-pixel rounding (five tabs on 320 dp never wrap or clip).
+              ExcludeSemantics(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    item.label,
+                    maxLines: 1,
+                    softWrap: false,
+                    textScaler: labelScaler,
+                    style: type.label.copyWith(color: selected ? palette.onDock : palette.onDockMuted),
                   ),
                 ),
               ),
-            );
-          }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// While downloads run: a 16 dp Ice dot with the count in ink DM Mono 11/16
+/// on the Downloads icon (DESIGN.md 7.7).
+class _DownloadsBadge extends ConsumerWidget {
+  const _DownloadsBadge();
+
+  /// Waiting or running; paused, finished and failed ones do not count.
+  static final Set<String> _active = {
+    DownloadTaskState.queued.name,
+    DownloadTaskState.preparing.name,
+    DownloadTaskState.downloading.name,
+    DownloadTaskState.finalizing.name,
+  };
+
+  static const double size = 16;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(
+      downloadsStreamProvider.select(
+        (async) => async.value?.where((d) => _active.contains(d.state)).length ?? 0,
+      ),
+    );
+    if (count <= 0) return const SizedBox.shrink();
+
+    final palette = context.palette;
+    final label = count > 9 ? '9+' : '$count';
+    return Semantics(
+      label: count == 1 ? '1 download running' : '$count downloads running',
+      child: ExcludeSemantics(
+        child: Container(
+          constraints: const BoxConstraints(minWidth: size, minHeight: size),
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          decoration: ShapeDecoration(color: palette.accent, shape: const StadiumBorder()),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            maxLines: 1,
+            // The dot stays a dot: it grows only a little with the text.
+            textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.15),
+            style: context.typography.badge.copyWith(
+              fontSize: 11,
+              height: 16 / 11,
+              letterSpacing: 0,
+              color: palette.onAccent,
+            ),
+          ),
         ),
       ),
     );

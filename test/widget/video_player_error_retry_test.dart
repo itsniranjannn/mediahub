@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mediahub/app/theme/app_palette.dart';
+import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/logging/diagnostics_service.dart';
+import 'package:mediahub/core/utils/formatters.dart';
 import 'package:mediahub/data/repositories/library_repository_impl.dart';
 import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/domain/models/video_progress.dart';
@@ -12,6 +15,7 @@ import 'package:mediahub/domain/repositories/video_engine.dart';
 import 'package:mediahub/domain/repositories/video_progress_repository.dart';
 import 'package:mediahub/features/video_player/video_player_notifier.dart';
 import 'package:mediahub/features/video_player/video_player_screen.dart';
+import 'package:mediahub/shared/widgets/ui_kit.dart';
 
 /// What the Android player reported on the emulator when the hardware decoder
 /// timed out at start (as the notifier receives it: `e.toString()`).
@@ -184,6 +188,7 @@ Future<void> _pumpScreen(
   _EngineFactory factory, {
   VideoProgress? saved,
   _LibraryRepo? library,
+  ThemeData? theme,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -192,7 +197,7 @@ Future<void> _pumpScreen(
         videoProgressRepositoryProvider.overrideWithValue(_ProgressRepo(saved: saved)),
         libraryRepositoryProvider.overrideWithValue(library ?? _LibraryRepo()),
       ],
-      child: MaterialApp(home: VideoPlayerScreen(item: _item)),
+      child: MaterialApp(theme: theme, home: VideoPlayerScreen(item: _item)),
     ),
   );
   await _settle(tester);
@@ -507,6 +512,87 @@ void main() {
       expect(find.text('Unable to play video'), findsNothing);
       expect(factory.created, 3);
 
+      await _unmount(tester);
+    });
+  });
+
+  // DESIGN.md 7.9 and 8.2: the video stage is ink in both themes.
+  group('the stage', () {
+    const ink = AppPalette.dark;
+    const wakelock = 'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle';
+
+    setUp(() {
+      DiagnosticsService.enableDebounce = false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMessageHandler(
+        wakelock,
+        (_) async => const StandardMessageCodec().encodeMessage(<Object?>[null]),
+      );
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMessageHandler(wakelock, null);
+    });
+
+    testWidgets('in the light theme: dark palette, light bar icons, a Volt play disc, the title in Anek',
+        (tester) async {
+      await _pumpScreen(tester, _EngineFactory([_ScriptedEngine()]), theme: AppTheme.lightTheme);
+      expect(find.byKey(const ValueKey('video-surface')), findsOneWidget);
+
+      expect(Theme.of(tester.element(find.byType(Slider))).brightness, Brightness.dark);
+      final bars = tester.widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+        find.byWidgetPredicate((w) => w is AnnotatedRegion<SystemUiOverlayStyle>).first,
+      );
+      expect(bars.value, AppTheme.barsOnInk);
+      expect(tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor, const Color(0xFF000000));
+
+      expect(find.byType(VoltDisc), findsOneWidget);
+      expect(find.byTooltip('Pause'), findsOneWidget);
+
+      // The video's own name: Anek, two lines, broken after "_", read whole.
+      final title = tester.widget<Text>(find.text(breakableTitle(_item.title)));
+      expect(title.style!.fontFamily, 'AnekWide');
+      expect(title.style!.letterSpacing, 0);
+      expect(title.maxLines, 2);
+      expect(title.semanticsLabel, _item.title);
+      expect(title.style!.color, ink.onOverlay);
+
+      // The times in DM Mono.
+      expect(tester.widget<Text>(find.text('0:00')).style!.fontFamily, 'DMMono');
+      expect(tester.widget<Text>(find.text('5:00')).style!.fontFamily, 'DMMono');
+
+      await _unmount(tester);
+    });
+
+    testWidgets('locked: a Volt lock on the ink overlay chip (was Volt on a Volt fill)', (tester) async {
+      await _pumpScreen(tester, _EngineFactory([_ScriptedEngine()]));
+      await tester.tap(find.byTooltip('More'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lock controls'));
+      await tester.pumpAndSettle();
+
+      final lock = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip('Unlock Controls'), matching: find.byType(IconButton)).first,
+      );
+      expect(lock.style!.backgroundColor!.resolve(const {}), ink.overlay);
+      expect(lock.style!.foregroundColor!.resolve(const {}), ink.primary);
+
+      await tester.tap(find.byTooltip('Unlock Controls'));
+      await tester.pump();
+      expect(find.byTooltip('Unlock Controls'), findsNothing);
+      await _unmount(tester);
+    });
+
+    testWidgets('the error view keeps the dark palette in the light theme', (tester) async {
+      await _pumpScreen(
+        tester,
+        _EngineFactory([_ScriptedEngine(failWith: _decoderFailure)]),
+        theme: AppTheme.lightTheme,
+      );
+      final heading = tester.widget<Text>(find.text('Unable to play video'));
+      expect(heading.style!.color, ink.textPrimary);
+      expect(heading.style!.fontFamily, 'Unbounded', reason: 'an app string: the heading voice');
+      expect(tester.widget<Text>(find.text(_friendlyDecoder)).style!.color, ink.textSecondary);
+      expect(tester.widget<Icon>(find.byIcon(Icons.error_outline_rounded)).color, ink.error);
       await _unmount(tester);
     });
   });

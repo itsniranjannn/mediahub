@@ -1,11 +1,14 @@
 import '../../domain/repositories/library_repository.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
+import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_typography.dart';
+import '../../app/theme/motion_tokens.dart';
 import '../../core/app_config.dart';
 import '../../core/permissions/media_permission_service.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
@@ -19,18 +22,23 @@ import '../library/detail_screens.dart';
 import '../library/library_notifier.dart';
 import '../library/media_context_menu.dart';
 import '../library/media_song_row.dart';
+import '../playlists/playlist_cover.dart';
 import 'playback_notifier.dart';
 
 /// Compact toolbar buttons (40 dp tall, 48 dp touch target via padding).
 /// Sizes only: the theme colours FilledButton and FilledButton.tonal.
 final ButtonStyle _compactStyle = FilledButton.styleFrom(
   minimumSize: const Size(0, AppSpacing.giant40),
-  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md12),
+  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
 );
 
 /// "1 song", "12 songs".
 String _count(int n, String singular, String plural) => '$n ${n == 1 ? singular : plural}';
 
+/// The Music tab (docs/DESIGN.md 6 and 7): the "Music" masthead, the search
+/// field, a pinned row of chips for Songs / Albums / Artists / Playlists /
+/// Favorites (the selected one is the Volt sticker), then song rows or the
+/// album, artist and playlist grids.
 class MusicScreen extends ConsumerStatefulWidget {
   const MusicScreen({super.key});
 
@@ -40,9 +48,6 @@ class MusicScreen extends ConsumerStatefulWidget {
 
 class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProviderStateMixin {
   static const List<String> _tabs = ['Songs', 'Albums', 'Artists', 'Playlists', 'Favorites'];
-
-  /// Gap above and below the selected-tab pill: a 48 dp tab gets a 36 dp pill.
-  static const double _tabPillInset = 6;
 
   late TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
@@ -77,6 +82,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     final state = ref.watch(musicLibraryProvider);
     final notifier = ref.read(musicLibraryProvider.notifier);
     final repo = ref.watch(libraryRepositoryProvider);
+    final palette = context.palette;
 
     final permission = state.permissionState;
     final hasLibrary =
@@ -87,13 +93,10 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
         if (permission == MediaPermissionState.granted) ...[
           IconButton(
             icon: state.isScanning
-                ? const SizedBox(
+                ? SizedBox(
                     width: 20,
                     height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.primary,
-                    ),
+                    child: CircularProgressIndicator(strokeWidth: 2, color: palette.primary),
                   )
                 : const Icon(Icons.refresh_rounded),
             tooltip: 'Scan device media',
@@ -104,67 +107,80 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
             tooltip: 'Sort songs',
             onSelected: (sort) => notifier.setSortOption(sort),
             itemBuilder: (context) => [
-              _sortItem(MediaSortOption.title, 'Title', state),
-              _sortItem(MediaSortOption.artist, 'Artist', state),
-              _sortItem(MediaSortOption.dateAdded, 'Date Added', state),
-              _sortItem(MediaSortOption.duration, 'Duration', state),
+              _sortItem(context, MediaSortOption.title, 'Title', state),
+              _sortItem(context, MediaSortOption.artist, 'Artist', state),
+              _sortItem(context, MediaSortOption.dateAdded, 'Date Added', state),
+              _sortItem(context, MediaSortOption.duration, 'Duration', state),
             ],
           ),
         ],
       ],
     );
 
-    return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: hasLibrary
-            ? NestedScrollView(
-                // Scrolling back up brings the title, scan / sort actions and
-                // search field back straight away, even deep in a long list.
-                floatHeaderSlivers: true,
-                headerSliverBuilder: (context, innerBoxIsScrolled) => [
-                  SliverToBoxAdapter(child: header),
-                  if (permission == MediaPermissionState.limited)
-                    SliverToBoxAdapter(
-                      child: _LimitedAccessBanner(onOpenSettings: () => notifier.openSettings()),
-                    ),
-                  SliverToBoxAdapter(child: _searchField(notifier)),
-                  SliverOverlapAbsorber(
-                    handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
-                    sliver: SliverPersistentHeader(
-                      pinned: true,
-                      delegate: _PinnedTabBarDelegate(
-                        tabBar: _tabBar(),
-                        showDivider: innerBoxIsScrolled,
+    // No app bar: the screen sets the status bar icons for its own canvas.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: AppTheme.barsFor(palette),
+      child: Scaffold(
+        body: SafeArea(
+          bottom: false,
+          child: hasLibrary
+              ? NestedScrollView(
+                  // Scrolling back up brings the title, scan / sort actions and
+                  // search field back straight away, even deep in a long list.
+                  floatHeaderSlivers: true,
+                  headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                    SliverToBoxAdapter(child: header),
+                    if (permission == MediaPermissionState.limited)
+                      SliverToBoxAdapter(
+                        child: _LimitedAccessBanner(onOpenSettings: () => notifier.openSettings()),
+                      ),
+                    SliverToBoxAdapter(child: _searchField(context, notifier)),
+                    SliverOverlapAbsorber(
+                      handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+                      sliver: SliverPersistentHeader(
+                        pinned: true,
+                        delegate: _PinnedChipsDelegate(
+                          chips: _TabChips(controller: _tabController, labels: _tabs),
+                          height: _TabChips.heightFor(context),
+                          background: palette.background,
+                          divider: innerBoxIsScrolled ? palette.divider : Colors.transparent,
+                        ),
                       ),
                     ),
+                  ],
+                  body: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildSongsTab(state),
+                      _buildAlbumsTab(repo, state.searchQuery),
+                      _buildArtistsTab(repo, state.searchQuery),
+                      _buildPlaylistsTab(repo),
+                      _buildFavoritesTab(repo, state.searchQuery),
+                    ],
                   ),
-                ],
-                body: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _buildSongsTab(state),
-                    _buildAlbumsTab(repo, state.searchQuery),
-                    _buildArtistsTab(repo, state.searchQuery),
-                    _buildPlaylistsTab(repo),
-                    _buildFavoritesTab(repo, state.searchQuery),
+                )
+              : CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(child: header),
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: _buildPermissionState(state, notifier),
+                    ),
                   ],
                 ),
-              )
-            : CustomScrollView(
-                slivers: [
-                  SliverToBoxAdapter(child: header),
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _buildPermissionState(state, notifier),
-                  ),
-                ],
-              ),
+        ),
       ),
     );
   }
 
-  PopupMenuItem<MediaSortOption> _sortItem(MediaSortOption option, String label, LibraryState state) {
+  PopupMenuItem<MediaSortOption> _sortItem(
+    BuildContext context,
+    MediaSortOption option,
+    String label,
+    LibraryState state,
+  ) {
+    final palette = context.palette;
+    final type = context.typography;
     final selected = state.sortBy == option;
     return PopupMenuItem<MediaSortOption>(
       value: option,
@@ -174,15 +190,13 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           children: [
             SizedBox(
               width: 24,
-              child: selected ? const Icon(Icons.check_rounded, size: 20, color: AppColors.primary) : null,
+              child: selected ? Icon(Icons.check_rounded, size: 20, color: palette.primary) : null,
             ),
             const SizedBox(width: AppSpacing.md12),
             Expanded(
               child: Text(
                 label,
-                style: selected
-                    ? AppTypography.bodyStrong.copyWith(color: AppColors.primary)
-                    : AppTypography.body,
+                style: selected ? type.bodyStrong.copyWith(color: palette.primary) : type.body,
               ),
             ),
             if (selected) ...[
@@ -190,7 +204,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
               Icon(
                 state.ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
                 size: 16,
-                color: AppColors.textSecondary,
+                color: palette.textSecondary,
                 semanticLabel: state.ascending ? 'Ascending' : 'Descending',
               ),
             ],
@@ -200,18 +214,18 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     );
   }
 
-  Widget _searchField(BaseLibraryNotifier notifier) {
+  Widget _searchField(BuildContext context, BaseLibraryNotifier notifier) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.sm8),
       child: TextField(
         controller: _searchController,
         onChanged: (val) => notifier.setSearchQuery(val),
         textInputAction: TextInputAction.search,
-        style: AppTypography.body,
+        style: context.typography.body,
         decoration: InputDecoration(
           // Short enough to stay whole at 320 dp and at large text.
           hintText: 'Search your music',
-          prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textSecondary),
+          prefixIcon: Icon(Icons.search_rounded, color: context.palette.textSecondary),
           suffixIcon: _searchController.text.isNotEmpty
               ? IconButton(
                   icon: const Icon(Icons.close_rounded),
@@ -224,35 +238,6 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
               : null,
         ),
       ),
-    );
-  }
-
-  TabBar _tabBar() {
-    return TabBar(
-      controller: _tabController,
-      isScrollable: true,
-      tabAlignment: TabAlignment.start,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
-      labelPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
-      indicatorSize: TabBarIndicatorSize.tab,
-      indicatorPadding: const EdgeInsets.symmetric(vertical: _tabPillInset),
-      indicator: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(AppSpacing.xxl24),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
-      ),
-      dividerColor: Colors.transparent,
-      dividerHeight: 0,
-      labelColor: AppColors.primary,
-      unselectedLabelColor: AppColors.textSecondary,
-      labelStyle: AppTypography.button,
-      unselectedLabelStyle: AppTypography.button.copyWith(fontWeight: FontWeight.w500),
-      // The sliding pill is the feedback; an ink box (taller than the pill) would fight it.
-      overlayColor: const WidgetStatePropertyAll(Colors.transparent),
-      splashFactory: NoSplash.splashFactory,
-      tabs: [
-        for (final label in _tabs) Tab(text: label, height: AppSpacing.minTouchTarget),
-      ],
     );
   }
 
@@ -291,21 +276,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
 
   Widget _buildSongsTab(LibraryState state) {
     if (state.status == LibraryStatus.loading || state.status == LibraryStatus.initial) {
-      return const _TabScrollView(
-        storageKey: 'songs',
-        slivers: [
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(
-              child: SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
-              ),
-            ),
-          ),
-        ],
-      );
+      return const _TabScrollView(storageKey: 'songs', slivers: [_LoadingSliver()]);
     }
 
     if (state.items.isEmpty) {
@@ -316,13 +287,13 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
             hasScrollBody: false,
             child: EmptyStateWidget(
               icon: Icons.music_off_outlined,
-              title: 'No Music Found',
+              title: state.searchQuery.isNotEmpty ? 'No matching songs' : 'No songs yet',
               message: state.searchQuery.isNotEmpty
                   ? 'No songs matching "${state.searchQuery}".'
                   : 'Find the songs saved on this phone.',
               action: state.searchQuery.isNotEmpty
                   ? null
-                  : FilledButton.tonalIcon(
+                  : FilledButton.icon(
                       onPressed: state.isScanning
                           ? null
                           : () => ref.read(musicLibraryProvider.notifier).scanDevice(),
@@ -342,7 +313,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           child: _ListToolbar(
             label: _count(state.items.length, 'song', 'songs'),
             actions: [
-              FilledButton.icon(
+              FilledButton.tonalIcon(
                 style: _compactStyle,
                 icon: const Icon(Icons.shuffle_rounded, size: 18),
                 label: const Text('Shuffle all'),
@@ -413,7 +384,11 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, 0),
-              sliver: _AlbumGrid(albums: albums),
+              sliver: _CoverGrid(
+                itemCount: albums.length,
+                captionLines: (type) => [type.bodyStrong, type.metadata, type.caption],
+                itemBuilder: (context, index, side) => _AlbumTile(album: albums[index], artSize: side),
+              ),
             ),
           ],
         );
@@ -451,15 +426,18 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, 0),
-              sliver: SliverList.separated(
+              sliver: _CoverGrid(
                 itemCount: artists.length,
-                separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm8),
-                itemBuilder: (context, index) {
+                // Three round faces across a phone.
+                minTileWidth: 96,
+                captionLines: (type) => [type.bodyStrong, type.metadata],
+                itemBuilder: (context, index, side) {
                   final artist = artists[index];
-                  return _GroupCard(
-                    leading: _ArtistAvatar(name: artist.artist),
+                  return _GridTile(
+                    cover: _ArtistAvatar(name: artist.artist, size: side),
                     title: artist.artist,
-                    subtitle: _artistSubtitle(artist),
+                    lines: [_artistSubtitle(artist)],
+                    centered: true,
                     semanticsLabel: 'Artist ${artist.artist}, ${_count(artist.songCount, 'song', 'songs')}',
                     onTap: () {
                       Navigator.push(
@@ -519,15 +497,15 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
             else
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, 0),
-                sliver: SliverList.separated(
+                sliver: _CoverGrid(
                   itemCount: playlists.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm8),
-                  itemBuilder: (context, index) {
+                  captionLines: (type) => [type.bodyStrong, type.metadata],
+                  itemBuilder: (context, index, side) {
                     final pl = playlists[index];
-                    return _GroupCard(
-                      leading: const _PlaylistGlyph(),
+                    return _GridTile(
+                      cover: PlaylistCover(playlistId: pl.id, size: side, borderRadius: AppSpacing.radiusThumb),
                       title: pl.name,
-                      subtitle: _count(pl.songCount, 'song', 'songs'),
+                      lines: [_count(pl.songCount, 'song', 'songs')],
                       semanticsLabel: 'Playlist ${pl.name}, ${_count(pl.songCount, 'song', 'songs')}',
                       onTap: () {
                         Navigator.push(
@@ -577,10 +555,9 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
               child: _ListToolbar(
                 label: _count(favs.length, 'favorite', 'favorites'),
                 actions: [
-                  FilledButton.icon(
-                    style: _compactStyle,
-                    icon: const Icon(Icons.play_arrow_rounded, size: 20),
-                    label: const Text('Play all'),
+                  VoltButton.compact(
+                    icon: Icons.play_arrow_rounded,
+                    label: 'Play all',
                     onPressed: () {
                       ref.read(playbackNotifierProvider.notifier).loadQueue(favs, autoPlay: true);
                     },
@@ -616,7 +593,8 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
   }
 }
 
-/// Large screen title with a one-line subtitle and optional icon actions.
+/// The tab masthead: "Music" in `display` (Unbounded), a one-line subtitle
+/// and optional icon actions.
 class _MusicHeader extends StatelessWidget {
   final List<Widget> actions;
 
@@ -624,8 +602,9 @@ class _MusicHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final type = context.typography;
     return Padding(
-      padding: EdgeInsets.fromLTRB(
+      padding: EdgeInsetsDirectional.fromSTEB(
         AppSpacing.lg16,
         AppSpacing.xl20,
         actions.isEmpty ? AppSpacing.lg16 : AppSpacing.xs4,
@@ -638,11 +617,14 @@ class _MusicHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Semantics(header: true, child: Text('Music', style: AppTypography.display)),
+                Semantics(
+                  header: true,
+                  child: Text('Music', style: type.display, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
                 const SizedBox(height: AppSpacing.xs4),
                 Text(
                   'Your songs, albums and playlists.',
-                  style: AppTypography.metadata,
+                  style: type.metadata,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -664,23 +646,24 @@ class _LimitedAccessBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.md12),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.md12, AppSpacing.sm8, AppSpacing.xs4, AppSpacing.sm8),
+        padding: const EdgeInsetsDirectional.fromSTEB(AppSpacing.md12, AppSpacing.sm8, AppSpacing.xs4, AppSpacing.sm8),
         decoration: BoxDecoration(
-          color: AppColors.accent.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(AppSpacing.lg16),
-          border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMenu),
+          border: Border.all(color: palette.divider),
         ),
         child: Row(
           children: [
-            const Icon(Icons.info_outline_rounded, color: AppColors.accent, size: 20),
+            Icon(Icons.info_outline_rounded, color: palette.accent, size: 20),
             const SizedBox(width: AppSpacing.md12),
             Expanded(
               child: Text(
                 'You gave access to selected items only. To see all your media, grant full access in Settings.',
-                style: AppTypography.metadata.copyWith(color: AppColors.textPrimary),
+                style: context.typography.metadata.copyWith(color: palette.textPrimary),
               ),
             ),
             TextButton(
@@ -694,17 +677,113 @@ class _LimitedAccessBanner extends StatelessWidget {
   }
 }
 
-/// Keeps the pill tab bar stuck to the top while the header scrolls away.
-class _PinnedTabBarDelegate extends SliverPersistentHeaderDelegate {
-  final TabBar tabBar;
-  final bool showDivider;
+/// The section chips (docs/DESIGN.md 7.3) that drive the tab view: a
+/// horizontal row with 16 dp gutters, the selected chip the Volt sticker with
+/// its check (from the chip theme). Swiping between tabs moves the selection,
+/// and the selected chip scrolls into view.
+class _TabChips extends StatefulWidget {
+  final TabController controller;
+  final List<String> labels;
 
-  const _PinnedTabBarDelegate({required this.tabBar, required this.showDivider});
+  const _TabChips({required this.controller, required this.labels});
+
+  /// Height of the chip row: a 48 dp touch target, or the chip itself once
+  /// large text makes it taller.
+  static double heightFor(BuildContext context) {
+    final line = context.typography.chipLabel;
+    final chip = MediaQuery.textScalerOf(context).scale(line.fontSize!) * line.height! + AppSpacing.lg16;
+    return chip > AppSpacing.minTouchTarget ? chip : AppSpacing.minTouchTarget;
+  }
+
+  @override
+  State<_TabChips> createState() => _TabChipsState();
+}
+
+class _TabChipsState extends State<_TabChips> {
+  late List<GlobalKey> _keys = _makeKeys();
+  int _shown = 0;
+
+  List<GlobalKey> _makeKeys() => [for (final _ in widget.labels) GlobalKey()];
+
+  @override
+  void initState() {
+    super.initState();
+    _shown = widget.controller.index;
+    widget.controller.animation?.addListener(_onMove);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TabChips oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.animation?.removeListener(_onMove);
+      widget.controller.animation?.addListener(_onMove);
+    }
+    if (oldWidget.labels.length != widget.labels.length) _keys = _makeKeys();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.animation?.removeListener(_onMove);
+    super.dispose();
+  }
+
+  void _onMove() {
+    final value = widget.controller.animation?.value ?? widget.controller.index.toDouble();
+    final index = value.round().clamp(0, widget.labels.length - 1);
+    if (index == _shown) return;
+    setState(() => _shown = index);
+    final target = _keys[index].currentContext;
+    if (target != null) {
+      Scrollable.ensureVisible(
+        target,
+        alignment: 0.5,
+        duration: MotionTokens.duration(context, MotionTokens.page),
+        curve: MotionTokens.emphasized,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+      itemCount: widget.labels.length,
+      separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm8),
+      itemBuilder: (context, index) => Center(
+        child: ChoiceChip(
+          key: _keys[index],
+          label: Text(widget.labels[index]),
+          selected: index == _shown,
+          onSelected: (_) {
+            setState(() => _shown = index);
+            widget.controller.animateTo(index);
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// Keeps the chip row stuck to the top while the header scrolls away.
+class _PinnedChipsDelegate extends SliverPersistentHeaderDelegate {
+  final Widget chips;
+  final double height;
+  final Color background;
+  final Color divider;
+
+  const _PinnedChipsDelegate({
+    required this.chips,
+    required this.height,
+    required this.background,
+    required this.divider,
+  });
 
   static const double _verticalPadding = AppSpacing.xs4;
 
   @override
-  double get minExtent => tabBar.preferredSize.height + _verticalPadding * 2;
+  double get minExtent => height + _verticalPadding * 2 + 1;
 
   @override
   double get maxExtent => minExtent;
@@ -713,26 +792,27 @@ class _PinnedTabBarDelegate extends SliverPersistentHeaderDelegate {
   Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: AppColors.background,
-        border: Border(
-          bottom: BorderSide(color: showDivider ? AppColors.divider : Colors.transparent),
-        ),
+        color: background,
+        border: Border(bottom: BorderSide(color: divider)),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: _verticalPadding),
-        child: tabBar,
+        padding: const EdgeInsets.only(top: _verticalPadding, bottom: _verticalPadding + 1),
+        child: SizedBox(height: height, child: chips),
       ),
     );
   }
 
   @override
-  bool shouldRebuild(_PinnedTabBarDelegate oldDelegate) {
-    return oldDelegate.tabBar != tabBar || oldDelegate.showDivider != showDivider;
+  bool shouldRebuild(_PinnedChipsDelegate oldDelegate) {
+    return oldDelegate.chips != chips ||
+        oldDelegate.height != height ||
+        oldDelegate.background != background ||
+        oldDelegate.divider != divider;
   }
 }
 
 /// Scroll view for one tab inside the NestedScrollView: injects the space the
-/// pinned tab bar takes and remembers its scroll offset per tab.
+/// pinned chip row takes and remembers its scroll offset per tab.
 class _TabScrollView extends StatelessWidget {
   final String storageKey;
   final List<Widget> slivers;
@@ -765,16 +845,17 @@ class _LoadingSliver extends StatelessWidget {
         child: SizedBox(
           width: 24,
           height: 24,
-          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+          // The theme's 3 dp primary spinner.
+          child: CircularProgressIndicator(),
         ),
       ),
     );
   }
 }
 
-/// "128 songs" on the left, compact actions on the right. When both do not
-/// fit on one line (large text on a narrow phone) the actions move under the
-/// count instead of squeezing it to "12 favo…".
+/// "128 SONGS" on the left in the `overline` voice, compact actions on the
+/// right. When both do not fit on one line (large text on a narrow phone)
+/// the actions move under the count instead of squeezing it.
 class _ListToolbar extends StatelessWidget {
   final String label;
   final List<Widget> actions;
@@ -792,8 +873,9 @@ class _ListToolbar extends StatelessWidget {
         runSpacing: AppSpacing.xs4,
         children: [
           Text(
-            label,
-            style: AppTypography.label.copyWith(color: AppColors.textSecondary),
+            label.toUpperCase(),
+            semanticsLabel: label,
+            style: context.typography.overline,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -808,12 +890,25 @@ class _ListToolbar extends StatelessWidget {
   }
 }
 
-/// Two-column album grid; each tile's height follows the text scale so the
-/// captions never overflow.
-class _AlbumGrid extends StatelessWidget {
-  final List<AlbumGroup> albums;
+/// A grid of square covers with captions under them; each tile's height
+/// follows the text scale so the captions never overflow.
+class _CoverGrid extends StatelessWidget {
+  final int itemCount;
 
-  const _AlbumGrid({required this.albums});
+  /// Tiles are at least this wide; two columns at least.
+  final double minTileWidth;
+
+  /// The caption's line styles, top to bottom, for sizing the tiles.
+  final List<TextStyle> Function(AppTextStyles type) captionLines;
+
+  final Widget Function(BuildContext context, int index, double side) itemBuilder;
+
+  const _CoverGrid({
+    required this.itemCount,
+    required this.captionLines,
+    required this.itemBuilder,
+    this.minTileWidth = 150,
+  });
 
   /// Rounding allowance so a fractional line height never clips a caption.
   static const double _captionSlack = 4;
@@ -824,29 +919,24 @@ class _AlbumGrid extends StatelessWidget {
     // Height of one line of [style] at the user's text size, read from the
     // typography tokens so the tile grows with them.
     double line(TextStyle style) => scaler.scale(style.fontSize!) * (style.height ?? 1);
-    // _AlbumCard caption: title, artist, gap, song count, padding.
-    final captionHeight = line(AppTypography.bodyStrong) +
-        line(AppTypography.metadata) +
-        _AlbumCard.countGap +
-        line(AppTypography.caption) +
-        _AlbumCard.captionPadding * 2 +
-        _captionSlack;
+    final lines = captionLines(context.typography);
+    final captionHeight = _GridTile.coverGap + lines.fold<double>(0, (sum, s) => sum + line(s)) + _captionSlack;
 
     return SliverLayoutBuilder(
       builder: (context, constraints) {
         const spacing = AppSpacing.md12;
-        final columns = (constraints.crossAxisExtent / 200).floor().clamp(2, 5);
+        final columns = ((constraints.crossAxisExtent + spacing) / (minTileWidth + spacing)).floor().clamp(2, 6);
         final tileWidth = (constraints.crossAxisExtent - spacing * (columns - 1)) / columns;
         return SliverGrid(
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            mainAxisSpacing: spacing,
+            mainAxisSpacing: AppSpacing.lg16,
             crossAxisSpacing: spacing,
             mainAxisExtent: tileWidth + captionHeight,
           ),
           delegate: SliverChildBuilderDelegate(
-            (context, index) => _AlbumCard(album: albums[index], artSize: tileWidth),
-            childCount: albums.length,
+            (context, index) => itemBuilder(context, index, tileWidth),
+            childCount: itemCount,
           ),
         );
       },
@@ -854,16 +944,79 @@ class _AlbumGrid extends StatelessWidget {
   }
 }
 
-class _AlbumCard extends StatelessWidget {
+/// A cover with its caption (a name in `bodyStrong`, then `metadata` lines),
+/// one tappable node for screen readers.
+class _GridTile extends StatelessWidget {
+  final Widget cover;
+  final String title;
+  final List<String> lines;
+  final String semanticsLabel;
+  final VoidCallback onTap;
+  final bool centered;
+
+  /// The last line uses `caption` (the song count under an album).
+  final bool lastLineIsCaption;
+
+  const _GridTile({
+    required this.cover,
+    required this.title,
+    required this.lines,
+    required this.semanticsLabel,
+    required this.onTap,
+    this.centered = false,
+    this.lastLineIsCaption = false,
+  });
+
+  static const double coverGap = AppSpacing.sm8;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
+    final align = centered ? TextAlign.center : TextAlign.start;
+    // excludeSemantics drops the InkWell's tap action, so the node carries
+    // its own: TalkBack / Switch Access can open it.
+    return Semantics(
+      button: true,
+      label: semanticsLabel,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusThumb),
+          highlightColor: palette.surfacePressed,
+          child: Column(
+            crossAxisAlignment: centered ? CrossAxisAlignment.center : CrossAxisAlignment.stretch,
+            children: [
+              cover,
+              const SizedBox(height: coverGap),
+              Text(title, style: type.bodyStrong, textAlign: align, maxLines: 1, overflow: TextOverflow.ellipsis),
+              for (var i = 0; i < lines.length; i++)
+                Text(
+                  lines[i],
+                  style: lastLineIsCaption && i == lines.length - 1 ? type.caption : type.metadata,
+                  textAlign: align,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// An album in the grid: the same song's cover (and the same placeholder
+/// colours) as the album's page, at radius 14, then its name, artist and
+/// song count.
+class _AlbumTile extends StatelessWidget {
   final AlbumGroup album;
   final double artSize;
 
-  const _AlbumCard({required this.album, required this.artSize});
-
-  /// Padding around the caption and the gap above the song count; [_AlbumGrid]
-  /// sizes the tiles from these.
-  static const double captionPadding = AppSpacing.md12;
-  static const double countGap = 2;
+  const _AlbumTile({required this.album, required this.artSize});
 
   @override
   Widget build(BuildContext context) {
@@ -876,171 +1029,67 @@ class _AlbumCard extends StatelessWidget {
 
     final coverUri = album.coverUri;
     final seed = ArtworkPlaceholder.albumSeed(album.album);
+    const radius = AppSpacing.radiusThumb;
 
-    // excludeSemantics drops the InkWell's tap action, so the node carries
-    // its own: TalkBack / Switch Access can open the album.
-    return Semantics(
-      button: true,
-      label: 'Album ${album.album} by ${album.artist}, ${_count(album.songCount, 'song', 'songs')}',
+    return _GridTile(
+      cover: coverUri == null || coverUri.isEmpty
+          ? SizedBox.square(
+              dimension: artSize,
+              child: ArtworkPlaceholder(
+                seed: seed,
+                icon: Icons.album_rounded,
+                borderRadius: BorderRadius.circular(radius),
+              ),
+            )
+          : ArtworkThumbnail(
+              uri: coverUri,
+              // A download's cover is its saved thumbnail.
+              artworkPath: album.coverArtworkPath,
+              size: artSize,
+              borderRadius: radius,
+              placeholderIcon: Icons.album_rounded,
+              placeholderSeed: seed,
+            ),
+      title: album.album,
+      lines: [album.artist, _count(album.songCount, 'song', 'songs')],
+      lastLineIsCaption: true,
+      semanticsLabel: 'Album ${album.album} by ${album.artist}, ${_count(album.songCount, 'song', 'songs')}',
       onTap: open,
-      excludeSemantics: true,
-      child: SurfaceCard(
-        padding: EdgeInsets.zero,
-        onTap: open,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(AppSpacing.cardRadius)),
-              child: SizedBox(
-                width: double.infinity,
-                height: artSize,
-                // The same song's cover (and the same placeholder colours)
-                // as the album's detail screen, so the tile and its page match.
-                child: coverUri == null || coverUri.isEmpty
-                    ? ArtworkPlaceholder(seed: seed, icon: Icons.album_rounded)
-                    : ArtworkThumbnail(
-                        uri: coverUri,
-                        // A download's cover is its saved thumbnail.
-                        artworkPath: album.coverArtworkPath,
-                        width: artSize,
-                        height: artSize,
-                        borderRadius: 0,
-                        placeholderIcon: Icons.album_rounded,
-                        placeholderSeed: seed,
-                      ),
-              ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(captionPadding),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      album.album,
-                      style: AppTypography.bodyStrong,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      album.artist,
-                      style: AppTypography.metadata,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: countGap),
-                    Text(
-                      _count(album.songCount, 'song', 'songs'),
-                      style: AppTypography.caption,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
 
-/// Card row used for artists and playlists.
-class _GroupCard extends StatelessWidget {
-  final Widget leading;
-  final String title;
-  final String subtitle;
-  final String semanticsLabel;
-  final VoidCallback onTap;
-
-  const _GroupCard({
-    required this.leading,
-    required this.title,
-    required this.subtitle,
-    required this.semanticsLabel,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // excludeSemantics drops the InkWell's tap action, so the node carries
-    // its own: TalkBack / Switch Access can open the artist or playlist.
-    return Semantics(
-      button: true,
-      label: semanticsLabel,
-      onTap: onTap,
-      excludeSemantics: true,
-      child: SurfaceCard(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.md12, AppSpacing.md12, AppSpacing.sm8, AppSpacing.md12),
-        onTap: onTap,
-        child: Row(
-          children: [
-            leading,
-            const SizedBox(width: AppSpacing.md12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title, style: AppTypography.bodyStrong, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: AppTypography.metadata, maxLines: 1, overflow: TextOverflow.ellipsis),
-                ],
-              ),
-            ),
-            const SizedBox(width: AppSpacing.sm8),
-            const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Round initial on a soft violet glow.
+/// An artist's round face: their initial on the artist's own cover colours
+/// (the same ones their page uses when no song has a cover).
 class _ArtistAvatar extends StatelessWidget {
   final String name;
+  final double size;
 
-  const _ArtistAvatar({required this.name});
+  const _ArtistAvatar({required this.name, required this.size});
 
   @override
   Widget build(BuildContext context) {
     final trimmed = name.trim();
     final initial = trimmed.isEmpty ? '?' : trimmed.characters.first.toUpperCase();
+    final gradient = ArtworkPlaceholder.gradientFor(ArtworkPlaceholder.artistSeed(name), context.palette);
     return Container(
-      width: 48,
-      height: 48,
+      width: size,
+      height: size,
       alignment: Alignment.center,
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: AppColors.heroGradient,
+      decoration: BoxDecoration(shape: BoxShape.circle, gradient: gradient),
+      child: ExcludeSemantics(
+        child: Text(
+          initial,
+          // A letter of the artist's name: Anek draws Latin and Devanagari
+          // alike. White, like every glyph on a cover gradient.
+          style: context.typography.greeting.copyWith(
+            fontSize: size * 0.4,
+            height: 1,
+            color: Colors.white.withValues(alpha: ArtworkPlaceholder.glyphOpacity),
+          ),
+          textScaler: TextScaler.noScaling,
+        ),
       ),
-      child: Text(
-        initial,
-        // A letter of the artist's name: Anek draws Latin and Devanagari alike.
-        style: AppTypography.cardTitle.copyWith(color: AppColors.primary),
-        textScaler: TextScaler.noScaling,
-      ),
-    );
-  }
-}
-
-/// Small violet tile standing in for a playlist cover.
-class _PlaylistGlyph extends StatelessWidget {
-  const _PlaylistGlyph();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        gradient: AppColors.primaryGradient,
-        borderRadius: BorderRadius.circular(AppSpacing.md12),
-      ),
-      child: const Icon(Icons.queue_music_rounded, color: AppColors.onPrimary),
     );
   }
 }

@@ -1,14 +1,11 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/logging/diagnostics_service.dart';
 import '../../shared/widgets/ui_kit.dart';
-
-/// Monospace look for log text; falls back to the iOS system monospace fonts.
-const List<String> _monoFallback = ['Menlo', 'Courier New', 'Courier'];
 
 class DiagnosticsScreen extends StatefulWidget {
   const DiagnosticsScreen({super.key});
@@ -63,11 +60,15 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          'Diagnostics Log',
-          style: AppTypography.sectionTitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        // One line, scaled down rather than cut at large text sizes.
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(
+            'Diagnostics log',
+            style: context.typography.sectionTitle,
+            maxLines: 1,
+          ),
         ),
         actions: [
           ValueListenableBuilder<List<String>>(
@@ -121,9 +122,9 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                   // Same look as SurfaceCard, but as a sliver so long logs stay lazily built.
                   sliver: DecoratedSliver(
                     decoration: BoxDecoration(
-                      color: AppColors.surface,
+                      color: context.palette.surface,
                       borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-                      border: Border.all(color: AppColors.divider),
+                      border: Border.all(color: context.palette.divider),
                     ),
                     sliver: SliverPadding(
                       padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs4),
@@ -226,6 +227,7 @@ class _Summary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg16,
@@ -239,7 +241,7 @@ class _Summary extends StatelessWidget {
           Text(
             'Recent app events (playback, downloads, network), oldest first. '
             'Most links and file paths are hidden; check before sharing.',
-            style: AppTypography.metadata,
+            style: AppTypography.of(palette).metadata,
           ),
           const SizedBox(height: AppSpacing.md12),
           Wrap(
@@ -250,10 +252,10 @@ class _Summary extends StatelessWidget {
                 text: count == 1 ? '1 event' : '$count events',
                 icon: Icons.receipt_long_outlined,
               ),
-              const PillTag(
+              PillTag(
                 text: 'Keeps the last ${DiagnosticsService.maxLines}',
                 icon: Icons.history_rounded,
-                color: AppColors.textSecondary,
+                color: palette.textSecondary,
               ),
             ],
           ),
@@ -269,32 +271,26 @@ class _LogLine extends StatelessWidget {
 
   const _LogLine({required this.entry, required this.showDivider});
 
-  /// Timestamp: label scale (12/16, muted) with tabular figures so times line up.
-  static final TextStyle _timeStyle = AppTypography.label.copyWith(
-    fontFeatures: const [FontFeature.tabularFigures()],
-  );
-
-  /// Event name: metadata scale (13/18) in monospace; teal normally, red for problems.
-  static final TextStyle _eventStyle = AppTypography.metadata.copyWith(
-    fontFamily: 'monospace',
-    fontFamilyFallback: _monoFallback,
-    fontWeight: FontWeight.w600,
-    color: AppColors.accent,
-  );
-  static final TextStyle _problemStyle = _eventStyle.copyWith(color: AppColors.error);
-
-  /// Payload: label scale (12/16) in monospace, secondary text colour.
-  static final TextStyle _detailStyle = AppTypography.label.copyWith(
-    fontFamily: 'monospace',
-    fontFamilyFallback: _monoFallback,
-    fontWeight: FontWeight.w400,
-    letterSpacing: 0,
-    color: AppColors.textSecondary,
-  );
-
   @override
   Widget build(BuildContext context) {
     if (entry.isEmpty) return const SizedBox.shrink();
+
+    // Every part of a line is in DM Mono (the figures role), so times line up
+    // and event names read as the codes they are. Devanagari in a payload
+    // falls back to Mukta, and letterSpacing stays 0.
+    final palette = context.palette;
+    final figures = AppTypography.of(palette).tabularFigures;
+    // Timestamp: 12/16 muted, centred on the 18 dp event line by 1 dp.
+    final timeStyle = figures.copyWith(fontSize: 12, height: 16 / 12, color: palette.textMuted);
+    // Event name: 13/18 medium; accent normally, error for problems.
+    final eventStyle = figures.copyWith(color: entry.isProblem ? palette.error : palette.accent);
+    // Payload: 12/16 regular in the secondary text colour.
+    final detailStyle = figures.copyWith(
+      fontSize: 12,
+      height: 16 / 12,
+      fontWeight: FontWeight.w400,
+      color: palette.textSecondary,
+    );
 
     final details = entry.details;
     return Column(
@@ -310,7 +306,7 @@ class _LogLine extends StatelessWidget {
                 // 1 dp centres the 16 dp timestamp line on the 18 dp event line.
                 Padding(
                   padding: const EdgeInsets.only(top: 1),
-                  child: Text(entry.timestamp, style: _timeStyle),
+                  child: Text(entry.timestamp, style: timeStyle),
                 ),
                 const SizedBox(width: AppSpacing.md12),
               ],
@@ -318,10 +314,10 @@ class _LogLine extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(entry.eventName, style: entry.isProblem ? _problemStyle : _eventStyle),
+                    Text(entry.eventName, style: eventStyle),
                     if (details != null) ...[
                       const SizedBox(height: 2),
-                      Text(details, style: _detailStyle),
+                      Text(details, style: detailStyle),
                     ],
                   ],
                 ),

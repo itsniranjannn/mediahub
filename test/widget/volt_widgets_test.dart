@@ -405,6 +405,39 @@ void main() {
   });
 
   group('kit pieces read the palette', () {
+    testWidgets('VoltSlab: the time left follows the artist and is never the part cut', (tester) async {
+      await _pump(
+        tester,
+        SizedBox(
+          width: 288,
+          child: VoltSlab(
+            title: 'झिलिमिली साँझ',
+            subtitle: 'The Kathmandu Valley Folk Ensemble',
+            meta: '2:19 left',
+            progress: 0.4,
+            onPlay: () {},
+          ),
+        ),
+        width: 320,
+        textScale: 1.3,
+      );
+      expect(tester.takeException(), isNull);
+      final artist = tester.renderObject<RenderParagraph>(find.text('The Kathmandu Valley Folk Ensemble'));
+      expect(artist.didExceedMaxLines, isTrue, reason: 'the artist gives way');
+      final meta = tester.renderObject<RenderParagraph>(
+        find.byWidgetPredicate((w) => w is RichText && w.text.toPlainText() == ' · 2:19 left'),
+      );
+      expect(meta.didExceedMaxLines, isFalse, reason: 'the figure is shown in full');
+      TextSpan? figure;
+      meta.text.visitChildren((span) {
+        if (span is TextSpan && span.text == '2:19') figure = span;
+        return figure == null;
+      });
+      expect(figure?.style?.fontFamily, 'DMMono');
+      expect(find.bySemanticsLabel(RegExp(r'The Kathmandu Valley Folk Ensemble\n2:19 left')), findsOneWidget,
+          reason: 'read without the dot');
+    });
+
     testWidgets('SurfaceCard, PillTag, DurationBadge.live and SectionHeader in light', (tester) async {
       await _pump(
         tester,

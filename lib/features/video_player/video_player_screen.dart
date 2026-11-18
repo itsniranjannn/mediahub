@@ -2,14 +2,29 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../app/theme/app_colors.dart';
+import 'package:flutter/services.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
+import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/platform/device_controls.dart';
 import '../../core/utils/formatters.dart';
 import '../../domain/models/media_item.dart';
+import '../../domain/repositories/video_engine.dart';
+import '../../shared/widgets/ui_kit.dart';
 import 'video_player_notifier.dart';
+
+/// The stage behind the picture: pure black in both themes (DESIGN.md 7.9).
+const Color _kStage = Color(0xFF000000);
+
+/// A light dimming layer over the whole picture while the controls show. The
+/// controls themselves sit on `overlay` scrims (top and bottom) or discs
+/// (the skip buttons), so they read on any frame, even a white one.
+const Color _kControlsVeil = Color(0x33000000);
+
+/// How far a control scrim fades out past its controls.
+const double _kScrimFade = 40;
 
 class VideoPlayerScreen extends ConsumerStatefulWidget {
   final MediaItem item;
@@ -143,7 +158,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
     _hideHudSoon();
   }
 
-  Widget _buildHud(_GestureHud hud) {
+  /// Brightness / volume / seek feedback: white on the ink overlay chip, a
+  /// Volt bar on a white 24 % track.
+  Widget _buildHud(AppPalette palette, AppTextStyles type, _GestureHud hud) {
     return Positioned.fill(
       child: IgnorePointer(
         child: Center(
@@ -151,22 +168,22 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
             constraints: const BoxConstraints(minWidth: 150),
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.72),
-              borderRadius: BorderRadius.circular(14),
+              color: palette.overlay,
+              borderRadius: BorderRadius.circular(AppSpacing.radiusThumb),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(hud.icon, color: Colors.white, size: 32),
+                Icon(hud.icon, color: palette.onOverlay, size: 32),
                 const SizedBox(height: 8),
-                Text(hud.label, style: AppTypography.tabularFigures.copyWith(color: Colors.white)),
+                Text(hud.label, style: type.tabularFigures.copyWith(color: palette.onOverlay)),
                 const SizedBox(height: 8),
                 SizedBox(
                   width: 130,
                   child: LinearProgressIndicator(
                     value: hud.value.clamp(0.0, 1.0),
-                    backgroundColor: Colors.white24,
-                    color: AppColors.primary,
+                    backgroundColor: palette.onOverlay.withValues(alpha: 0.24),
+                    color: palette.primary,
                   ),
                 ),
               ],
@@ -217,6 +234,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
     super.dispose();
   }
 
+  /// The video stage is ink in both themes, with light system bar icons
+  /// (DESIGN.md 7.9 and 8.2): everything below reads the dark palette.
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(videoPlayerControllerProvider(widget.item));
@@ -224,12 +243,33 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
     final engine = ref.watch(videoEngineProvider);
     final inPip = ref.watch(_pipProvider);
 
+    return Theme(
+      data: AppTheme.darkTheme,
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: AppTheme.barsOnInk,
+        child: Builder(
+          builder: (context) => _buildStage(context, state, notifier, engine, inPip),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStage(
+    BuildContext context,
+    VideoPlaybackState state,
+    VideoPlayerControllerNotifier notifier,
+    VideoEngine engine,
+    bool inPip,
+  ) {
+    final palette = context.palette;
+    final type = context.typography;
+
     if (state.errorMessage != null) {
       // Only a plain message by cause: the raw exception goes to the
       // diagnostics log (see VideoPlayerControllerNotifier._handleError).
       final kind = classifyVideoError(state.errorMessage!);
       return Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: _kStage,
         body: SafeArea(
           child: Center(
             child: SingleChildScrollView(
@@ -237,10 +277,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.error_outline_rounded,
                     size: 64,
-                    color: AppColors.error,
+                    color: palette.error,
                   ),
                   const SizedBox(height: AppSpacing.lg16),
                   // One heading node that is a live region: when this view
@@ -255,23 +295,24 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                         children: [
                           Semantics(
                             header: true,
+                            // An app string: the app's own heading voice.
                             child: Text(
                               'Unable to play video',
                               textAlign: TextAlign.center,
-                              style: AppTypography.screenTitle.copyWith(color: AppColors.textPrimary),
+                              style: type.sectionTitle,
                             ),
                           ),
                           const SizedBox(height: AppSpacing.sm8),
                           Text(
                             kind.message,
                             textAlign: TextAlign.center,
-                            style: AppTypography.body.copyWith(color: AppColors.textSecondary),
+                            style: type.body.copyWith(color: palette.textSecondary),
                           ),
                           const SizedBox(height: AppSpacing.xs4),
                           Text(
                             'Your file is safe.',
                             textAlign: TextAlign.center,
-                            style: AppTypography.metadata.copyWith(color: AppColors.textMuted),
+                            style: type.metadata,
                           ),
                         ],
                       ),
@@ -300,9 +341,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
 
     if (!state.isInitialized) {
       return const Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: _kStage,
         body: Center(
-          child: CircularProgressIndicator(color: AppColors.primary),
+          child: CircularProgressIndicator(),
         ),
       );
     }
@@ -314,7 +355,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
     final fadeDuration = MotionTokens.duration(context, const Duration(milliseconds: 160));
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: _kStage,
       body: Stack(
         children: [
           // 1. Video Player Surface
@@ -369,7 +410,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
           ),
 
           // 4. Brightness / volume / seek feedback while swiping
-          if (!inPip && _hud != null) _buildHud(_hud!),
+          if (!inPip && _hud != null) _buildHud(palette, type, _hud!),
         ],
       ),
     );
@@ -385,9 +426,16 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
           Positioned(
             top: AppSpacing.lg16,
             left: AppSpacing.lg16,
-            child: IconButton.filled(
-              icon: const Icon(Icons.lock_rounded, color: AppColors.primary),
+            // A Volt lock on the ink overlay chip. (IconButton.filled took the
+            // theme's primary fill, Volt, under the Volt glyph: invisible.)
+            child: IconButton(
+              icon: const Icon(Icons.lock_rounded),
               tooltip: 'Unlock Controls',
+              style: IconButton.styleFrom(
+                backgroundColor: context.palette.overlay,
+                foregroundColor: context.palette.primary,
+                minimumSize: const Size.square(AppSpacing.minTouchTarget),
+              ),
               onPressed: () => notifier.toggleLock(),
             ),
           ),
@@ -396,6 +444,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
     );
   }
 
+  /// Controls over the picture (DESIGN.md 7.9): white glyphs on `overlay`
+  /// scrims, the title in `playerTitle` under the top row, a Volt disc for play /
+  /// pause and a Volt scrubber with the times in DM Mono.
   Widget _buildNormalControls(
     BuildContext context,
     VideoPlaybackState state,
@@ -403,194 +454,256 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
     double sliderVal,
     double maxDuration,
   ) {
-    // The dimming layer ignores touches, so taps and swipes on empty areas still
-    // reach the gesture detector underneath (tap hides the controls, swipes seek).
+    final palette = context.palette;
+    final type = context.typography;
+    final onVideo = palette.onOverlay;
+    // The name as on the video cards: no file extension.
+    final title = videoDisplayTitle(widget.item.title);
+    final shownTitle = breakableTitle(title);
+
+    Widget overlayButton({
+      required IconData icon,
+      required String tooltip,
+      required VoidCallback onPressed,
+      double size = 24,
+      bool onChip = false,
+    }) {
+      return IconButton(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        icon: Icon(icon, size: size, color: onVideo),
+        tooltip: tooltip,
+        onPressed: onPressed,
+        // The skip buttons float mid-picture, away from the scrims: they
+        // carry their own overlay disc.
+        style: onChip ? IconButton.styleFrom(backgroundColor: palette.overlay) : null,
+      );
+    }
+
+    // White controls on `overlay` (DESIGN.md 7.9), whatever the frame: a
+    // scrim behind the top row and title and one behind the scrubber and
+    // times, each solid behind its controls and fading out past them; only
+    // a light veil over the middle of the picture. Every layer ignores
+    // touches, so taps and swipes on empty areas still reach the gesture
+    // detector underneath (tap hides the controls, swipes seek).
+    final insets = MediaQuery.paddingOf(context);
+    final scaler = MediaQuery.textScalerOf(context);
+    double lineOf(TextStyle style) => scaler.scale(style.fontSize!) * style.height!;
+    // Top: inset, 4 + a 48 dp icon row, up to two title lines, 4.
+    final topSolid = insets.top + AppSpacing.xs4 * 2 + 48 + lineOf(type.playerTitle) * 2;
+    // Bottom: 8 + the 48 dp slider, the times line, 8, inset.
+    final bottomSolid = insets.bottom + AppSpacing.sm8 * 2 + 48 + lineOf(type.tabularFigures);
+    final overlay = palette.overlay;
+    Widget scrim({required bool top, required double solid}) {
+      final height = solid + _kScrimFade;
+      return Positioned(
+        top: top ? 0 : null,
+        bottom: top ? null : 0,
+        left: 0,
+        right: 0,
+        height: height,
+        child: IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: top ? Alignment.topCenter : Alignment.bottomCenter,
+                end: top ? Alignment.bottomCenter : Alignment.topCenter,
+                colors: [overlay, overlay, overlay.withValues(alpha: 0)],
+                stops: [0, solid / height, 1],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Stack(
       children: [
         const Positioned.fill(
-          child: IgnorePointer(child: ColoredBox(color: Color(0x66000000))),
+          child: IgnorePointer(child: ColoredBox(color: _kControlsVeil)),
         ),
+        scrim(top: true, solid: topSolid),
+        scrim(top: false, solid: bottomSolid),
         SafeArea(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            // Top Bar
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.sm8,
-                vertical: AppSpacing.xs4,
-              ),
-              child: Row(
-                children: [
-                  Semantics(
-                    label: 'Exit Video Player',
-                    button: true,
-                    child: IconButton(
-                      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ),
-                  Expanded(
-                    child: Text(
-                      widget.item.title,
-                      style: AppTypography.screenTitle.copyWith(
-                        color: Colors.white,
-                        fontSize: 18,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (DeviceControls.available)
-                    IconButton(
-                      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      icon: const Icon(Icons.picture_in_picture_alt_rounded, color: Colors.white),
-                      tooltip: 'Picture in picture',
-                      onPressed: _enterPip,
-                    ),
-                  IconButton(
-                    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                    icon: Icon(
-                      state.isLandscape
-                          ? Icons.stay_current_portrait_rounded
-                          : Icons.stay_current_landscape_rounded,
-                      color: Colors.white,
-                    ),
-                    tooltip: state.isLandscape ? 'Portrait' : 'Landscape',
-                    onPressed: () => notifier.toggleOrientation(),
-                  ),
-                  PopupMenuButton<double>(
-                    icon: const Icon(Icons.speed_rounded, color: Colors.white),
-                    tooltip: 'Playback Speed',
-                    initialValue: state.speed,
-                    onSelected: (speed) => notifier.setSpeed(speed),
-                    itemBuilder: (context) => [
-                      0.5,
-                      0.75,
-                      1.0,
-                      1.25,
-                      1.5,
-                      2.0,
-                    ].map((s) => PopupMenuItem(
-                          value: s,
-                          child: Text('${s}x', style: AppTypography.tabularFigures),
-                        )).toList(),
-                  ),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-                    tooltip: 'More',
-                    onSelected: (value) {
-                      if (value == 'fit') notifier.toggleFitFill();
-                      if (value == 'lock') notifier.toggleLock();
-                    },
-                    itemBuilder: (context) => [
-                      PopupMenuItem(
-                        value: 'fit',
-                        child: Text(state.fitCover ? 'Fit to screen' : 'Fill screen'),
-                      ),
-                      const PopupMenuItem(value: 'lock', child: Text('Lock controls')),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            // Middle: Skip -10s, Play/Pause, Skip +10s
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                  icon: const Icon(Icons.replay_10_rounded, size: 40, color: Colors.white),
-                  tooltip: 'Rewind 10 seconds',
-                  onPressed: () => notifier.skipSeconds(-10),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Top: back and the actions, then the title on its own lines.
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.sm8,
+                  vertical: AppSpacing.xs4,
                 ),
-                const SizedBox(width: AppSpacing.xxl24),
-                Container(
-                  width: 64,
-                  height: 64,
-                  decoration: const BoxDecoration(
-                    color: AppColors.primary,
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                    icon: Icon(
-                      state.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      size: 38,
-                      color: Colors.black,
-                    ),
-                    tooltip: state.isPlaying ? 'Pause' : 'Play',
-                    onPressed: () => notifier.togglePlayPause(),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.xxl24),
-                IconButton(
-                  constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                  icon: const Icon(Icons.forward_10_rounded, size: 40, color: Colors.white),
-                  tooltip: 'Forward 10 seconds',
-                  onPressed: () => notifier.skipSeconds(10),
-                ),
-              ],
-            ),
-
-            // Bottom Bar: Progress Slider & Tabular Figures Times
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.lg16,
-                vertical: AppSpacing.sm8,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                      activeTrackColor: AppColors.primary,
-                      inactiveTrackColor: Colors.white30,
-                      thumbColor: AppColors.primary,
-                      trackHeight: 3,
-                    ),
-                    child: Slider(
-                      min: 0.0,
-                      max: maxDuration,
-                      value: sliderVal,
-                      onChanged: (val) {
-                        setState(() {
-                          _dragValue = val;
-                        });
-                      },
-                      onChangeEnd: (val) {
-                        notifier.seekTo(Duration(milliseconds: val.toInt()));
-                        setState(() {
-                          _dragValue = null;
-                        });
-                      },
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
                       children: [
-                        // Same short clock as the music player ('1:14', '1:02:03').
-                        Text(
-                          formatClock(Duration(milliseconds: sliderVal.toInt())),
-                          style: AppTypography.tabularFigures.copyWith(color: Colors.white),
+                        Semantics(
+                          label: 'Exit Video Player',
+                          button: true,
+                          child: IconButton(
+                            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                            icon: Icon(Icons.arrow_back_rounded, color: onVideo),
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
                         ),
-                        Text(
-                          formatClock(state.duration),
-                          style: AppTypography.tabularFigures.copyWith(color: Colors.white70),
+                        const Spacer(),
+                        if (DeviceControls.available)
+                          overlayButton(
+                            icon: Icons.picture_in_picture_alt_rounded,
+                            tooltip: 'Picture in picture',
+                            onPressed: _enterPip,
+                          ),
+                        overlayButton(
+                          icon: state.isLandscape
+                              ? Icons.stay_current_portrait_rounded
+                              : Icons.stay_current_landscape_rounded,
+                          tooltip: state.isLandscape ? 'Portrait' : 'Landscape',
+                          onPressed: () => notifier.toggleOrientation(),
+                        ),
+                        PopupMenuButton<double>(
+                          icon: Icon(Icons.speed_rounded, color: onVideo),
+                          tooltip: 'Playback Speed',
+                          initialValue: state.speed,
+                          onSelected: (speed) => notifier.setSpeed(speed),
+                          itemBuilder: (context) => [
+                            0.5,
+                            0.75,
+                            1.0,
+                            1.25,
+                            1.5,
+                            2.0,
+                          ]
+                              .map((s) => PopupMenuItem(
+                                    value: s,
+                                    child: Text(
+                                      '${s}x',
+                                      style: type.tabularFigures.copyWith(
+                                        fontSize: 16,
+                                        height: 24 / 16,
+                                        color: s == state.speed ? palette.primary : palette.textPrimary,
+                                      ),
+                                    ),
+                                  ))
+                              .toList(),
+                        ),
+                        PopupMenuButton<String>(
+                          icon: Icon(Icons.more_vert_rounded, color: onVideo),
+                          tooltip: 'More',
+                          onSelected: (value) {
+                            if (value == 'fit') notifier.toggleFitFill();
+                            if (value == 'lock') notifier.toggleLock();
+                          },
+                          itemBuilder: (context) => [
+                            PopupMenuItem(
+                              value: 'fit',
+                              child: Text(state.fitCover ? 'Fit to screen' : 'Fill screen'),
+                            ),
+                            const PopupMenuItem(value: 'lock', child: Text('Lock controls')),
+                          ],
                         ),
                       ],
                     ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm8),
+                      // The video's own name: Anek, two lines at most, broken
+                      // after "_" in file-style names; read as written.
+                      child: Text(
+                        shownTitle,
+                        semanticsLabel: shownTitle == title ? null : title,
+                        style: type.playerTitle.copyWith(color: onVideo),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Middle: Skip -10s, Play/Pause, Skip +10s
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  overlayButton(
+                    icon: Icons.replay_10_rounded,
+                    size: 40,
+                    tooltip: 'Rewind 10 seconds',
+                    onChip: true,
+                    onPressed: () => notifier.skipSeconds(-10),
+                  ),
+                  const SizedBox(width: AppSpacing.xxl24),
+                  VoltDisc(
+                    size: 64,
+                    icon: state.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    tooltip: state.isPlaying ? 'Pause' : 'Play',
+                    onPressed: () => notifier.togglePlayPause(),
+                  ),
+                  const SizedBox(width: AppSpacing.xxl24),
+                  overlayButton(
+                    icon: Icons.forward_10_rounded,
+                    size: 40,
+                    tooltip: 'Forward 10 seconds',
+                    onChip: true,
+                    onPressed: () => notifier.skipSeconds(10),
                   ),
                 ],
               ),
-            ),
-          ],
-        ),
+
+              // Bottom: the Volt scrubber and the times.
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.lg16,
+                  vertical: AppSpacing.sm8,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SliderTheme(
+                      // The theme's Volt track and thumb; the unplayed part is
+                      // white, as dark violet would vanish on a dark frame.
+                      data: SliderTheme.of(context).copyWith(
+                        inactiveTrackColor: onVideo.withValues(alpha: 0.3),
+                      ),
+                      child: Slider(
+                        min: 0.0,
+                        max: maxDuration,
+                        value: sliderVal,
+                        onChanged: (val) {
+                          setState(() {
+                            _dragValue = val;
+                          });
+                        },
+                        onChangeEnd: (val) {
+                          notifier.seekTo(Duration(milliseconds: val.toInt()));
+                          setState(() {
+                            _dragValue = null;
+                          });
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          // Same short clock as the music player ('1:14', '1:02:03').
+                          Text(
+                            formatClock(Duration(milliseconds: sliderVal.toInt())),
+                            style: type.tabularFigures.copyWith(color: onVideo),
+                          ),
+                          Text(
+                            formatClock(state.duration),
+                            style: type.tabularFigures.copyWith(color: onVideo.withValues(alpha: 0.78)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );

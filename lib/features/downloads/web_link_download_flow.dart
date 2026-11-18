@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/platform_info.dart';
@@ -334,7 +334,7 @@ class LinkLookupOutcome<T> {
   final bool _cancelled;
 }
 
-/// "Finding available qualities..." card: a spinner in a soft violet halo,
+/// "Finding available qualities..." card: a spinner in a soft brand halo,
 /// the site being read and a Cancel button. Closing it (Cancel or the system
 /// back gesture) is all Cancel does; [WebLinkDownloadFlow.start] notices the
 /// closed dialog and abandons the lookup.
@@ -346,6 +346,8 @@ class _FetchingInfoDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.giant40,
@@ -371,8 +373,8 @@ class _FetchingInfoDialog extends StatelessWidget {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      AppColors.primary.withValues(alpha: 0.28),
-                      AppColors.primary.withValues(alpha: 0.04),
+                      palette.primaryBase.withValues(alpha: 0.28),
+                      palette.primaryBase.withValues(alpha: 0.04),
                     ],
                   ),
                 ),
@@ -388,18 +390,18 @@ class _FetchingInfoDialog extends StatelessWidget {
                 child: Text(
                   'Finding available qualities...',
                   textAlign: TextAlign.center,
-                  style: AppTypography.bodyStrong,
+                  style: type.bodyStrong,
                 ),
               ),
               if (host.isNotEmpty) ...[
                 const SizedBox(height: AppSpacing.sm8),
-                PillTag(text: host, icon: Icons.link_rounded, color: AppColors.accent),
+                PillTag(text: host, icon: Icons.link_rounded, color: palette.accent),
               ],
               const SizedBox(height: AppSpacing.sm8),
               Text(
                 'Long videos can take a little while.',
                 textAlign: TextAlign.center,
-                style: AppTypography.metadata,
+                style: type.metadata,
               ),
               const SizedBox(height: AppSpacing.xl20),
               SizedBox(

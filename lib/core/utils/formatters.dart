@@ -50,3 +50,13 @@ String breakableTitle(String title) {
   if (!title.contains('_')) return title;
   return title.replaceAll('_', '_$_kWrapPoint');
 }
+
+final RegExp _fileExtension = RegExp(r'\.[a-zA-Z0-9]{2,4}$');
+
+/// A video's title as people see it everywhere (cards, the media sheet, the
+/// player, dialogs): its file name without the extension ("Bhai Tika.mp4" →
+/// "Bhai Tika"). Display only; never store, search or compare the result.
+String videoDisplayTitle(String title) {
+  final stripped = title.replaceAll(_fileExtension, '');
+  return stripped.isEmpty ? title : stripped;
+}

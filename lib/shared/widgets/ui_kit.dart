@@ -107,6 +107,9 @@ class SectionHeader extends StatelessWidget {
   /// Thickness of the rule above a kicker.
   static const double ruleThickness = 2;
 
+  /// The action button's narrowest width (Material's TextButton minimum).
+  static const double _actionMinWidth = 64;
+
   /// Style for a section's trailing [TextButton].
   static final ButtonStyle actionStyle = TextButton.styleFrom(
     padding: const EdgeInsets.symmetric(horizontal: actionButtonPadding),
@@ -131,58 +134,91 @@ class SectionHeader extends StatelessWidget {
     final resolved = padding.resolve(direction);
     final outer = label == null ? resolved : paddingWithAction(padding, direction);
 
+    final titleText = Semantics(
+      header: true,
+      child: Text(title, style: type.sectionTitle),
+    );
+
+    // The action keeps its 48 dp target but takes no height of its own: it
+    // is laid over the header, centred on the title's last line, and the
+    // title row only reserves its width. A header with "See all" is then as
+    // tall as one without, and its kicker sits as close to the title.
+    final scaler = MediaQuery.textScalerOf(context);
+    double reserve = 0;
+    if (label != null) {
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: type.button),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      reserve = math.max(_actionMinWidth, painter.width + actionButtonPadding * 2) + 1;
+      painter.dispose();
+    }
     final row = Row(
       children: [
-        Expanded(
-          child: Semantics(
-            header: true,
-            child: Text(title, style: type.sectionTitle),
-          ),
-        ),
-        if (label != null)
-          TextButton(style: actionStyle, onPressed: onAction, child: Text(label)),
+        Expanded(child: titleText),
+        if (label != null) SizedBox(width: reserve),
       ],
     );
 
     final kicker = this.kicker;
     final rule = showRule ?? kicker != null;
-    if (kicker == null && !rule) return Padding(padding: outer, child: row);
-
     // The rule and kicker keep the full gutter even where the action button
     // borrows part of the end padding.
     final borrowed = (resolved.horizontal - outer.horizontal).clamp(0.0, double.infinity);
-    return Padding(
-      padding: outer,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: EdgeInsetsDirectional.only(end: borrowed),
+    final Widget header = kicker == null && !rule
+        ? Padding(padding: outer, child: row)
+        : Padding(
+            padding: outer,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (rule) ...[
-                  Container(height: ruleThickness, color: palette.rule),
-                  const SizedBox(height: AppSpacing.md12),
-                ],
-                if (kicker != null) ...[
-                  Text(
-                    kicker.toUpperCase(),
-                    semanticsLabel: kicker,
-                    style: type.overline.copyWith(color: palette.primary),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                Padding(
+                  padding: EdgeInsetsDirectional.only(end: borrowed),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (rule) ...[
+                        Container(height: ruleThickness, color: palette.rule),
+                        const SizedBox(height: AppSpacing.md12),
+                      ],
+                      if (kicker != null) ...[
+                        Text(
+                          kicker.toUpperCase(),
+                          semanticsLabel: kicker,
+                          style: type.overline.copyWith(color: palette.primary),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: AppSpacing.xs4),
+                      ],
+                    ],
                   ),
-                  const SizedBox(height: AppSpacing.xs4),
-                ],
+                ),
+                row,
               ],
             ),
+          );
+    if (label == null) return header;
+
+    final titleLine = scaler.scale(type.sectionTitle.fontSize!) * type.sectionTitle.height!;
+    final end = direction == TextDirection.ltr ? outer.right : outer.left;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        header,
+        PositionedDirectional(
+          end: end,
+          bottom: outer.bottom + titleLine / 2 - kMinInteractiveDimension / 2,
+          height: kMinInteractiveDimension,
+          child: Center(
+            child: TextButton(style: actionStyle, onPressed: onAction, child: Text(label)),
           ),
-          row,
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -786,8 +822,9 @@ class _VoltDiscState extends State<VoltDisc> with _PressedState<VoltDisc> {
 /// The Volt sheen with radius 20 and 16 dp padding (plus the ink edge on
 /// paper); a [kicker] in `overline` / onVoltMuted; the [title] in `cardTitle`
 /// ink (one line, two at large text sizes; file-style names wrap at
-/// underscores); a [subtitle] (artist, time left) in `metadata` /
-/// onVoltMuted; a trailing 48 dp ink disc with a Volt play glyph ([onPlay]);
+/// underscores); a [subtitle] (the artist) in `metadata` / onVoltMuted,
+/// followed by a [meta] figure ("2:19 left") that is never cut; a trailing
+/// 48 dp ink disc with a Volt play glyph ([onPlay]);
 /// and, with a [progress], a 3 dp ink line on an ink-20 % track 8 dp above
 /// the bottom edge. Tap = [onTap] (resume), long press = [onLongPress]
 /// (media sheet).
@@ -795,6 +832,11 @@ class VoltSlab extends StatefulWidget {
   final String title;
   final String kicker;
   final String? subtitle;
+
+  /// A figure after the [subtitle], such as "2:19 left": the leading number
+  /// (a clock or count) in DM Mono, after a " · ". The subtitle gives way
+  /// first, so the figure is never ellipsized.
+  final String? meta;
 
   /// 0..1, or null for no progress line.
   final double? progress;
@@ -813,6 +855,7 @@ class VoltSlab extends StatefulWidget {
     required this.title,
     this.kicker = 'Continue listening',
     this.subtitle,
+    this.meta,
     this.progress,
     this.leading,
     this.onTap,
@@ -841,8 +884,38 @@ class _VoltSlabState extends State<VoltSlab> {
     final shape = RoundedRectangleBorder(borderRadius: radius, side: _voltEdge(palette));
     final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.15;
     final subtitle = widget.subtitle;
+    final meta = widget.meta;
     final progress = widget.progress?.clamp(0.0, 1.0);
     final leading = widget.leading;
+    final metaStyle = type.metadata.copyWith(color: palette.onVoltMuted);
+
+    Widget? metaLine;
+    if (meta != null) {
+      // "2:19 left": the figure in DM Mono at the meta line's size.
+      final figure = RegExp(r'^[0-9:.,]+').stringMatch(meta) ?? '';
+      metaLine = Text.rich(
+        TextSpan(
+          children: [
+            if (subtitle != null) const TextSpan(text: ' · '),
+            if (figure.isNotEmpty)
+              TextSpan(
+                text: figure,
+                style: type.tabularFigures.copyWith(
+                  fontSize: metaStyle.fontSize,
+                  height: metaStyle.height,
+                  color: palette.onVoltMuted,
+                ),
+              ),
+            TextSpan(text: meta.substring(figure.length)),
+          ],
+        ),
+        semanticsLabel: meta,
+        style: metaStyle,
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
 
     final text = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -863,13 +936,36 @@ class _VoltSlabState extends State<VoltSlab> {
           maxLines: largeText ? 2 : 1,
           overflow: TextOverflow.ellipsis,
         ),
-        if (subtitle != null) ...[
+        if (subtitle != null && metaLine == null) ...[
           const SizedBox(height: 2),
           Text(
             subtitle,
-            style: type.metadata.copyWith(color: palette.onVoltMuted),
+            style: metaStyle,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+          ),
+        ],
+        if (metaLine != null) ...[
+          const SizedBox(height: 2),
+          LayoutBuilder(
+            builder: (context, constraints) => Row(
+              children: [
+                if (subtitle != null)
+                  Flexible(
+                    child: Text(
+                      subtitle,
+                      style: metaStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      // An ellipsized artist is as wide as what it shows, so
+                      // the figure follows the "…" without a gap.
+                      textWidthBasis: TextWidthBasis.longestLine,
+                    ),
+                  ),
+                // Only a line too narrow for the figure itself cuts it.
+                ConstrainedBox(constraints: BoxConstraints(maxWidth: constraints.maxWidth), child: metaLine),
+              ],
+            ),
           ),
         ],
       ],

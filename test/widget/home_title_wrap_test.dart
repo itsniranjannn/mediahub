@@ -75,7 +75,13 @@ class _HomeRepo implements LibraryRepository {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-Future<void> _pumpHome(WidgetTester tester, {MediaItem? song, List<MediaItem> videos = const []}) async {
+Future<void> _pumpHome(
+  WidgetTester tester, {
+  MediaItem? song,
+  List<MediaItem> videos = const [],
+  double textScale = 1.0,
+  ThemeData? theme,
+}) async {
   tester.view.physicalSize = const Size(360 * 3, 1200 * 3);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
@@ -87,7 +93,14 @@ Future<void> _pumpHome(WidgetTester tester, {MediaItem? song, List<MediaItem> vi
         currentMediaItemProvider.overrideWith((ref) => song ?? _song()),
         isPlayingProvider.overrideWith((ref) => false),
       ],
-      child: MaterialApp(theme: AppTheme.darkTheme, home: const HomeScreen()),
+      child: MaterialApp(
+        theme: theme ?? AppTheme.darkTheme,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
+        home: const HomeScreen(),
+      ),
     ),
   );
   for (var i = 0; i < 4; i++) {
@@ -177,9 +190,12 @@ void main() {
     ArtworkService.instance.clearCache();
   });
 
-  testWidgets('Continue listening wraps a file-style title after an underscore at 360 dp', (tester) async {
+  // The Volt slab keeps its title to one line, and gives it a second one at
+  // large text sizes (DESIGN.md 7.4): that is where it has to wrap well.
+  testWidgets('Continue listening wraps a file-style title after an underscore at 360 dp and 1.3x text',
+      (tester) async {
     final semantics = tester.ensureSemantics();
-    await _pumpHome(tester);
+    await _pumpHome(tester, textScale: 1.3);
 
     final paragraph = _titleParagraph(tester, _songTitle);
     expect(paragraph.maxLines, 2);
@@ -224,6 +240,24 @@ void main() {
 
     expect(tester.takeException(), isNull);
     semantics.dispose();
+  });
+
+  testWidgets('at the default text size the slab title is one line', (tester) async {
+    await _pumpHome(tester);
+    final paragraph = _titleParagraph(tester, _songTitle);
+    expect(paragraph.maxLines, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the greeting is नमस्ते with the time of day under it, in both themes', (tester) async {
+    for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+      await _pumpHome(tester, theme: theme);
+      expect(find.text('नमस्ते'), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'^Good (morning|afternoon|evening)')), findsOneWidget);
+      expect(find.bySemanticsLabel('Pause'), findsNothing);
+      expect(find.bySemanticsLabel('Resume'), findsOneWidget, reason: 'the slab disc is its own button');
+      expect(tester.takeException(), isNull);
+    }
   });
 
   testWidgets('a title without underscores is shown unchanged', (tester) async {

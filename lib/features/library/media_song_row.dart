@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
@@ -12,33 +12,55 @@ import '../../shared/widgets/favorite_feedback_button.dart';
 import '../library/media_context_menu.dart';
 import '../music_player/playback_notifier.dart';
 
-/// One song in a list: rounded artwork, title, then the artist and the
-/// length on one line, a heart and a "more" button. The row that is playing
-/// right now sits on an inset violet pill, like the current track in the
-/// queue.
+/// One song in a list (docs/DESIGN.md 7.6): 48 dp art at radius 10 (or a
+/// 32 dp track number in album and playlist lists, [index]), the title, then
+/// "Artist · 4:05" with the length in DM Mono, a heart and a ⋮ that opens
+/// the media sheet. A long press opens the sheet too.
+///
+/// The heart button only fits a roomy row (360 dp or wider at text below
+/// 1.15x). A narrower row keeps its width for the artist: favourites show a
+/// 16 dp Flare heart before the meta line instead, and the media sheet
+/// toggles it.
+///
+/// The row that is playing right now is marked three ways, never by colour
+/// alone: a 3 dp primary bar on the leading edge, an equaliser glyph (Volt on
+/// the dark veil over the art, or in place of the track number) and the
+/// title in primary; screen readers hear it as the row's selected state.
 class MediaSongRow extends ConsumerWidget {
   final MediaItem item;
   final VoidCallback? onTap;
   final bool showArtwork;
   final Widget? trailing;
 
-  static const double artworkSize = 52;
-  static const double _artworkRadius = AppSpacing.sm8;
+  /// 1-based track number shown in a 32 dp column instead of the art.
+  final int? index;
 
-  /// Space around the row's pill: 8 dp from the screen edges, 1 dp between
-  /// stacked rows.
-  static const EdgeInsets _pillInset = EdgeInsets.symmetric(horizontal: AppSpacing.sm8, vertical: 1);
+  /// Actions this row's media sheet leaves out ("Go to album" on the album's
+  /// own page).
+  final Set<MediaAction> menuWithout;
 
-  /// 52 dp artwork + 2 x (1 dp inset + 5 dp) keeps every row at 64 dp.
-  static const double _verticalPadding = 5;
+  /// A long press opens the media sheet. Off where a long press drags the
+  /// row (playlists).
+  final bool longPressOpensMenu;
 
-  /// Fill of the now-playing pill (the queue uses the same).
-  static const double _selectedAlpha = 0.12;
+  static const double artworkSize = 48;
+  static const double artworkRadius = AppSpacing.radiusArtSmall;
+  static const double minHeight = 64;
+  static const double indexWidth = 32;
+
+  /// The now-playing bar: 3 dp wide, 12 dp in from the row's top and bottom.
+  static const double playingBarWidth = 3;
+  static const double playingBarInset = 12;
+
+  /// 48 dp art + 2 x 8 dp keeps a one-line row at 64 dp.
+  static const double _verticalPadding = 8;
 
   /// Below this text scale, on screens at least [_roomyMinWidth] wide, the
   /// title keeps to one line.
   static const double _roomyMaxTextScale = 1.15;
   static const double _roomyMinWidth = 360;
+
+  static const double _iconSize = 24;
 
   static const String _unknownArtist = 'Unknown artist';
 
@@ -48,21 +70,25 @@ class MediaSongRow extends ConsumerWidget {
     this.onTap,
     this.showArtwork = true,
     this.trailing,
+    this.index,
+    this.menuWithout = const {},
+    this.longPressOpensMenu = true,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    final type = context.typography;
     // Only rebuild this row when *its* "now playing" state flips.
     final isSelected = ref.watch(currentMediaItemProvider.select((current) => current?.id == item.id));
     final isMissing = item.availability == MediaAvailability.missing;
     final artist = item.artist ?? _unknownArtist;
 
     final titleColor = isMissing
-        ? AppColors.textMuted
+        ? palette.textMuted
         : isSelected
-            ? AppColors.primary
-            : AppColors.textPrimary;
-    final radius = BorderRadius.circular(AppSpacing.buttonRadius);
+            ? palette.primary
+            : palette.textPrimary;
     // A 360 dp phone at default text size keeps every row at 64 dp. Smaller
     // phones and larger text give the title a second line instead of cutting
     // it after a dozen characters; those rows grow with their content.
@@ -71,6 +97,9 @@ class MediaSongRow extends ConsumerWidget {
     // A two-line title may break after "_" ("Audit_Long_" / "Tone_5min");
     // one line gains nothing from the extra wrap points.
     final shownTitle = roomy ? item.title : breakableTitle(item.title);
+    // Small rows mark a favourite instead of offering the heart button.
+    final markFavorite =
+        !roomy && (ref.watch(isFavoriteProvider(item.id)).asData?.value ?? item.isFavorite);
 
     final VoidCallback handleTap = isMissing
         ? () {
@@ -83,89 +112,130 @@ class MediaSongRow extends ConsumerWidget {
               ref.read(playbackNotifierProvider.notifier).loadQueue([item]);
             });
 
+    void openMenu(BuildContext anchor) =>
+        MediaContextMenu.show(context, ref, item, anchorContext: anchor, without: menuWithout);
+    final VoidCallback? handleLongPress = longPressOpensMenu ? () => openMenu(context) : null;
+
+    final int? number = index;
+    final Widget? leading = number != null
+        ? _IndexCell(number: number, isSelected: isSelected, isMissing: isMissing)
+        : showArtwork
+            ? _RowArtwork(item: item, isSelected: isSelected, isMissing: isMissing)
+            : null;
+
     // One screen-reader node per row, read once: this label and tap stand in
     // for the ink well and the texts under it, which are left out below.
     // "Now playing" is the selected state. The heart and "more" stay buttons
     // of their own. Not a container, so a list's own row actions (reorder,
     // swipe to remove) join this node instead of sitting on an unlabelled one.
     return Semantics(
-      label: semanticsLabelFor(item, isMissing: isMissing),
+      label: markFavorite
+          ? '${semanticsLabelFor(item, isMissing: isMissing)}, Favorite'
+          : semanticsLabelFor(item, isMissing: isMissing),
       button: true,
       selected: isSelected,
       onTap: handleTap,
-      child: Padding(
-        padding: _pillInset,
-        child: Material(
-          color: isSelected ? AppColors.primary.withValues(alpha: _selectedAlpha) : Colors.transparent,
-          borderRadius: radius,
-          child: InkWell(
-            // Keeps the ripple inside the pill.
-            borderRadius: radius,
-            excludeFromSemantics: true,
-            onTap: handleTap,
-            child: Padding(
-              // 8 dp pill inset + 8 dp here: the art (or the title) starts on
-              // the 16 dp gutter.
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.sm8,
-                _verticalPadding,
-                0,
-                _verticalPadding,
-              ),
-              child: Row(
-                children: [
-                  if (showArtwork) ...[
-                    ExcludeSemantics(
-                      child: _RowArtwork(item: item, isSelected: isSelected, isMissing: isMissing),
-                    ),
-                    const SizedBox(width: AppSpacing.md12),
-                  ],
-                  Expanded(
-                    // The row's label already says all of this.
-                    child: ExcludeSemantics(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            shownTitle,
-                            semanticsLabel: shownTitle == item.title ? null : item.title,
-                            style: AppTypography.bodyStrong.copyWith(color: titleColor),
-                            maxLines: roomy ? 1 : 2,
-                            overflow: TextOverflow.ellipsis,
+      onLongPress: handleLongPress,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          excludeFromSemantics: true,
+          onTap: handleTap,
+          onLongPress: handleLongPress,
+          highlightColor: palette.surfacePressed,
+          splashColor: palette.primaryBase.withValues(alpha: 0.12),
+          child: Stack(
+            children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: minHeight),
+                child: Padding(
+                  // The art (or the track number, or the title) starts on
+                  // the 16 dp gutter.
+                  padding: const EdgeInsetsDirectional.fromSTEB(
+                    AppSpacing.lg16,
+                    _verticalPadding,
+                    AppSpacing.xs4,
+                    _verticalPadding,
+                  ),
+                  child: Row(
+                    children: [
+                      if (leading != null) ...[
+                        ExcludeSemantics(child: leading),
+                        const SizedBox(width: AppSpacing.md12),
+                      ],
+                      Expanded(
+                        // The row's label already says all of this.
+                        child: ExcludeSemantics(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                shownTitle,
+                                semanticsLabel: shownTitle == item.title ? null : item.title,
+                                style: type.bodyStrong.copyWith(color: titleColor),
+                                maxLines: roomy ? 1 : 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 2),
+                              if (markFavorite)
+                                Row(
+                                  children: [
+                                    const _FavoriteMark(),
+                                    Expanded(child: _MetaLine(item: item, artist: artist, isMissing: isMissing)),
+                                  ],
+                                )
+                              else
+                                _MetaLine(item: item, artist: artist, isMissing: isMissing),
+                            ],
                           ),
-                          const SizedBox(height: 2),
-                          _MetaLine(item: item, artist: artist, isMissing: isMissing),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.xs4),
-                  _SingleNodeHeart(
-                    child: FavoriteFeedbackButton(
-                      itemId: item.id,
-                      isFavorite: item.isFavorite,
-                      size: 20,
-                      constraints: const BoxConstraints(
-                        minWidth: AppSpacing.minTouchTarget,
-                        minHeight: AppSpacing.minTouchTarget,
-                      ),
-                    ),
-                  ),
-                  trailing ??
-                      IconButton(
-                        icon: const Icon(Icons.more_vert_rounded, size: 20),
-                        color: AppColors.textSecondary,
-                        tooltip: 'More actions',
-                        constraints: const BoxConstraints(
-                          minWidth: AppSpacing.minTouchTarget,
-                          minHeight: AppSpacing.minTouchTarget,
                         ),
-                        onPressed: () => MediaContextMenu.show(context, ref, item),
                       ),
-                ],
+                      const SizedBox(width: AppSpacing.xs4),
+                      if (roomy)
+                        _SingleNodeHeart(
+                          child: FavoriteFeedbackButton(
+                            itemId: item.id,
+                            isFavorite: item.isFavorite,
+                            size: _iconSize,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: AppSpacing.minTouchTarget,
+                              minHeight: AppSpacing.minTouchTarget,
+                            ),
+                          ),
+                        ),
+                      trailing ??
+                          Builder(
+                            builder: (buttonContext) => IconButton(
+                              icon: const Icon(Icons.more_vert_rounded, size: _iconSize),
+                              color: palette.textSecondary,
+                              tooltip: 'More actions',
+                              constraints: const BoxConstraints(
+                                minWidth: AppSpacing.minTouchTarget,
+                                minHeight: AppSpacing.minTouchTarget,
+                              ),
+                              onPressed: () => openMenu(buttonContext),
+                            ),
+                          ),
+                    ],
+                  ),
+                ),
               ),
-            ),
+              if (isSelected)
+                PositionedDirectional(
+                  start: 0,
+                  top: playingBarInset,
+                  bottom: playingBarInset,
+                  width: playingBarWidth,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: palette.primary,
+                      borderRadius: const BorderRadiusDirectional.horizontal(end: Radius.circular(2)),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -217,9 +287,28 @@ class _SingleNodeHeart extends StatelessWidget {
   }
 }
 
-/// 52 dp rounded cover. Dimmed when the file is missing; an equaliser glyph
-/// sits on top while the song is playing, on the full [AppColors.overlay]
-/// veil so the violet glyph keeps >= 3:1 even over a white cover.
+/// A favourite on a row too small for the heart button: a 16 dp filled
+/// heart in Flare before the meta line (the row's label says "Favorite").
+class _FavoriteMark extends StatelessWidget {
+  const _FavoriteMark();
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.textScalerOf(context).scale(16);
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: AppSpacing.xs4),
+      child: Icon(Icons.favorite_rounded, size: size, color: context.palette.favorite),
+    );
+  }
+}
+
+/// The equaliser glyph that marks the playing row.
+const IconData _playingGlyph = Icons.graphic_eq_rounded;
+
+/// 48 dp cover at radius 10. Dimmed when the file is missing; while the song
+/// is playing an equaliser sits on top, in Volt on the dark overlay veil (the
+/// veil is ink in both themes, so the glyph keeps >= 3:1 even over a white
+/// cover).
 class _RowArtwork extends StatelessWidget {
   final MediaItem item;
   final bool isSelected;
@@ -233,7 +322,7 @@ class _RowArtwork extends StatelessWidget {
       uri: item.uri,
       artworkPath: item.artworkPath,
       size: MediaSongRow.artworkSize,
-      borderRadius: MediaSongRow._artworkRadius,
+      borderRadius: MediaSongRow.artworkRadius,
     );
     if (isMissing) art = Opacity(opacity: 0.45, child: art);
     if (!isSelected) return art;
@@ -246,12 +335,13 @@ class _RowArtwork extends StatelessWidget {
           art,
           DecoratedBox(
             decoration: BoxDecoration(
-              color: AppColors.overlay,
-              borderRadius: BorderRadius.circular(MediaSongRow._artworkRadius),
+              color: context.palette.overlay,
+              borderRadius: BorderRadius.circular(MediaSongRow.artworkRadius),
             ),
-            child: const Icon(
-              Icons.graphic_eq_rounded,
-              color: AppColors.primary,
+            child: Icon(
+              _playingGlyph,
+              // The veil is ink in both themes: the ink theme's Volt reads on it.
+              color: AppPalette.dark.primary,
               size: 24,
               semanticLabel: 'Now playing',
             ),
@@ -262,8 +352,39 @@ class _RowArtwork extends StatelessWidget {
   }
 }
 
+/// The 32 dp track number ("01") of album and playlist lists, in DM Mono;
+/// the playing row shows the equaliser in primary instead.
+class _IndexCell extends StatelessWidget {
+  final int number;
+  final bool isSelected;
+  final bool isMissing;
+
+  const _IndexCell({required this.number, required this.isSelected, required this.isMissing});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return SizedBox(
+      width: MediaSongRow.indexWidth,
+      child: Center(
+        child: isSelected
+            ? Icon(_playingGlyph, color: palette.primary, size: 22, semanticLabel: 'Now playing')
+            : Text(
+                number.toString().padLeft(2, '0'),
+                style: context.typography.index.copyWith(
+                  color: isMissing ? palette.textMuted.withValues(alpha: 0.6) : null,
+                ),
+                maxLines: 1,
+                softWrap: false,
+              ),
+      ),
+    );
+  }
+}
+
 /// Artist line, led by a "Downloaded" marker for downloaded songs and a
-/// "Missing" marker when the file is gone, and ended by the song's length.
+/// "Missing" marker when the file is gone, and ended by the song's length in
+/// DM Mono.
 ///
 /// The length is never cut: the artist gives way first and ellipsizes.
 class _MetaLine extends StatelessWidget {
@@ -280,14 +401,16 @@ class _MetaLine extends StatelessWidget {
   /// lines (a small phone, or large text) keep only the icon.
   static const double _minArtistWidth = 72;
 
-  static const double _markerIconSize = 14;
+  static const double _markerIconSize = 16;
 
   static const String _separator = ' · ';
 
   @override
   Widget build(BuildContext context) {
-    final style = AppTypography.metadata.copyWith(
-      color: isMissing ? AppColors.textMuted : AppColors.textSecondary,
+    final palette = context.palette;
+    final type = context.typography;
+    final style = type.metadata.copyWith(
+      color: isMissing ? palette.textMuted : palette.textSecondary,
     );
 
     // longestLine: an ellipsized artist is as wide as what it shows, so the
@@ -298,7 +421,7 @@ class _MetaLine extends StatelessWidget {
               children: [
                 TextSpan(
                   text: 'Missing',
-                  style: style.copyWith(color: AppColors.warning, fontWeight: FontWeight.w600),
+                  style: style.copyWith(color: palette.warning, fontWeight: FontWeight.w600),
                 ),
                 TextSpan(text: '$_separator$artist'),
               ],
@@ -328,6 +451,13 @@ class _MetaLine extends StatelessWidget {
         ? MediaQuery.textScalerOf(context).scale(_markerIconSize) + AppSpacing.xs4
         : 0.0;
 
+    // DM Mono at the meta line's size and line height, in textMuted.
+    final clockStyle = type.tabularFigures.copyWith(
+      fontSize: style.fontSize,
+      height: style.height,
+      color: palette.textMuted,
+    );
+
     return LayoutBuilder(
       builder: (context, constraints) {
         return Row(
@@ -342,13 +472,15 @@ class _MetaLine extends StatelessWidget {
               constraints: BoxConstraints(
                 maxWidth: math.max(0, constraints.maxWidth - leadMinWidth),
               ),
-              child: Text(
-                '$_separator$duration',
-                semanticsLabel: duration,
-                style: style.copyWith(
-                  color: AppColors.textMuted,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(text: _separator, style: style.copyWith(color: palette.textMuted)),
+                    TextSpan(text: duration, style: clockStyle),
+                  ],
                 ),
+                semanticsLabel: duration,
+                style: style,
                 maxLines: 1,
                 softWrap: false,
                 overflow: TextOverflow.ellipsis,
@@ -372,9 +504,10 @@ class _MetaLine extends StatelessWidget {
         _textWidth('Downloaded', style, scaler, direction) +
         _textWidth(_separator, style, scaler, direction);
     final labelMinWidth = markerWidth + scaler.scale(_minArtistWidth);
-    // Teal, like the "Downloaded" badge on video covers: violet means "now
+    // Ice, like the "Downloaded" badge on video covers: primary means "now
     // playing" in every list.
-    final markerColor = isMissing ? AppColors.textMuted : AppColors.accent;
+    final palette = context.palette;
+    final markerColor = isMissing ? palette.textMuted : palette.accent;
 
     return LayoutBuilder(
       builder: (context, constraints) {

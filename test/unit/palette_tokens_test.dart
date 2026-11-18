@@ -166,34 +166,6 @@ void main() {
     }
   });
 
-  test('legacy AppColors are the dark palette', () {
-    const d = AppPalette.dark;
-    expect(AppColors.background, d.background);
-    expect(AppColors.surface, d.surface);
-    expect(AppColors.surfaceElevated, d.surfaceElevated);
-    expect(AppColors.surfacePressed, d.surfacePressed);
-    expect(AppColors.primary, d.primary);
-    expect(AppColors.primaryBase, d.primaryBase);
-    expect(AppColors.primaryPressed, d.primaryPressed);
-    expect(AppColors.onPrimary, d.onPrimary);
-    expect(AppColors.accent, d.accent);
-    expect(AppColors.favorite, d.favorite);
-    expect(AppColors.textPrimary, d.textPrimary);
-    expect(AppColors.textSecondary, d.textSecondary);
-    expect(AppColors.textMuted, d.textMuted);
-    expect(AppColors.divider, d.divider);
-    expect(AppColors.success, d.success);
-    expect(AppColors.warning, d.warning);
-    expect(AppColors.error, d.error);
-    expect(AppColors.scrim, d.scrim);
-    expect(AppColors.glass, d.glass);
-    expect(AppColors.overlay, d.overlay);
-    expect(AppColors.onOverlay, d.onOverlay);
-    expect(AppColors.heroGradient, d.heroGradient);
-    expect(AppColors.primaryGradient, d.primaryGradient);
-    expect(AppColors.artworkGradients, same(d.artworkGradients));
-  });
-
   group('ThemeExtension', () {
     test('copyWith replaces only what it is given', () {
       final p = AppPalette.dark.copyWith(primary: const Color(0xFF123456));

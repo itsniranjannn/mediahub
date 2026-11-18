@@ -1,7 +1,7 @@
 import 'package:flutter/gestures.dart' show DelayedMultiDragGestureRecognizer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
@@ -15,13 +15,18 @@ import '../../shared/widgets/ui_kit.dart';
 import '../library/media_context_menu.dart';
 import '../library/media_song_row.dart';
 import '../music_player/playback_notifier.dart';
+import '../playlists/playlist_cover.dart';
 
 /// Size of the cover in the hero header of every detail screen.
 const double _kHeroArtSize = 168;
 
-/// Corner radius of a square hero cover (about 10 % of its side, so it reads
-/// as album art rather than an app icon).
-const double _kHeroArtRadius = AppSpacing.lg16;
+/// Corner radius of a square hero cover: the thumbnail radius, so it reads
+/// as album art rather than an app icon.
+const double _kHeroArtRadius = AppSpacing.radiusThumb;
+
+/// The signature hard "print offset" under the hero cover (docs/DESIGN.md
+/// 7.1): 6 x 6 dp, no blur, Volt on ink and ink on paper.
+const Offset _kPrintOffset = Offset(6, 6);
 
 /// Platform lookup size of the hero cover (ArtworkThumbnail asks for 512 px
 /// art for boxes up to 300 dp); the tint check shares that lookup.
@@ -57,16 +62,24 @@ class AlbumDetailScreen extends ConsumerWidget {
       // Only the song list has a hero; loading / error / empty need the bar title.
       showTitle: !songsAsync.maybeWhen(data: (songs) => songs.isNotEmpty, orElse: () => false),
       actions: [
-        IconButton(
-          icon: const Icon(Icons.more_vert_rounded),
-          tooltip: 'More options',
-          onPressed: () {
-            songsAsync.whenData((songs) {
-              if (songs.isNotEmpty) {
-                MediaContextMenu.show(context, ref, songs.first);
-              }
-            });
-          },
+        Builder(
+          builder: (buttonContext) => IconButton(
+            icon: const Icon(Icons.more_vert_rounded),
+            tooltip: 'More options',
+            onPressed: () {
+              songsAsync.whenData((songs) {
+                if (songs.isNotEmpty) {
+                  MediaContextMenu.show(
+                    context,
+                    ref,
+                    songs.first,
+                    anchorContext: buttonContext,
+                    without: const {MediaAction.goToAlbum},
+                  );
+                }
+              });
+            },
+          ),
         ),
       ],
       body: songsAsync.when(
@@ -88,9 +101,10 @@ class AlbumDetailScreen extends ConsumerWidget {
                   item: cover,
                   lookupSize: _kHeroLookupSize,
                   builder: (context, hasArtwork, _) => _HeroHeader(
-                    tint: hasArtwork ? AppColors.heroGradient : ArtworkTint.surfaceGradient(_albumSeed(album)),
+                    tint: hasArtwork
+                        ? context.palette.heroGradient
+                        : ArtworkTint.surfaceGradient(_albumSeed(album), context.palette),
                     artwork: _HeroArtwork(
-                      glowColor: hasArtwork ? null : ArtworkTint.glow(_albumSeed(album)),
                       child: ArtworkThumbnail(
                         uri: cover.uri,
                         artworkPath: cover.artworkPath,
@@ -121,7 +135,8 @@ class AlbumDetailScreen extends ConsumerWidget {
                   final song = songs[index];
                   return MediaSongRow(
                     item: song,
-                    showArtwork: false,
+                    index: index + 1,
+                    menuWithout: const {MediaAction.goToAlbum},
                     onTap: () {
                       ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
                     },
@@ -173,10 +188,11 @@ class ArtistDetailScreen extends ConsumerWidget {
                   item: songs.first,
                   lookupSize: _kHeroLookupSize,
                   builder: (context, hasArtwork, _) => _HeroHeader(
-                    tint: hasArtwork ? AppColors.heroGradient : ArtworkTint.surfaceGradient(_artistSeed(artist)),
+                    tint: hasArtwork
+                        ? context.palette.heroGradient
+                        : ArtworkTint.surfaceGradient(_artistSeed(artist), context.palette),
                     artwork: _HeroArtwork(
                       circle: true,
-                      glowColor: hasArtwork ? null : ArtworkTint.glow(_artistSeed(artist)),
                       child: ArtworkThumbnail(
                         uri: songs.first.uri,
                         artworkPath: songs.first.artworkPath,
@@ -205,6 +221,7 @@ class ArtistDetailScreen extends ConsumerWidget {
                   final song = songs[index];
                   return MediaSongRow(
                     item: song,
+                    menuWithout: const {MediaAction.goToArtist},
                     onTap: () {
                       ref.read(playbackNotifierProvider.notifier).playTrack(song, songs);
                     },
@@ -258,7 +275,10 @@ class PlaylistDetailScreen extends ConsumerWidget {
       body: songsAsync.when(
         data: (songs) {
           final header = _HeroHeader(
-            artwork: const _HeroArtwork(child: _PlaylistCover(size: _kHeroArtSize)),
+            tint: PlaylistCover.heroTint(playlist.id, context.palette),
+            artwork: _HeroArtwork(
+              child: PlaylistCover(playlistId: playlist.id, size: _kHeroArtSize, borderRadius: _kHeroArtRadius),
+            ),
             eyebrow: 'Playlist',
             title: playlist.name,
             meta: _songsMeta(songs),
@@ -326,6 +346,9 @@ class PlaylistDetailScreen extends ConsumerWidget {
                   index: index,
                   child: MediaSongRow(
                     item: song,
+                    index: index + 1,
+                    // A long press here drags the row.
+                    longPressOpensMenu: false,
                     trailing: screenReader
                         ? Row(
                             mainAxisSize: MainAxisSize.min,
@@ -365,10 +388,10 @@ class PlaylistDetailScreen extends ConsumerWidget {
             controller: controller,
             autofocus: true,
             textCapitalization: TextCapitalization.sentences,
-            style: AppTypography.body,
-            decoration: const InputDecoration(
+            style: dialogCtx.typography.body,
+            decoration: InputDecoration(
               hintText: 'Playlist name',
-              prefixIcon: Icon(Icons.edit_rounded, color: AppColors.textSecondary),
+              prefixIcon: Icon(Icons.edit_rounded, color: dialogCtx.palette.textSecondary),
             ),
           ),
           actions: [
@@ -396,8 +419,9 @@ class PlaylistDetailScreen extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (dialogCtx) {
+        final palette = dialogCtx.palette;
         return AlertDialog(
-          icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
+          icon: Icon(Icons.delete_outline_rounded, color: palette.error),
           title: const Text('Delete Playlist'),
           content: const Text(
             'Are you sure you want to delete this playlist? This will NOT delete the actual audio files on your device.',
@@ -407,11 +431,9 @@ class PlaylistDetailScreen extends ConsumerWidget {
               onPressed: () => Navigator.pop(dialogCtx),
               child: const Text('Cancel'),
             ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.error,
-                foregroundColor: AppColors.background,
-              ),
+            // A destructive confirm is a TextButton in the error colour.
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: palette.error),
               onPressed: () {
                 Navigator.pop(dialogCtx); // close dialog
                 Navigator.pop(context); // close screen
@@ -514,8 +536,9 @@ class _DetailScaffoldState extends State<_DetailScaffold> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: palette.background,
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(kToolbarHeight),
@@ -527,7 +550,7 @@ class _DetailScaffoldState extends State<_DetailScaffold> {
             return AnimatedContainer(
               duration: duration,
               curve: MotionTokens.easeOut,
-              color: solid ? AppColors.background : AppColors.background.withValues(alpha: 0),
+              color: solid ? palette.background : palette.background.withValues(alpha: 0),
               child: AppBar(
                 backgroundColor: Colors.transparent,
                 title: AnimatedOpacity(
@@ -539,7 +562,7 @@ class _DetailScaffoldState extends State<_DetailScaffold> {
                     // The album, artist or playlist name: Anek, which draws
                     // Latin and Devanagari alike (DESIGN.md 0.5), at a size
                     // that suits the collapsed bar.
-                    style: AppTypography.cardTitle,
+                    style: context.typography.cardTitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -564,8 +587,9 @@ class _DetailScaffoldState extends State<_DetailScaffold> {
   }
 }
 
-/// Cover, eyebrow, title, subtitle, song count and the Play / Shuffle pair,
-/// on a soft violet glow that fades into the page.
+/// Cover (with the print offset), kicker, title, subtitle, song count and
+/// the Play all / Shuffle pair, on the hero tint that fades into the page
+/// (docs/DESIGN.md 3 and 7.1).
 class _HeroHeader extends StatelessWidget {
   final Widget artwork;
   final String eyebrow;
@@ -575,10 +599,10 @@ class _HeroHeader extends StatelessWidget {
   final VoidCallback? onPlay;
   final VoidCallback? onShuffle;
 
-  /// Glow behind the header; the violet hero gradient unless the cover's
+  /// Tint behind the header; the palette's hero gradient unless the cover's
   /// own colours are passed. A change (the real cover finishing loading)
   /// cross-fades instead of snapping.
-  final Gradient tint;
+  final Gradient? tint;
 
   const _HeroHeader({
     required this.artwork,
@@ -588,24 +612,49 @@ class _HeroHeader extends StatelessWidget {
     this.subtitle,
     this.onPlay,
     this.onShuffle,
-    this.tint = AppColors.heroGradient,
+    this.tint,
   });
+
+  /// Width the Play all / Shuffle pair needs side by side at the user's text
+  /// size: per button 24 dp padding each side, a 20 dp icon and its 8 dp gap
+  /// plus the label, and 12 dp between them. Narrower, they stack.
+  static double _pairWidth(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final style = context.typography.button;
+    double label(String text) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textScaler: scaler,
+        textDirection: Directionality.of(context),
+        maxLines: 1,
+      )..layout();
+      final width = painter.width;
+      painter.dispose();
+      return width;
+    }
+
+    const chrome = AppSpacing.xxl24 * 2 + VoltButton.iconSize + AppSpacing.sm8 + 2;
+    final widest = [label('Play all'), label('Shuffle')].reduce((a, b) => a > b ? a : b);
+    return (chrome + widest) * 2 + AppSpacing.md12;
+  }
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
     // The body sits behind the transparent app bar; this is its height.
     final topInset = MediaQuery.paddingOf(context).top;
 
     return AnimatedContainer(
       duration: MotionTokens.duration(context, MotionTokens.page),
       curve: MotionTokens.easeOut,
-      decoration: BoxDecoration(gradient: tint),
+      decoration: BoxDecoration(gradient: tint ?? palette.heroGradient),
       child: DecoratedBox(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [AppColors.background.withValues(alpha: 0), AppColors.background],
+            colors: [palette.background.withValues(alpha: 0), palette.background],
             stops: const [0.3, 1.0],
           ),
         ),
@@ -619,14 +668,11 @@ class _HeroHeader extends StatelessWidget {
           child: Column(
             children: [
               artwork,
-              const SizedBox(height: AppSpacing.xl20),
+              const SizedBox(height: AppSpacing.xxl24),
               Text(
                 eyebrow.toUpperCase(),
-                style: AppTypography.label.copyWith(
-                  color: AppColors.primary,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.2,
-                ),
+                semanticsLabel: eyebrow,
+                style: type.overline.copyWith(color: palette.primary),
               ),
               const SizedBox(height: AppSpacing.xs4),
               Semantics(
@@ -634,7 +680,7 @@ class _HeroHeader extends StatelessWidget {
                 child: Text(
                   breakableTitle(title),
                   semanticsLabel: title,
-                  style: AppTypography.screenTitle,
+                  style: type.screenTitle,
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -644,40 +690,54 @@ class _HeroHeader extends StatelessWidget {
                 const SizedBox(height: AppSpacing.xs4),
                 Text(
                   subtitle!,
-                  style: AppTypography.body.copyWith(color: AppColors.textSecondary),
+                  style: type.body.copyWith(color: palette.textSecondary),
                   textAlign: TextAlign.center,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
-              const SizedBox(height: AppSpacing.xs4),
+              const SizedBox(height: 2),
+              // textSecondary, never textMuted, on a tinted header.
               Text(
                 meta,
-                style: AppTypography.metadata.copyWith(color: AppColors.textMuted),
+                style: type.metadata,
                 textAlign: TextAlign.center,
               ),
               if (onPlay != null || onShuffle != null) ...[
                 const SizedBox(height: AppSpacing.xl20),
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: onPlay,
-                          icon: const Icon(Icons.play_arrow_rounded, size: 22),
-                          label: const Text('Play'),
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.md12),
-                      Expanded(
-                        child: FilledButton.tonalIcon(
-                          onPressed: onShuffle,
-                          icon: const Icon(Icons.shuffle_rounded, size: 20),
-                          label: const Text('Shuffle'),
-                        ),
-                      ),
-                    ],
+                  // Side by side while both labels fit, stacked on a narrow
+                  // phone at large text.
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final play = VoltButton(
+                        label: 'Play all',
+                        icon: Icons.play_arrow_rounded,
+                        expand: true,
+                        onPressed: onPlay,
+                      );
+                      final shuffle = FilledButton.tonalIcon(
+                        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(VoltButton.height)),
+                        onPressed: onShuffle,
+                        icon: const Icon(Icons.shuffle_rounded, size: 20),
+                        label: const Text('Shuffle', maxLines: 1, overflow: TextOverflow.ellipsis),
+                      );
+                      final stacked = constraints.maxWidth < _HeroHeader._pairWidth(context);
+                      if (stacked) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [play, const SizedBox(height: AppSpacing.sm8), shuffle],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(child: play),
+                          const SizedBox(width: AppSpacing.md12),
+                          Expanded(child: shuffle),
+                        ],
+                      );
+                    },
                   ),
                 ),
               ],
@@ -689,52 +749,25 @@ class _HeroHeader extends StatelessWidget {
   }
 }
 
-/// Cover with a soft glow underneath: neutral violet, or the placeholder's
-/// own colour when there is no real cover. A change cross-fades.
+/// Cover with the hard print offset under it ([AppPalette.printShadow]: Volt
+/// on ink, ink on paper), in the cover's own shape. No soft glow.
 class _HeroArtwork extends StatelessWidget {
   final Widget child;
   final bool circle;
-  final Color? glowColor;
 
-  const _HeroArtwork({required this.child, this.circle = false, this.glowColor});
+  const _HeroArtwork({required this.child, this.circle = false});
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: MotionTokens.duration(context, MotionTokens.page),
-      curve: MotionTokens.easeOut,
+    return DecoratedBox(
       decoration: BoxDecoration(
         shape: circle ? BoxShape.circle : BoxShape.rectangle,
         borderRadius: circle ? null : BorderRadius.circular(_kHeroArtRadius),
         boxShadow: [
-          BoxShadow(
-            color: glowColor ?? AppColors.primaryBase.withValues(alpha: 0.28),
-            blurRadius: 40,
-            offset: const Offset(0, 16),
-          ),
+          BoxShadow(color: context.palette.printShadow, offset: _kPrintOffset, blurRadius: 0),
         ],
       ),
       child: child,
-    );
-  }
-}
-
-/// Gradient tile standing in for a playlist cover.
-class _PlaylistCover extends StatelessWidget {
-  final double size;
-
-  const _PlaylistCover({required this.size});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        gradient: AppColors.primaryGradient,
-        borderRadius: BorderRadius.circular(_kHeroArtRadius),
-      ),
-      child: Icon(Icons.queue_music_rounded, size: size * 0.42, color: AppColors.onPrimary),
     );
   }
 }
@@ -787,10 +820,10 @@ class _DragHandle extends StatelessWidget {
         // actions; this only tells them what the grip is.
         child: Semantics(
           label: 'Drag to reorder',
-          child: const SizedBox(
+          child: SizedBox(
             width: AppSpacing.minTouchTarget,
             height: AppSpacing.minTouchTarget,
-            child: Icon(Icons.drag_handle_rounded, color: AppColors.textMuted),
+            child: Icon(Icons.drag_handle_rounded, color: context.palette.dragHandle),
           ),
         ),
       ),
@@ -809,7 +842,7 @@ class _RemoveFromPlaylistButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return IconButton(
       icon: const Icon(Icons.remove_circle_outline_rounded, size: 22),
-      color: AppColors.textMuted,
+      color: context.palette.textSecondary,
       tooltip: 'Remove from playlist',
       constraints: const BoxConstraints(
         minWidth: AppSpacing.minTouchTarget,
@@ -820,30 +853,25 @@ class _RemoveFromPlaylistButton extends StatelessWidget {
   }
 }
 
-/// Shown behind a playlist row while it is swiped away: the same inset pill
-/// as the row (and as the queue's swipe-to-remove).
+/// Shown behind a playlist row while it is swiped away: the destructive
+/// tonal pair, with the word and the icon (never colour alone).
 class _RemoveBackground extends StatelessWidget {
   const _RemoveBackground();
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm8, vertical: 1),
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.error.withValues(alpha: 0.16),
-          borderRadius: BorderRadius.circular(AppSpacing.buttonRadius),
-        ),
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: AppSpacing.lg16),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Remove', style: AppTypography.button.copyWith(color: AppColors.error)),
-            const SizedBox(width: AppSpacing.sm8),
-            const Icon(Icons.delete_rounded, color: AppColors.error),
-          ],
-        ),
+    final palette = context.palette;
+    return Container(
+      color: palette.errorContainer,
+      alignment: AlignmentDirectional.centerEnd,
+      padding: const EdgeInsetsDirectional.only(end: AppSpacing.lg16),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Remove', style: context.typography.button.copyWith(color: palette.onErrorContainer)),
+          const SizedBox(width: AppSpacing.sm8),
+          Icon(Icons.delete_rounded, color: palette.onErrorContainer),
+        ],
       ),
     );
   }

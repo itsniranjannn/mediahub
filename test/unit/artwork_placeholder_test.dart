@@ -52,8 +52,6 @@ void main() {
         ArtworkPlaceholder.gradientFor(seed, AppPalette.light),
         same(AppPalette.light.artworkGradients[first]),
       );
-      // The legacy constants are the ink palette.
-      expect(AppColors.artworkGradients, same(AppPalette.dark.artworkGradients));
     });
 
     test('an item keeps its hue in both themes: same index and top stop, paper lifts the deep stop', () {

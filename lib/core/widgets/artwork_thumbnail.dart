@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../shared/widgets/artwork_placeholder.dart';
@@ -45,7 +45,7 @@ class ArtworkThumbnail extends StatelessWidget {
     required this.uri,
     this.artworkPath,
     this.size = 48,
-    this.borderRadius = AppSpacing.buttonRadius,
+    this.borderRadius = AppSpacing.radiusThumb,
     this.placeholderIcon = Icons.music_note_rounded,
     this.width,
     this.height,
@@ -78,7 +78,7 @@ class ArtworkThumbnail extends StatelessWidget {
         width: w,
         height: h,
         child: ColoredBox(
-          color: AppColors.surface,
+          color: context.palette.surface,
           child: _image(w, h, placeholder),
         ),
       ),

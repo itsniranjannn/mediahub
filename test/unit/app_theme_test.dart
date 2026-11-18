@@ -257,7 +257,7 @@ void main() {
       expect(s.button.color, isNull, reason: 'the button gives the colour');
     });
 
-    test('colours come from the palette; the legacy getters are the dark ones', () {
+    test('colours come from the palette', () {
       final dark = AppTypography.of(AppPalette.dark);
       final light = AppTypography.of(AppPalette.light);
       expect(AppTypography.of(AppPalette.dark), same(dark), reason: 'cached');
@@ -265,9 +265,8 @@ void main() {
       expect(light.metadata.color, AppPalette.light.textSecondary);
       expect(light.caption.color, AppPalette.light.textMuted);
       expect(light.badge.color, AppPalette.light.onOverlay);
-      expect(AppTypography.body, same(dark.body));
-      expect(AppTypography.metadata, same(dark.metadata));
-      expect(AppTypography.tabularFigures, same(dark.tabularFigures));
+      expect(dark.body.color, AppPalette.dark.textPrimary);
+      expect(AppTypography.textTheme(AppPalette.light).bodyLarge, same(light.body));
       // A palette mid-way through a theme change builds its own styles.
       final mid = AppPalette.dark.lerp(AppPalette.light, 0.5);
       expect(AppTypography.of(mid).body.color, mid.textPrimary);
@@ -312,11 +311,8 @@ void main() {
     expect(AppTheme.darkTheme.platform, TargetPlatform.android);
   });
 
-  test('the app stays on ink until every screen reads the palette', () {
-    // Flip lightThemeReady (and this expectation) as the last step of the
-    // screen migration; theme and darkTheme are already both wired up.
-    expect(AppTheme.themeMode, AppTheme.lightThemeReady ? ThemeMode.system : ThemeMode.dark);
-    expect(AppTheme.lightThemeReady, isFalse);
+  test('by default the app follows the phone (DESIGN.md 8.2)', () {
+    expect(AppTheme.themeMode, ThemeMode.system);
   });
 
   test('barsFor picks ink or paper bars', () {

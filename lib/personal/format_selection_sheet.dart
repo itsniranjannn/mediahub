@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../app/theme/app_colors.dart';
+import '../app/theme/app_palette.dart';
 import '../app/theme/app_spacing.dart';
 import '../app/theme/app_typography.dart';
 import '../core/utils/formatters.dart';
@@ -47,9 +47,10 @@ class FormatSelectionSheet extends StatelessWidget {
     final videoChoices = choices.where((c) => !c.isAudio).toList();
     final audioChoices = choices.where((c) => c.isAudio).toList();
     final maxHeight = MediaQuery.sizeOf(context).height * 0.85;
+    final palette = context.palette;
 
     final content = ColoredBox(
-      color: AppColors.surface,
+      color: palette.surface,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
         child: SafeArea(
@@ -78,7 +79,7 @@ class FormatSelectionSheet extends StatelessWidget {
                   ),
                   children: [
                     if (videoChoices.isNotEmpty) ...[
-                      const _SectionLabel('Video (with sound)'),
+                      const _SectionLabel('Video with sound'),
                       ...videoChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
                     ],
                     if (audioChoices.isNotEmpty) ...[
@@ -88,7 +89,7 @@ class FormatSelectionSheet extends StatelessWidget {
                     if (footnote != null && footnote!.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: AppSpacing.sm8),
-                        child: Text(footnote!, style: AppTypography.metadata),
+                        child: Text(footnote!, style: AppTypography.of(palette).metadata),
                       ),
                   ],
                 ),
@@ -136,9 +137,10 @@ class _GrabHandle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final sheetTheme = Theme.of(context).bottomSheetTheme;
-    final handleSize = sheetTheme.dragHandleSize ?? const Size(32, 4);
-    final handleColor = sheetTheme.dragHandleColor ?? AppColors.surfacePressed;
+    final handleSize = sheetTheme.dragHandleSize ?? const Size(36, 4);
+    final handleColor = sheetTheme.dragHandleColor ?? palette.dragHandle;
     final sheetShape = sheetTheme.shape;
     final themeRadius = sheetShape is RoundedRectangleBorder
         ? sheetShape.borderRadius.resolve(Directionality.maybeOf(context))
@@ -147,7 +149,7 @@ class _GrabHandle extends StatelessWidget {
       height: kMinInteractiveDimension,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: palette.surface,
         borderRadius: BorderRadius.only(
           topLeft: themeRadius.topLeft,
           topRight: themeRadius.topRight,
@@ -172,6 +174,8 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
     final duration = metadata.durationSec > 0 ? Duration(seconds: metadata.durationSec) : null;
     // Seeded by the video id, so the same video always gets the same
     // placeholder cover wherever it shows.
@@ -183,15 +187,17 @@ class _Header extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // An app string, so the sheet title role; the video's own name goes
+        // in the body below (DESIGN.md 7.10).
         Semantics(
           header: true,
-          child: Text('Choose quality', style: AppTypography.sectionTitle),
+          child: Text('Choose quality', style: type.sectionTitle),
         ),
         const SizedBox(height: AppSpacing.md12),
         Row(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(AppSpacing.md12),
+              borderRadius: BorderRadius.circular(AppSpacing.radiusArtSmall),
               child: SizedBox(
                 width: 112,
                 height: 63,
@@ -229,15 +235,15 @@ class _Header extends StatelessWidget {
                     semanticsLabel: metadata.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: AppTypography.bodyStrong,
+                    style: type.bodyStrong,
                   ),
                   if (metadata.uploader.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.xs4),
+                    const SizedBox(height: 2),
                     Text(
                       metadata.uploader,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: AppTypography.metadata,
+                      style: type.metadata,
                     ),
                   ],
                 ],
@@ -245,11 +251,14 @@ class _Header extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: AppSpacing.md12),
+        const Divider(height: 1, thickness: 1),
       ],
     );
   }
 }
 
+/// Group kicker ("VIDEO WITH SOUND", "AUDIO ONLY") in the overline role.
 class _SectionLabel extends StatelessWidget {
   final String text;
 
@@ -257,23 +266,40 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.xl20, bottom: AppSpacing.sm8),
+      padding: const EdgeInsets.only(top: AppSpacing.lg16, bottom: AppSpacing.sm8),
       child: Semantics(
         header: true,
         child: Text(
-          text,
-          style: AppTypography.label.copyWith(
-            color: AppColors.primary,
-            fontWeight: FontWeight.w600,
-          ),
+          text.toUpperCase(),
+          semanticsLabel: text,
+          style: AppTypography.of(palette).overline.copyWith(color: palette.primary),
         ),
       ),
     );
   }
 }
 
-/// One option card: tinted type icon, quality label, size line, download glyph.
+/// [text] with every " · "-separated part that starts with a figure ("12.0 MB",
+/// "~48 MB") set in the figures role at 14, the rest in [base] (DESIGN.md 6:
+/// in a meta line, figures are a TextSpan at 14).
+TextSpan _metaSpan(String text, TextStyle base, TextStyle figures) {
+  final parts = text.split(' · ');
+  final figure = RegExp(r'^[~≈]?\d');
+  final figureStyle = figures.copyWith(fontSize: 14, height: 20 / 14);
+  return TextSpan(
+    style: base,
+    children: [
+      for (var i = 0; i < parts.length; i++) ...[
+        if (i > 0) const TextSpan(text: ' · '),
+        TextSpan(text: parts[i], style: figure.hasMatch(parts[i]) ? figureStyle : null),
+      ],
+    ],
+  );
+}
+
+/// One option card: tonal type tile, quality label, size line, download glyph.
 class _ChoiceTile extends StatelessWidget {
   final FormatChoice choice;
   final void Function(FormatChoice choice) onSelect;
@@ -282,7 +308,10 @@ class _ChoiceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tint = choice.isAudio ? AppColors.primary : AppColors.accent;
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
+    // The same tile as a Downloads row: primary music glyph, accent video glyph.
+    final glyph = choice.isAudio ? palette.primary : palette.accent;
     final radius = BorderRadius.circular(AppSpacing.cardRadius);
 
     return Padding(
@@ -292,11 +321,11 @@ class _ChoiceTile extends StatelessWidget {
           button: true,
           hint: 'Download',
           child: Material(
-            color: AppColors.surfaceElevated,
+            color: palette.surfaceElevated,
             clipBehavior: Clip.antiAlias,
             shape: RoundedRectangleBorder(
               borderRadius: radius,
-              side: const BorderSide(color: AppColors.divider),
+              side: BorderSide(color: palette.divider),
             ),
             child: InkWell(
               onTap: () {
@@ -316,13 +345,13 @@ class _ChoiceTile extends StatelessWidget {
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: tint.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(AppSpacing.md12),
+                          color: palette.primaryContainer,
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusArtSmall),
                         ),
                         child: Icon(
                           choice.isAudio ? Icons.music_note_rounded : Icons.videocam_rounded,
                           size: 22,
-                          color: tint,
+                          color: glyph,
                         ),
                       ),
                       const SizedBox(width: AppSpacing.md12),
@@ -333,14 +362,13 @@ class _ChoiceTile extends StatelessWidget {
                           children: [
                             Text(
                               choice.label,
-                              style: AppTypography.bodyStrong,
+                              style: type.bodyStrong,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: AppSpacing.xs4),
-                            Text(
-                              choice.subtitle,
-                              style: AppTypography.metadata,
+                            const SizedBox(height: 2),
+                            Text.rich(
+                              _metaSpan(choice.subtitle, type.metadata, type.tabularFigures),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -348,7 +376,7 @@ class _ChoiceTile extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: AppSpacing.sm8),
-                      const Icon(Icons.download_rounded, size: 22, color: AppColors.textSecondary),
+                      Icon(Icons.download_rounded, size: 22, color: palette.primary),
                     ],
                   ),
                 ),

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mediahub/app/theme/app_colors.dart';
+import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_spacing.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/services/artwork_service.dart';
@@ -87,18 +87,18 @@ void main() {
 
       final badge = _chipDecoration(tester, find.byType(MediaBadge));
       final duration = _chipDecoration(tester, find.byType(DurationBadge));
-      expect(badge.color, AppColors.overlay);
+      expect(badge.color, AppPalette.dark.overlay);
       expect(badge.color, duration.color);
       expect(badge.borderRadius, duration.borderRadius);
 
       final icon = tester.widget<Icon>(find.byIcon(Icons.download_done_rounded));
       expect(icon.size, 16);
-      expect(icon.color, AppColors.accent);
+      expect(icon.color, AppPalette.dark.accent);
       expect(icon.color, MediaBadge.glyphColor);
 
       final text = tester.widget<Text>(find.text('Downloaded'));
       final durationText = tester.widget<Text>(find.text('3:00'));
-      expect(text.style?.color, AppColors.onOverlay);
+      expect(text.style?.color, AppPalette.dark.onOverlay);
       expect(text.style?.fontSize, durationText.style?.fontSize);
       expect(text.style?.fontWeight, durationText.style?.fontWeight);
       expect(text.style?.fontFeatures, isNull, reason: 'words need no tabular figures');
@@ -141,6 +141,33 @@ void main() {
         final target = tester.getSize(find.byType(TextButton));
         expect(target.height, greaterThanOrEqualTo(AppSpacing.minTouchTarget));
         expect(target.width, greaterThanOrEqualTo(AppSpacing.minTouchTarget));
+      });
+    }
+
+    for (final textScale in [1.0, 1.3]) {
+      testWidgets('"See all" adds no height: the kicker sits as close to the title at ${textScale}x', (tester) async {
+        await _pump(
+          tester,
+          Column(
+            children: [
+              SectionHeader(key: const ValueKey('with'), title: 'Recent videos', kicker: 'Your videos', actionLabel: 'See all', onAction: () {}),
+              const SectionHeader(key: ValueKey('without'), title: 'Most played', kicker: 'Your songs'),
+            ],
+          ),
+          textScale: textScale,
+        );
+        final withAction = tester.getRect(find.byKey(const ValueKey('with')));
+        final without = tester.getRect(find.byKey(const ValueKey('without')));
+        expect(withAction.height, moreOrLessEquals(without.height, epsilon: 0.5));
+        double gap(String kicker, String title) =>
+            tester.getRect(find.text(title)).top - tester.getRect(find.text(kicker)).bottom;
+        expect(gap('YOUR VIDEOS', 'Recent videos'), moreOrLessEquals(gap('YOUR SONGS', 'Most played'), epsilon: 0.5));
+
+        // The button keeps its 48 dp target, centred on the title line.
+        final button = tester.getRect(find.byType(TextButton));
+        expect(button.height, greaterThanOrEqualTo(AppSpacing.minTouchTarget));
+        expect(button.center.dy, moreOrLessEquals(tester.getRect(find.text('Recent videos')).center.dy, epsilon: 1));
+        await tester.tap(find.text('See all'));
       });
     }
 
@@ -297,7 +324,7 @@ void main() {
       final material = tester.widget<Material>(
         find.descendant(of: find.byType(SurfaceCard), matching: find.byType(Material)).first,
       );
-      expect(material.color, AppColors.surface);
+      expect(material.color, AppPalette.dark.surface, reason: 'no app theme: the ink palette');
     });
   });
 }

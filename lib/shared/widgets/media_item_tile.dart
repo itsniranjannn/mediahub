@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
@@ -10,16 +10,25 @@ import 'ui_kit.dart';
 
 /// One library entry.
 ///
-/// Videos render as a cinematic card: a 16:9 thumbnail with a duration badge,
-/// a thin teal resume bar, a two-line title, the teal "time left" for a
-/// part-watched video and a quality / size / date line.
-/// Audio keeps a compact row with the optional "Play next" / "Add to queue" menu.
+/// Videos render as a video card (docs/DESIGN.md 7.9): a 16:9 thumbnail at
+/// radius 14 with a duration badge, a "Downloaded" badge and a Volt resume
+/// line, then a two-line title, the "time left" of a part-watched video, a
+/// quality / size / date line and a 48 dp ⋮ ([onMore]) for the media sheet.
+/// Audio keeps a compact row with the optional "Play next" / "Add to queue"
+/// menu.
 class MediaItemTile extends StatelessWidget {
   final MediaItem item;
   final VoidCallback? onTap;
   final VoidCallback? onPlayNext;
   final VoidCallback? onAddToQueue;
   final double? progress; // 0.0 to 1.0 for videos
+
+  /// Opens the media sheet from the video card's ⋮; [anchor] is the button,
+  /// for the popup menu on wide screens. No ⋮ when null.
+  final void Function(BuildContext anchor)? onMore;
+
+  /// A long press on the video card (the media sheet).
+  final VoidCallback? onLongPress;
 
   const MediaItemTile({
     super.key,
@@ -28,12 +37,14 @@ class MediaItemTile extends StatelessWidget {
     this.onPlayNext,
     this.onAddToQueue,
     this.progress,
+    this.onMore,
+    this.onLongPress,
   });
 
   @override
   Widget build(BuildContext context) {
     if (item.mediaType == MediaType.video) {
-      return _VideoCard(item: item, progress: progress, onTap: onTap);
+      return _VideoCard(item: item, progress: progress, onTap: onTap, onMore: onMore, onLongPress: onLongPress);
     }
     return _AudioRow(
       item: item,
@@ -52,20 +63,31 @@ class _VideoCard extends StatelessWidget {
   final MediaItem item;
   final double? progress;
   final VoidCallback? onTap;
+  final void Function(BuildContext anchor)? onMore;
+  final VoidCallback? onLongPress;
 
-  const _VideoCard({required this.item, required this.progress, required this.onTap});
+  const _VideoCard({
+    required this.item,
+    required this.progress,
+    required this.onTap,
+    required this.onMore,
+    required this.onLongPress,
+  });
 
   /// Cards stop growing past this width so tablets and landscape stay tidy.
   static const double _maxCardWidth = 640;
 
+  /// Thickness of the resume line along the thumbnail's bottom edge.
+  static const double resumeHeight = 3;
+
   /// Separator between the quality, size and date parts.
   static const String _separator = ' · ';
 
-  static final RegExp _extension = RegExp(r'\.[a-zA-Z0-9]{2,4}$');
-
   @override
   Widget build(BuildContext context) {
-    final title = item.title.replaceAll(_extension, '');
+    final palette = context.palette;
+    final type = context.typography;
+    final title = videoDisplayTitle(item.title);
     final duration = Duration(milliseconds: item.durationMs);
     final hasDuration = item.durationMs > 0;
     final isDownloaded = item.source == 'download';
@@ -73,6 +95,7 @@ class _VideoCard extends StatelessWidget {
     final isResuming = ratio != null && ratio > 0;
     final remaining = isResuming && hasDuration ? _remainingLabel(item.durationMs, ratio) : null;
     final details = _detailParts(item);
+    final more = onMore;
 
     final semanticsLabel = [
       title,
@@ -83,7 +106,7 @@ class _VideoCard extends StatelessWidget {
       if (isResuming) '${(ratio * 100).round()} percent watched',
     ].join(', ');
 
-    final radius = BorderRadius.circular(AppSpacing.cardRadius);
+    final radius = BorderRadius.circular(AppSpacing.radiusThumb);
     // Only picks the thumbnail's decode resolution; the card itself is laid
     // out by its constraints.
     final cardWidth = math.min(
@@ -91,133 +114,145 @@ class _VideoCard extends StatelessWidget {
       _maxCardWidth,
     );
 
+    final thumbnail = DecoratedBox(
+      // A hairline over the frame, so a white frame still has an edge on paper.
+      position: DecorationPosition.foreground,
+      decoration: BoxDecoration(borderRadius: radius, border: Border.all(color: palette.divider)),
+      child: ClipRRect(
+        borderRadius: radius,
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Cropped once, straight into the 16:9 box.
+              ArtworkThumbnail(
+                uri: item.uri,
+                artworkPath: item.artworkPath,
+                width: cardWidth,
+                height: cardWidth * 9 / 16,
+                borderRadius: 0,
+                placeholderIcon: Icons.movie_outlined,
+              ),
+              // No scrim over the frame: every badge has its own dark chip and
+              // the resume line its own dark track, so bright family videos
+              // keep their colours.
+              if (isDownloaded)
+                const PositionedDirectional(
+                  start: AppSpacing.sm8,
+                  top: AppSpacing.sm8,
+                  child: MediaBadge(icon: Icons.download_done_rounded, text: 'Downloaded'),
+                ),
+              if (hasDuration)
+                PositionedDirectional(
+                  end: AppSpacing.sm8,
+                  bottom: isResuming ? AppSpacing.sm8 + resumeHeight : AppSpacing.sm8,
+                  child: DurationBadge(duration: duration),
+                ),
+              if (isResuming)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: LinearProgressIndicator(
+                    value: ratio.clamp(0.0, 1.0),
+                    minHeight: resumeHeight,
+                    borderRadius: BorderRadius.zero,
+                    // The overlay is ink in both themes, so the line is the
+                    // ink theme's Volt on it.
+                    backgroundColor: palette.overlay,
+                    valueColor: AlwaysStoppedAnimation<Color>(AppPalette.dark.primary),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final texts = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          breakableTitle(title),
+          semanticsLabel: title,
+          style: type.bodyStrong,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        // Time left gets its own line, so the quality / size / date line
+        // keeps the full width.
+        if (remaining != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            remaining,
+            style: type.metadata.copyWith(color: palette.accent, fontWeight: FontWeight.w600),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+        if (details.isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(
+            details.join(_separator),
+            style: type.metadata,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ],
+    );
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.sm8),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: _maxCardWidth),
+          // One node for the card (its label and tap); the ⋮ stays a button
+          // of its own.
           child: Semantics(
             button: true,
             label: semanticsLabel,
             onTap: onTap,
-            excludeSemantics: true,
+            onLongPress: onLongPress,
             child: Material(
-              color: AppColors.surface,
-              clipBehavior: Clip.antiAlias,
-              shape: RoundedRectangleBorder(
+              type: MaterialType.transparency,
+              child: InkWell(
+                onTap: onTap,
+                onLongPress: onLongPress,
+                excludeFromSemantics: true,
                 borderRadius: radius,
-                side: const BorderSide(color: AppColors.divider),
-              ),
-              child: Stack(
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      AspectRatio(
-                        aspectRatio: 16 / 9,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            // Cropped once, straight into the 16:9 box; the card
-                            // clips the corners.
-                            ArtworkThumbnail(
-                              uri: item.uri,
-                              artworkPath: item.artworkPath,
-                              width: cardWidth,
-                              height: cardWidth * 9 / 16,
-                              borderRadius: 0,
-                              placeholderIcon: Icons.movie_outlined,
+                highlightColor: palette.surfacePressed,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ExcludeSemantics(child: thumbnail),
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(top: AppSpacing.md12, bottom: AppSpacing.xs4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: ExcludeSemantics(child: texts)),
+                          if (more != null)
+                            Builder(
+                              builder: (buttonContext) => IconButton(
+                                icon: const Icon(Icons.more_vert_rounded),
+                                color: palette.textSecondary,
+                                tooltip: 'More actions',
+                                constraints: const BoxConstraints(
+                                  minWidth: AppSpacing.minTouchTarget,
+                                  minHeight: AppSpacing.minTouchTarget,
+                                ),
+                                // Its glyph lines up with the title's first line.
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => more(buttonContext),
+                              ),
                             ),
-                            // No scrim over the frame: every badge has its own
-                            // dark chip and the resume bar its own dark track,
-                            // so bright family videos keep their colours.
-                            // Same dark chip as the duration, so it reads on
-                            // the light corner of any cover.
-                            if (isDownloaded)
-                              const Positioned(
-                                left: AppSpacing.md12,
-                                top: AppSpacing.md12,
-                                child: MediaBadge(
-                                  icon: Icons.download_done_rounded,
-                                  text: 'Downloaded',
-                                ),
-                              ),
-                            if (hasDuration)
-                              Positioned(
-                                right: AppSpacing.md12,
-                                bottom: isResuming ? AppSpacing.md12 + 3 : AppSpacing.md12,
-                                child: DurationBadge(duration: duration),
-                              ),
-                            if (isResuming)
-                              Positioned(
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                                child: LinearProgressIndicator(
-                                  value: ratio.clamp(0.0, 1.0),
-                                  minHeight: 3,
-                                  // Teal on the dark track is >= 5.7:1 over
-                                  // any frame, white included.
-                                  backgroundColor: AppColors.overlay,
-                                  valueColor: const AlwaysStoppedAnimation<Color>(AppColors.accent),
-                                ),
-                              ),
-                          ],
-                        ),
+                        ],
                       ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          AppSpacing.lg16,
-                          AppSpacing.md12,
-                          AppSpacing.lg16,
-                          AppSpacing.lg16,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              breakableTitle(title),
-                              semanticsLabel: title,
-                              style: AppTypography.bodyStrong,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            // Time left gets its own line, so the quality / size /
-                            // date line keeps the full width of the card.
-                            if (remaining != null) ...[
-                              const SizedBox(height: AppSpacing.xs4),
-                              Text(
-                                remaining,
-                                style: AppTypography.metadata.copyWith(
-                                  color: AppColors.accent,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                            if (details.isNotEmpty) ...[
-                              SizedBox(height: remaining != null ? 2 : AppSpacing.xs4),
-                              Text(
-                                details.join(_separator),
-                                style: AppTypography.metadata,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  // Ink on top so the ripple also shows over the thumbnail.
-                  Positioned.fill(
-                    child: Material(
-                      type: MaterialType.transparency,
-                      child: InkWell(onTap: onTap),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -295,6 +330,8 @@ class _AudioRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
     final artist = item.artist ?? 'Unknown Artist';
     final hasMenu = onPlayNext != null || onAddToQueue != null;
 
@@ -305,10 +342,11 @@ class _AudioRow extends StatelessWidget {
         type: MaterialType.transparency,
         child: InkWell(
           onTap: onTap,
+          highlightColor: palette.surfacePressed,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 72),
+            constraints: const BoxConstraints(minHeight: 64),
             child: Padding(
-              padding: EdgeInsets.fromLTRB(
+              padding: EdgeInsetsDirectional.fromSTEB(
                 AppSpacing.lg16,
                 AppSpacing.sm8,
                 hasMenu ? AppSpacing.xs4 : AppSpacing.lg16,
@@ -319,9 +357,9 @@ class _AudioRow extends StatelessWidget {
                   ArtworkThumbnail(
                     uri: item.uri,
                     artworkPath: item.artworkPath,
-                    size: 52,
+                    size: 48,
                     // same corners as MediaSongRow's cover
-                    borderRadius: AppSpacing.sm8,
+                    borderRadius: AppSpacing.radiusArtSmall,
                     placeholderIcon: Icons.music_note_rounded,
                   ),
                   const SizedBox(width: AppSpacing.md12),
@@ -332,7 +370,7 @@ class _AudioRow extends StatelessWidget {
                       children: [
                         Text(
                           item.title,
-                          style: AppTypography.bodyStrong,
+                          style: type.bodyStrong,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -346,12 +384,12 @@ class _AudioRow extends StatelessWidget {
                     const SizedBox(width: AppSpacing.sm8),
                     Text(
                       formatClock(Duration(milliseconds: item.durationMs)),
-                      style: AppTypography.tabularFigures,
+                      style: type.tabularFigures.copyWith(color: palette.textMuted),
                     ),
                   ],
                   if (hasMenu)
                     PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert_rounded, color: AppColors.textMuted),
+                      icon: Icon(Icons.more_vert_rounded, color: palette.textSecondary),
                       tooltip: 'Track actions',
                       onSelected: (val) {
                         if (val == 'play_next') {
@@ -392,9 +430,10 @@ class _AudioMetaLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final text = Text(
       artist,
-      style: AppTypography.metadata,
+      style: context.typography.metadata,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
@@ -406,11 +445,11 @@ class _AudioMetaLine extends StatelessWidget {
     // intrinsic sizes (IntrinsicHeight, dialogs, SliverFillRemaining).
     return Row(
       children: [
-        const Flexible(
+        Flexible(
           child: FittedBox(
             fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: PillTag(text: 'Downloaded', icon: Icons.download_done_rounded),
+            alignment: AlignmentDirectional.centerStart,
+            child: PillTag(text: 'Downloaded', icon: Icons.download_done_rounded, color: palette.accent),
           ),
         ),
         const SizedBox(width: 6),

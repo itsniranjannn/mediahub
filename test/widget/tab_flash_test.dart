@@ -70,16 +70,16 @@ void main() {
     // At loading stage: CircularProgressIndicator should be visible, NOT EmptyStateWidget
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.byType(EmptyStateWidget), findsNothing);
-    expect(find.text('No Music Found'), findsNothing);
+    expect(find.text('No songs yet'), findsNothing);
 
     // Now emit empty list from DB stream
     streamController.add([]);
     await tester.pump();
 
-    // After emission: EmptyStateWidget with 'No Music Found' is shown
+    // After emission: EmptyStateWidget with 'No songs yet' is shown
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byType(EmptyStateWidget), findsOneWidget);
-    expect(find.text('No Music Found'), findsOneWidget);
+    expect(find.text('No songs yet'), findsOneWidget);
 
     await streamController.close();
   });
@@ -106,7 +106,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('No Music Found'), findsOneWidget);
+    expect(find.text('No songs yet'), findsOneWidget);
     expect(find.text('Find the songs saved on this phone.'), findsOneWidget);
     expect(find.text('Search your music'), findsOneWidget, reason: 'a hint short enough to stay whole');
 

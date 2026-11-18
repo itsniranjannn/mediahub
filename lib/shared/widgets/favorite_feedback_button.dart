@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../features/music_player/playback_notifier.dart' show appDatabaseProvider;
 

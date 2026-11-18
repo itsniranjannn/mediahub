@@ -1,10 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
+import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/app_config.dart';
 import '../../core/permissions/media_permission_service.dart';
@@ -16,6 +18,7 @@ import '../../shared/widgets/empty_state_widget.dart';
 import '../../shared/widgets/media_item_tile.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../library/library_notifier.dart';
+import '../library/media_context_menu.dart';
 import 'video_player_notifier.dart';
 
 class VideosScreen extends ConsumerStatefulWidget {
@@ -47,28 +50,37 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
     context.push('/video_player', extra: item);
   }
 
+  /// The media sheet for [item] (Play, Play as audio, Picture-in-picture ...).
+  void _openMenu(BuildContext anchor, MediaItem item) {
+    MediaContextMenu.show(context, ref, item, anchorContext: anchor);
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(videoLibraryProvider);
     final notifier = ref.read(videoLibraryProvider.notifier);
     final progressListAsync = ref.watch(allVideoProgressStreamProvider);
 
-    return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: CustomScrollView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          slivers: [
-            SliverToBoxAdapter(
-              child: _VideosHeader(state: state, notifier: notifier),
-            ),
-            ..._buildBody(
-              context,
-              state,
-              notifier,
-              progressListAsync.value ?? const <VideoProgress>[],
-            ),
-          ],
+    // No app bar: the screen sets the status bar icons for its own canvas.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: AppTheme.barsFor(context.palette),
+      child: Scaffold(
+        body: SafeArea(
+          bottom: false,
+          child: CustomScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            slivers: [
+              SliverToBoxAdapter(
+                child: _VideosHeader(state: state, notifier: notifier),
+              ),
+              ..._buildBody(
+                context,
+                state,
+                notifier,
+                progressListAsync.value ?? const <VideoProgress>[],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -84,6 +96,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
     if (state.permissionState == MediaPermissionState.checking) {
       return const [];
     }
+    final palette = context.palette;
 
     if (state.permissionState == MediaPermissionState.denied) {
       return [
@@ -91,7 +104,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           hasScrollBody: false,
           child: EmptyStateWidget(
             icon: Icons.lock_outline_rounded,
-            iconColor: AppColors.accent,
+            iconColor: palette.accent,
             title: 'Permission Required',
             message:
                 '${AppConfig.appName} needs media permission to access your video files and build your video library.',
@@ -111,7 +124,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           hasScrollBody: false,
           child: EmptyStateWidget(
             icon: Icons.no_encryption_gmailerrorred_rounded,
-            iconColor: AppColors.warning,
+            iconColor: palette.warning,
             title: 'Permission Permanently Denied',
             message:
                 'Media permission was permanently denied. Please grant permission in system settings to access your video library.',
@@ -140,7 +153,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           hasScrollBody: false,
           child: EmptyStateWidget(
             icon: Icons.error_outline_rounded,
-            iconColor: AppColors.error,
+            iconColor: palette.error,
             title: 'Failed to load video library',
             message: state.errorMessage ?? 'An unknown error occurred.',
             action: FilledButton.tonalIcon(
@@ -171,16 +184,19 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
         SliverToBoxAdapter(
           child: _LimitedAccessBanner(onOpenSettings: () => notifier.openSettings()),
         ),
-      SliverToBoxAdapter(child: _searchField(notifier)),
+      SliverToBoxAdapter(child: _searchField(context, notifier)),
 
       // Continue watching rail if available
       if (showContinueWatching) ...[
-        const SliverToBoxAdapter(child: SectionHeader(title: 'Continue watching')),
+        const SliverToBoxAdapter(
+          child: SectionHeader(title: 'Continue watching', kicker: 'Pick up where you left off'),
+        ),
         SliverToBoxAdapter(
           child: _ContinueWatchingRail(
             items: continueWatchingItems,
             progressMap: progressMap,
             onOpen: (item) => _openPlayer(context, item),
+            onMenu: _openMenu,
           ),
         ),
       ],
@@ -190,14 +206,13 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           hasScrollBody: false,
           child: EmptyStateWidget(
             icon: Icons.videocam_off_outlined,
-            iconColor: AppColors.accent,
-            title: 'No Videos Found',
+            title: state.searchQuery.isNotEmpty ? 'No matching videos' : 'No videos yet',
             message: state.searchQuery.isNotEmpty
                 ? 'No videos matching "${state.searchQuery}".'
                 : 'Find the videos saved on this phone.',
             action: state.searchQuery.isNotEmpty
                 ? null
-                : FilledButton.tonalIcon(
+                : FilledButton.icon(
                     onPressed: state.isScanning ? null : () => notifier.scanDevice(),
                     icon: const Icon(Icons.refresh_rounded, size: 20),
                     label: const Text('Scan device'),
@@ -206,7 +221,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
         )
       else ...[
         if (showContinueWatching)
-          const SliverToBoxAdapter(child: SectionHeader(title: 'All videos')),
+          const SliverToBoxAdapter(child: SectionHeader(title: 'All videos', kicker: 'On this phone')),
         SliverPadding(
           padding: const EdgeInsets.only(top: AppSpacing.xs4, bottom: AppSpacing.xxl24),
           sliver: SliverList.builder(
@@ -223,6 +238,8 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
                 item: video,
                 progress: ratio,
                 onTap: () => _openPlayer(context, video),
+                onMore: (anchor) => _openMenu(anchor, video),
+                onLongPress: () => _openMenu(context, video),
               );
             },
           ),
@@ -231,7 +248,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
     ];
   }
 
-  Widget _searchField(BaseLibraryNotifier notifier) {
+  Widget _searchField(BuildContext context, BaseLibraryNotifier notifier) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg16,
@@ -246,10 +263,10 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           controller: _searchController,
           onChanged: (val) => notifier.setSearchQuery(val),
           textInputAction: TextInputAction.search,
-          style: AppTypography.body,
+          style: context.typography.body,
           decoration: InputDecoration(
             hintText: 'Search your videos',
-            prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textSecondary),
+            prefixIcon: Icon(Icons.search_rounded, color: context.palette.textSecondary),
             suffixIcon: value.text.isEmpty
                 ? null
                 : IconButton(
@@ -282,6 +299,8 @@ class _VideosHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final granted = state.permissionState == MediaPermissionState.granted;
+    final palette = context.palette;
+    final type = context.typography;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -301,7 +320,7 @@ class _VideosHeader extends StatelessWidget {
                   header: true,
                   child: Text(
                     'Videos',
-                    style: AppTypography.display,
+                    style: type.display,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -309,7 +328,7 @@ class _VideosHeader extends StatelessWidget {
                 const SizedBox(height: AppSpacing.xs4),
                 Text(
                   _subtitle(state),
-                  style: AppTypography.metadata,
+                  style: type.metadata,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -319,12 +338,12 @@ class _VideosHeader extends StatelessWidget {
           if (granted) ...[
             IconButton(
               icon: state.isScanning
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: AppColors.accent,
+                        color: palette.primary,
                       ),
                     )
                   : const Icon(Icons.refresh_rounded),
@@ -400,6 +419,8 @@ class _SortOptionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
     return Semantics(
       selected: selected,
       child: Row(
@@ -407,9 +428,7 @@ class _SortOptionLabel extends StatelessWidget {
         children: [
           SizedBox(
             width: 24,
-            child: selected
-                ? const Icon(Icons.check_rounded, size: 20, color: AppColors.primary)
-                : null,
+            child: selected ? Icon(Icons.check_rounded, size: 20, color: palette.primary) : null,
           ),
           const SizedBox(width: AppSpacing.md12),
           Flexible(
@@ -417,9 +436,7 @@ class _SortOptionLabel extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: selected
-                  ? AppTypography.bodyStrong.copyWith(color: AppColors.primary)
-                  : AppTypography.body,
+              style: selected ? type.bodyStrong.copyWith(color: palette.primary) : type.body,
             ),
           ),
           if (selected) ...[
@@ -427,7 +444,7 @@ class _SortOptionLabel extends StatelessWidget {
             Icon(
               ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
               size: 16,
-              color: AppColors.textSecondary,
+              color: palette.textSecondary,
               semanticLabel: ascending ? 'Ascending' : 'Descending',
             ),
           ],
@@ -448,6 +465,7 @@ class _LimitedAccessBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.lg16,
@@ -463,9 +481,9 @@ class _LimitedAccessBanner extends StatelessWidget {
           AppSpacing.xs4,
         ),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-          border: Border.all(color: AppColors.divider),
+          border: Border.all(color: palette.divider),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -476,9 +494,9 @@ class _LimitedAccessBanner extends StatelessWidget {
                 height: 36,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: AppColors.accent.withValues(alpha: 0.14),
+                  color: palette.accent.withValues(alpha: 0.14),
                 ),
-                child: const Icon(Icons.info_outline_rounded, color: AppColors.accent, size: 20),
+                child: Icon(Icons.info_outline_rounded, color: palette.accent, size: 20),
               ),
             ),
             const SizedBox(width: AppSpacing.md12),
@@ -492,7 +510,7 @@ class _LimitedAccessBanner extends StatelessWidget {
                     padding: const EdgeInsets.only(top: AppSpacing.sm8),
                     child: Text(
                       'You gave access to selected items only. To see all your media, grant full access in Settings.',
-                      style: AppTypography.metadata,
+                      style: context.typography.metadata,
                     ),
                   ),
                   TextButton(
@@ -522,10 +540,14 @@ class _ContinueWatchingRail extends StatelessWidget {
   final Map<String, VideoProgress> progressMap;
   final ValueChanged<MediaItem> onOpen;
 
+  /// Opens the media sheet for an item (long press on its card).
+  final void Function(BuildContext anchor, MediaItem item) onMenu;
+
   const _ContinueWatchingRail({
     required this.items,
     required this.progressMap,
     required this.onOpen,
+    required this.onMenu,
   });
 
   @override
@@ -533,12 +555,13 @@ class _ContinueWatchingRail extends StatelessWidget {
     // Thumbnail + gap + up to two title lines + the "time left" line, grown
     // with the text scale so nothing is clipped at large font sizes.
     final scaler = MediaQuery.textScalerOf(context);
+    final type = context.typography;
     double lineOf(TextStyle style) => scaler.scale(style.fontSize!) * style.height!;
     final railHeight = _ResumeCard.thumbHeight +
         AppSpacing.sm8 +
-        lineOf(_ResumeCard.titleStyle) * 2 +
+        lineOf(_ResumeCard.titleStyle(type)) * 2 +
         2 +
-        lineOf(_ResumeCard.remainingStyle) +
+        lineOf(_ResumeCard.remainingStyle(type)) +
         AppSpacing.xs4;
 
     return SizedBox(
@@ -558,6 +581,7 @@ class _ContinueWatchingRail extends StatelessWidget {
             ratio: timed == null ? 0.0 : (timed.positionMs / timed.durationMs).clamp(0.0, 1.0),
             remainingMs: timed == null ? null : timed.durationMs - timed.positionMs,
             onTap: () => onOpen(item),
+            onLongPress: () => onMenu(context, item),
           );
         },
       ),
@@ -565,32 +589,30 @@ class _ContinueWatchingRail extends StatelessWidget {
   }
 }
 
+/// A part-watched video (docs/DESIGN.md 7.9): a 16:9 thumbnail at radius 14
+/// with the Volt resume line on its dark track, the title and the time left.
 class _ResumeCard extends StatelessWidget {
   final MediaItem item;
   final double ratio;
   final int? remainingMs;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   const _ResumeCard({
     required this.item,
     required this.ratio,
     required this.remainingMs,
     required this.onTap,
+    required this.onLongPress,
   });
 
   static const double width = 200;
   static const double thumbHeight = width * 9 / 16;
-  static final RegExp _extension = RegExp(r'\.[a-zA-Z0-9]{2,4}$');
+  static const double _resumeHeight = 3;
 
-  static TextStyle get titleStyle => AppTypography.metadata.copyWith(
-        color: AppColors.textPrimary,
-        fontWeight: FontWeight.w600,
-      );
+  static TextStyle titleStyle(AppTextStyles type) => type.bodyStrong;
 
-  static TextStyle get remainingStyle => AppTypography.label.copyWith(
-        color: AppColors.accent,
-        fontWeight: FontWeight.w600,
-      );
+  static TextStyle remainingStyle(AppTextStyles type) => type.metadata;
 
   static String _remainingLabel(int? remainingMs) {
     if (remainingMs == null) return 'Resume';
@@ -603,14 +625,17 @@ class _ResumeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final title = item.title.replaceAll(_extension, '');
+    final palette = context.palette;
+    final type = context.typography;
+    final title = videoDisplayTitle(item.title);
     final remaining = _remainingLabel(remainingMs);
-    final radius = BorderRadius.circular(AppSpacing.buttonRadius);
+    final radius = BorderRadius.circular(AppSpacing.radiusThumb);
 
     return Semantics(
       button: true,
       label: 'Continue watching $title, $remaining',
       onTap: onTap,
+      onLongPress: onLongPress,
       excludeSemantics: true,
       child: SizedBox(
         width: width,
@@ -619,36 +644,43 @@ class _ResumeCard extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ClipRRect(
-                  borderRadius: radius,
-                  child: SizedBox(
-                    width: width,
-                    height: thumbHeight,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        ArtworkThumbnail(
-                          uri: item.uri,
-                          artworkPath: item.artworkPath,
-                          width: width,
-                          height: thumbHeight,
-                          borderRadius: 0,
-                          placeholderIcon: Icons.movie_outlined,
-                        ),
-                        // No scrim: the resume bar has its own dark track, so
-                        // bright frames keep their colours.
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: LinearProgressIndicator(
-                            value: ratio,
-                            minHeight: 3,
-                            backgroundColor: AppColors.overlay,
-                            valueColor: const AlwaysStoppedAnimation<Color>(AppColors.accent),
+                DecoratedBox(
+                  position: DecorationPosition.foreground,
+                  decoration: BoxDecoration(borderRadius: radius, border: Border.all(color: palette.divider)),
+                  child: ClipRRect(
+                    borderRadius: radius,
+                    child: SizedBox(
+                      width: width,
+                      height: thumbHeight,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ArtworkThumbnail(
+                            uri: item.uri,
+                            artworkPath: item.artworkPath,
+                            width: width,
+                            height: thumbHeight,
+                            borderRadius: 0,
+                            placeholderIcon: Icons.movie_outlined,
                           ),
-                        ),
-                      ],
+                          // No scrim: the resume line has its own dark track,
+                          // so bright frames keep their colours. The track is
+                          // ink in both themes, so the line is the ink theme's
+                          // Volt.
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: LinearProgressIndicator(
+                              value: ratio,
+                              minHeight: _resumeHeight,
+                              borderRadius: BorderRadius.zero,
+                              backgroundColor: palette.overlay,
+                              valueColor: AlwaysStoppedAnimation<Color>(AppPalette.dark.primary),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -656,14 +688,14 @@ class _ResumeCard extends StatelessWidget {
                 Text(
                   breakableTitle(title),
                   semanticsLabel: title,
-                  style: titleStyle,
+                  style: titleStyle(type),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
                 Text(
                   remaining,
-                  style: remainingStyle,
+                  style: remainingStyle(type).copyWith(color: palette.accent, fontWeight: FontWeight.w600),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -673,7 +705,12 @@ class _ResumeCard extends StatelessWidget {
             Positioned.fill(
               child: Material(
                 type: MaterialType.transparency,
-                child: InkWell(borderRadius: radius, onTap: onTap),
+                child: InkWell(
+                  borderRadius: radius,
+                  onTap: onTap,
+                  onLongPress: onLongPress,
+                  highlightColor: palette.surfacePressed.withValues(alpha: 0.5),
+                ),
               ),
             ),
           ],
@@ -695,14 +732,15 @@ class _VideoCardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     Widget bar(double widthFactor, double height) => FractionallySizedBox(
           widthFactor: widthFactor,
-          alignment: Alignment.centerLeft,
+          alignment: AlignmentDirectional.centerStart,
           child: Container(
             height: height,
             decoration: BoxDecoration(
-              color: AppColors.surfacePressed,
-              borderRadius: BorderRadius.circular(6),
+              color: palette.surfacePressed,
+              borderRadius: BorderRadius.circular(AppSpacing.radiusBadge),
             ),
           ),
         );
@@ -718,38 +756,28 @@ class _VideoCardSkeleton extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 640),
-            child: Container(
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-                border: Border.all(color: AppColors.divider),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const AspectRatio(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusThumb),
+                  child: AspectRatio(
                     aspectRatio: 16 / 9,
-                    child: ColoredBox(color: AppColors.surfaceElevated),
+                    child: ColoredBox(color: palette.surfaceElevated),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.lg16,
-                      AppSpacing.lg16,
-                      AppSpacing.lg16,
-                      AppSpacing.xl20,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        bar(0.75, 14),
-                        const SizedBox(height: 10),
-                        bar(0.45, 12),
-                      ],
-                    ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, AppSpacing.md12, AppSpacing.huge48, AppSpacing.lg16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      bar(0.75, 14),
+                      const SizedBox(height: 10),
+                      bar(0.45, 12),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
