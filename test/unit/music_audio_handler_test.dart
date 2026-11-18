@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:mediahub/domain/models/media_item.dart' as domain;
+import 'package:mediahub/domain/models/playback_state.dart' show PlaybackRepeatMode;
 import 'package:mediahub/features/music_player/music_audio_handler.dart';
 
 class MockAudioPlayer extends Mock implements AudioPlayer {}
@@ -111,7 +112,7 @@ void main() {
       expect(state.queueIndex, 1);
       expect(state.systemActions, contains(MediaAction.skipToNext));
       expect(state.systemActions, contains(MediaAction.skipToPrevious));
-      expect(state.androidCompactActionIndices, [1, 2, 3]);
+      expect(state.androidCompactActionIndices, [0, 1, 2]);
     });
 
     test('skipToPrevious decrements currentIndex and updates broadcast state', () async {
@@ -132,13 +133,30 @@ void main() {
       expect(state.systemActions, contains(MediaAction.skipToNext));
     });
 
-    test('skipToNext at queue end with repeat off pauses and resets to start of queue', () async {
+    // DESIGN.md 7.17: Next is disabled on the last track with repeat off, in
+    // the app and in the notification alike. It used to pause and jump back
+    // to the first track instead.
+    test('skipToNext on the last track with repeat off does nothing (Next is disabled)', () async {
       await handler.loadQueue([item1, item2, item3], startIndex: 2, autoPlay: false);
       expect(handler.currentIndex, 2);
+      expect(handler.canSkipNext, isFalse);
 
       await handler.skipToNext();
+      await handler.click(MediaButton.next); // a headset's Next button
 
-      // Should pause and reset to start of queue (index 0)
+      expect(handler.currentIndex, 2);
+      expect(handler.mediaItem.value?.id, '3');
+      verifyNever(() => mockPlayer.pause());
+      verifyNever(() => mockPlayer.seek(any(), index: 0));
+      verifyNever(() => mockPlayer.play());
+    });
+
+    test('a track that cannot play on the last item still stops the queue at its start', () async {
+      await handler.loadQueue([item1, item2, item3], startIndex: 2, autoPlay: false);
+
+      handler.handlePlaybackError(Exception('Last file unplayable'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
       verify(() => mockPlayer.pause()).called(1);
       verify(() => mockPlayer.seek(Duration.zero, index: 0)).called(1);
     });
@@ -337,6 +355,264 @@ void main() {
 
       expect(handler.originalQueue.any((m) => m.id == '4'), isFalse);
       expect(handler.playOrderQueue.any((m) => m.id == '4'), isFalse);
+    });
+
+    // --- the playback basics (docs/DESIGN.md 7.17) ---------------------------
+
+    group('notification, lock screen and Bluetooth', () {
+      List<MediaAction> actions(PlaybackState s) => s.controls.map((c) => c.action).toList();
+      List<String?> customNames(PlaybackState s) => s.controls.map((c) => c.customAction?.name).toList();
+
+      test('previous, play / pause and next come first, so the compact view shows exactly those', () async {
+        await handler.loadQueue([item1, item2, item3], startIndex: 1, autoPlay: false);
+        final s = handler.playbackState.value;
+        expect(actions(s).take(3), [MediaAction.skipToPrevious, MediaAction.play, MediaAction.skipToNext]);
+        // Shuffle and repeat are custom actions after the transport: they
+        // never shift the compact indices (audio_service counts those over
+        // the standard controls only).
+        expect(customNames(s).skip(3), [MusicAudioHandler.actionToggleShuffle, MusicAudioHandler.actionCycleRepeat]);
+        expect(s.androidCompactActionIndices, [0, 1, 2]);
+        final standard = s.controls.where((c) => c.customAction == null).toList();
+        for (final i in s.androidCompactActionIndices!) {
+          expect(i, lessThan(standard.length), reason: 'every compact index names a standard control');
+        }
+        expect(standard.map((c) => c.action), [MediaAction.skipToPrevious, MediaAction.play, MediaAction.skipToNext]);
+        expect(s.systemActions, containsAll([MediaAction.skipToPrevious, MediaAction.skipToNext, MediaAction.seek]));
+      });
+
+      test('on the last track with repeat off Next leaves the notification controls, not the session',
+          () async {
+        await handler.loadQueue([item1, item2, item3], startIndex: 2, autoPlay: false);
+        final s = handler.playbackState.value;
+        expect(actions(s), isNot(contains(MediaAction.skipToNext)));
+        expect(s.androidCompactActionIndices, [0, 1]);
+        // The session keeps ACTION_SKIP_TO_NEXT, so Android 13+ keeps Next's
+        // slot instead of moving Shuffle (the first custom action) into it.
+        expect(s.systemActions, containsAll([MediaAction.skipToPrevious, MediaAction.skipToNext]));
+        expect(customNames(s).whereType<String>(),
+            [MusicAudioHandler.actionToggleShuffle, MusicAudioHandler.actionCycleRepeat]);
+        // A Next from the shade, lock screen or Bluetooth there does nothing.
+        await handler.skipToNext();
+        expect(handler.currentIndex, 2);
+        verifyNever(() => mockPlayer.seek(any(), index: 0));
+
+        // Repeat on: Next is back (it wraps to the start).
+        await handler.setRepeatMode(AudioServiceRepeatMode.all);
+        final repeating = handler.playbackState.value;
+        expect(actions(repeating).take(3), [MediaAction.skipToPrevious, MediaAction.play, MediaAction.skipToNext]);
+        expect(repeating.systemActions, contains(MediaAction.skipToNext));
+        expect(repeating.androidCompactActionIndices, [0, 1, 2]);
+        expect(handler.canSkipNext, isTrue);
+      });
+
+      test('moving off the last track brings Next back', () async {
+        await handler.loadQueue([item1, item2, item3], startIndex: 2, autoPlay: false);
+        await handler.skipToPrevious();
+        expect(handler.currentIndex, 1);
+        expect(actions(handler.playbackState.value), contains(MediaAction.skipToNext));
+      });
+
+      test('the play control follows the player, the pause control while playing', () async {
+        var playingNow = false;
+        when(() => mockPlayer.playing).thenAnswer((_) => playingNow);
+        when(() => mockPlayer.play()).thenAnswer((_) async => playingNow = true);
+        when(() => mockPlayer.pause()).thenAnswer((_) async => playingNow = false);
+        await handler.loadQueue([item1, item2], autoPlay: true);
+        expect(actions(handler.playbackState.value)[1], MediaAction.pause);
+        await handler.pause();
+        expect(actions(handler.playbackState.value)[1], MediaAction.play);
+      });
+
+      test('shuffle and repeat show in the session state and on their custom actions', () async {
+        await handler.loadQueue([item1, item2, item3], autoPlay: false);
+        var s = handler.playbackState.value;
+        expect(s.shuffleMode, AudioServiceShuffleMode.none);
+        expect(s.repeatMode, AudioServiceRepeatMode.none);
+        expect(s.controls[3].label, 'Shuffle: Off');
+        expect(s.controls[4].label, 'Repeat: Off');
+
+        await handler.toggleShuffle();
+        handler.cycleRepeatMode();
+        s = handler.playbackState.value;
+        expect(s.shuffleMode, AudioServiceShuffleMode.all);
+        expect(s.repeatMode, AudioServiceRepeatMode.all);
+        expect(s.controls[3].label, 'Shuffle: On');
+        expect(s.controls[4].label, 'Repeat: All');
+        expect(s.controls[4].androidIcon, 'drawable/ic_action_repeat_all');
+
+        handler.cycleRepeatMode();
+        expect(handler.playbackState.value.repeatMode, AudioServiceRepeatMode.one);
+        expect(handler.playbackState.value.controls[4].label, 'Repeat: One');
+
+        // From the lock screen / a car: the system's own shuffle and repeat.
+        await handler.setShuffleMode(AudioServiceShuffleMode.none);
+        await handler.setRepeatMode(AudioServiceRepeatMode.none);
+        s = handler.playbackState.value;
+        expect(handler.shuffleEnabled, isFalse);
+        expect(handler.repeatMode.name, 'off');
+        expect(s.shuffleMode, AudioServiceShuffleMode.none);
+        expect(s.repeatMode, AudioServiceRepeatMode.none);
+      });
+
+      test('the notification shuffle / repeat buttons change the modes', () async {
+        await handler.loadQueue([item1, item2, item3], autoPlay: false);
+        await handler.customAction(MusicAudioHandler.actionCycleRepeat);
+        expect(handler.repeatMode.name, 'all');
+        await handler.customAction(MusicAudioHandler.actionToggleShuffle);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(handler.shuffleEnabled, isTrue);
+      });
+    });
+
+    group('previous', () {
+      test('past 3 s it restarts the track', () async {
+        await handler.loadQueue([item1, item2, item3], startIndex: 1, autoPlay: false);
+        when(() => mockPlayer.position).thenReturn(const Duration(seconds: 10));
+
+        await handler.skipToPrevious();
+
+        expect(handler.currentIndex, 1);
+        verify(() => mockPlayer.seek(Duration.zero)).called(1);
+        verifyNever(() => mockPlayer.seek(any(), index: 0));
+      });
+
+      test('in the first 3 s it goes to the previous track', () async {
+        await handler.loadQueue([item1, item2, item3], startIndex: 1, autoPlay: false);
+        when(() => mockPlayer.position).thenReturn(const Duration(seconds: 3));
+
+        await handler.skipToPrevious();
+
+        expect(handler.currentIndex, 0);
+        expect(handler.mediaItem.value?.id, '1');
+      });
+
+      test('on the first track it restarts it with repeat off, and goes to the last with repeat on', () async {
+        await handler.loadQueue([item1, item2, item3], startIndex: 0, autoPlay: false);
+        await handler.skipToPrevious();
+        expect(handler.currentIndex, 0);
+        verify(() => mockPlayer.seek(Duration.zero)).called(1);
+
+        await handler.setRepeatMode(AudioServiceRepeatMode.all);
+        await handler.skipToPrevious();
+        expect(handler.currentIndex, 2);
+      });
+
+      test('skipping starts playback, like Next', () async {
+        await handler.loadQueue([item1, item2], startIndex: 1, autoPlay: false);
+        await handler.skipToPrevious();
+        verify(() => mockPlayer.play()).called(1);
+      });
+    });
+
+    test('with repeat one, Next and Previous still move between tracks', () async {
+      // just_audio loops the current item under LoopMode.one, so its own
+      // hasNext / seekToNext only restarted the same song.
+      when(() => mockPlayer.hasNext).thenReturn(true);
+      when(() => mockPlayer.hasPrevious).thenReturn(true);
+      when(() => mockPlayer.seekToNext()).thenAnswer((_) async {});
+      when(() => mockPlayer.seekToPrevious()).thenAnswer((_) async {});
+      await handler.loadQueue([item1, item2, item3], startIndex: 1, autoPlay: false);
+      await handler.setRepeatMode(AudioServiceRepeatMode.one);
+      verify(() => mockPlayer.setLoopMode(LoopMode.one)).called(1);
+
+      await handler.skipToNext();
+      expect(handler.currentIndex, 2);
+      expect(handler.mediaItem.value?.id, '3');
+
+      // The last track: Next stays enabled with repeat on and wraps.
+      expect(handler.canSkipNext, isTrue);
+      await handler.skipToNext();
+      expect(handler.currentIndex, 0);
+
+      await handler.skipToPrevious();
+      expect(handler.currentIndex, 2);
+      verifyNever(() => mockPlayer.seekToNext());
+      verifyNever(() => mockPlayer.seekToPrevious());
+    });
+
+    test('picking a track in the queue plays it (it used to jump there and stay paused)', () async {
+      await handler.loadQueue([item1, item2, item3], autoPlay: false);
+      verifyNever(() => mockPlayer.play());
+
+      await handler.skipToQueueItem(2);
+
+      expect(handler.currentIndex, 2);
+      expect(handler.mediaItem.value?.id, '3');
+      expect(handler.wantPlaying, isTrue);
+      verify(() => mockPlayer.play()).called(1);
+    });
+
+    test('canSkipNextAt: only the last item with repeat off has no next', () {
+      bool at(int index, int length, String mode) => MusicAudioHandler.canSkipNextAt(
+            index: index,
+            length: length,
+            repeatMode: PlaybackRepeatMode.values.byName(mode),
+          );
+      expect(at(0, 3, 'off'), isTrue);
+      expect(at(1, 3, 'off'), isTrue);
+      expect(at(2, 3, 'off'), isFalse);
+      expect(at(2, 3, 'all'), isTrue);
+      expect(at(2, 3, 'one'), isTrue);
+      expect(at(0, 1, 'off'), isFalse);
+      expect(at(0, 1, 'all'), isTrue);
+      expect(at(-1, 3, 'all'), isFalse, reason: 'nothing loaded');
+      expect(at(0, 0, 'all'), isFalse);
+    });
+
+    group('headset buttons', () {
+      test('Bluetooth next / previous and the play / pause button act at once', () async {
+        var playingNow = false;
+        when(() => mockPlayer.playing).thenAnswer((_) => playingNow);
+        when(() => mockPlayer.play()).thenAnswer((_) async => playingNow = true);
+        when(() => mockPlayer.pause()).thenAnswer((_) async => playingNow = false);
+        expect(handler.mediaButtonMultiClickWindow, Duration.zero, reason: 'not Android: no press counting');
+        await handler.loadQueue([item1, item2, item3], autoPlay: false);
+
+        await handler.click(MediaButton.media);
+        expect(playingNow, isTrue);
+        await handler.click(MediaButton.next);
+        expect(handler.currentIndex, 1);
+        await handler.click(MediaButton.previous);
+        expect(handler.currentIndex, 0);
+        await handler.click(MediaButton.media);
+        expect(playingNow, isFalse);
+        expect(handler.wantPlaying, isFalse);
+      });
+
+      test('a single-button headset: one press toggles, two skip next, three go back', () async {
+        var playingNow = false;
+        when(() => mockPlayer.playing).thenAnswer((_) => playingNow);
+        when(() => mockPlayer.play()).thenAnswer((_) async => playingNow = true);
+        when(() => mockPlayer.pause()).thenAnswer((_) async => playingNow = false);
+        final counting = MusicAudioHandler(
+          player: mockPlayer,
+          mediaButtonMultiClickWindow: const Duration(milliseconds: 40),
+        );
+        addTearDown(counting.dispose);
+        await counting.loadQueue([item1, item2, item3], startIndex: 1, autoPlay: false);
+        Future<void> wait() => Future<void>.delayed(const Duration(milliseconds: 90));
+
+        await counting.click(MediaButton.media);
+        expect(playingNow, isFalse, reason: 'waits for a second press');
+        await wait();
+        expect(playingNow, isTrue);
+
+        await counting.click(MediaButton.media);
+        await counting.click(MediaButton.media);
+        await wait();
+        expect(counting.currentIndex, 2);
+        expect(playingNow, isTrue, reason: 'a skip, not pause + play');
+
+        await counting.click(MediaButton.media);
+        await counting.click(MediaButton.media);
+        await counting.click(MediaButton.media);
+        await wait();
+        expect(counting.currentIndex, 1);
+
+        await counting.click(MediaButton.media);
+        await wait();
+        expect(playingNow, isFalse);
+      });
     });
   });
 }

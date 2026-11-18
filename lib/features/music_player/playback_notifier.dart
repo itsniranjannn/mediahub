@@ -258,6 +258,19 @@ final playbackSpeedProvider = Provider<double>((ref) {
   return ref.watch(playbackNotifierProvider.select((s) => s.speed));
 });
 
+/// Whether Next does anything in [s]: false on the last track with repeat
+/// off, the one place the mini player, Now Playing and the notification show
+/// it disabled (docs/DESIGN.md 7.17). The same rule as the audio handler's.
+bool canSkipNextIn(domain.PlaybackState s) => MusicAudioHandler.canSkipNextAt(
+      index: s.queueIndex,
+      length: s.queue.length,
+      repeatMode: s.repeatMode,
+    );
+
+final canSkipNextProvider = Provider<bool>((ref) {
+  return ref.watch(playbackNotifierProvider.select(canSkipNextIn));
+});
+
 // Throttled position stream provider (~4 updates per second = 250ms interval)
 final throttledPositionStreamProvider = StreamProvider<Duration>((ref) {
   final handler = ref.watch(audioHandlerProvider);

@@ -6,6 +6,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import '../../core/logging/diagnostics_service.dart';
+import '../../core/platform_info.dart';
 import '../../core/utils/play_count_tracker.dart';
 import '../../domain/models/media_item.dart' as domain;
 import '../../domain/models/playback_state.dart' as domain;
@@ -177,6 +178,35 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   static const String actionToggleShuffle = 'action_toggle_shuffle';
   static const String actionCycleRepeat = 'action_cycle_repeat';
 
+  /// Previous restarts the track instead once it has played longer than this
+  /// (docs/DESIGN.md 7.17).
+  static const Duration restartThreshold = Duration(seconds: 3);
+
+  /// Whether Next has somewhere to go from [index] in a queue of [length]:
+  /// everywhere but the last item while repeat is off, where the mini
+  /// player, Now Playing and the notification all show it disabled
+  /// (docs/DESIGN.md 7.17).
+  static bool canSkipNextAt({
+    required int index,
+    required int length,
+    required domain.PlaybackRepeatMode repeatMode,
+  }) {
+    if (index < 0 || index >= length) return false;
+    return index < length - 1 || repeatMode != domain.PlaybackRepeatMode.off;
+  }
+
+  /// Whether Next is enabled for the current track.
+  bool get canSkipNext =>
+      canSkipNextAt(index: _player.currentIndex ?? -1, length: _playOrderQueue.length, repeatMode: _repeatMode);
+
+  /// The headset's single button: one press plays / pauses, two skip to the
+  /// next track, three to the previous one (Android's media session default,
+  /// which audio_service replaces with one call per press). Zero turns the
+  /// counting off; iOS counts EarPods presses itself.
+  final Duration mediaButtonMultiClickWindow;
+  int _mediaButtonClicks = 0;
+  Timer? _mediaButtonTimer;
+
   // Headset auto-resume state
   bool _resumeOnHeadphonesReconnect = true;
   bool get resumeOnHeadphonesReconnect => _resumeOnHeadphonesReconnect;
@@ -261,7 +291,10 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     AudioPlayer? player,
     this.onRecordPlay,
     this.onDurationKnown,
-  })  : _player = player ?? AudioPlayer(handleInterruptions: false) {
+    Duration? mediaButtonMultiClickWindow,
+  })  : _player = player ?? AudioPlayer(handleInterruptions: false),
+        mediaButtonMultiClickWindow = mediaButtonMultiClickWindow ??
+            (PlatformInfo.isAndroid ? const Duration(milliseconds: 300) : Duration.zero) {
     _playCountTracker = PlayCountTracker(onCountPlay: (id) async {
       DiagnosticsService.instance.logEvent('track_play_counted', {'id': id});
       if (onRecordPlay != null) {
@@ -453,7 +486,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _errorController.add('Playback error on "$trackName"');
     _consecutiveErrorSkips++;
     if (_consecutiveErrorSkips < _domainQueue.length && _domainQueue.length > 1) {
-      _skipToNextLocalImpl();
+      _skipToNextLocalImpl(fromUser: false);
     } else {
       _consecutiveErrorSkips = 0;
       _pauseLocalImpl(reason: 'error_loop_guard');
@@ -508,17 +541,26 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     );
 
     final currIdx = _player.currentIndex ?? -1;
+    final canNext = canSkipNext;
 
     playbackState.add(
       playbackState.value.copyWith(
+        // Transport first, so the compact (collapsed) notification shows
+        // previous, play / pause and next. audio_service counts the compact
+        // indices over the standard controls only (shuffle and repeat are
+        // custom actions, drawn by Android 13+ in their own slots), and with
+        // shuffle first the old [1, 2, 3] showed play / pause, next and a
+        // slot past the end, never previous. Next is left out of these
+        // controls where the app shows it disabled: the last track with
+        // repeat off.
         controls: [
-          shuffleAction,
           MediaControl.skipToPrevious,
           if (playing) MediaControl.pause else MediaControl.play,
-          MediaControl.skipToNext,
+          if (canNext) MediaControl.skipToNext,
+          shuffleAction,
           repeatAction,
         ],
-        systemActions: const {
+        systemActions: {
           MediaAction.seek,
           MediaAction.seekForward,
           MediaAction.seekBackward,
@@ -526,10 +568,24 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
           MediaAction.setShuffleMode,
           MediaAction.setSpeed,
           MediaAction.skipToPrevious,
+          // Always advertised, even where the controls above leave Next out:
+          // Android 13+ draws the shade and lock-screen controls from these
+          // session actions and, with no ACTION_SKIP_TO_NEXT (audio_service
+          // cannot reserve the slot), moves the first custom action
+          // (Shuffle) into Next's place, where a reach for Next would toggle
+          // shuffle. At the end of the queue a Next from there is ignored
+          // (skipToNext), like the app's disabled button.
           MediaAction.skipToNext,
         },
-        // Compact action view indices: skipToPrevious (index 1), play/pause (index 2), skipToNext (index 3)
-        androidCompactActionIndices: const [1, 2, 3],
+        androidCompactActionIndices: canNext ? const [0, 1, 2] : const [0, 1],
+        // Lock screen, Bluetooth (AVRCP), Wear OS and Android Auto read the
+        // modes from the session itself.
+        repeatMode: switch (_repeatMode) {
+          domain.PlaybackRepeatMode.off => AudioServiceRepeatMode.none,
+          domain.PlaybackRepeatMode.all => AudioServiceRepeatMode.all,
+          domain.PlaybackRepeatMode.one => AudioServiceRepeatMode.one,
+        },
+        shuffleMode: _shuffleEnabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
         processingState: processingState,
         playing: playing,
         updatePosition: _player.position,
@@ -898,6 +954,43 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return _skipToPreviousLocalImpl();
   }
 
+  /// A headset, Bluetooth or notification media button. Next and previous
+  /// act at once (and do what the app's own buttons do: Next is ignored on
+  /// the last track with repeat off). The play / pause button counts presses
+  /// within [mediaButtonMultiClickWindow]: one toggles, two skip to the next
+  /// track, three to the previous one.
+  @override
+  Future<void> click([MediaButton button = MediaButton.media]) async {
+    DiagnosticsService.instance.logEvent('media_button', {'button': button.name});
+    switch (button) {
+      case MediaButton.next:
+        return skipToNext();
+      case MediaButton.previous:
+        return skipToPrevious();
+      case MediaButton.media:
+        if (mediaButtonMultiClickWindow <= Duration.zero) return _togglePlayPauseFromButton();
+        _mediaButtonTimer?.cancel();
+        _mediaButtonClicks++;
+        if (_mediaButtonClicks >= 3) return _flushMediaButtonClicks();
+        _mediaButtonTimer = Timer(mediaButtonMultiClickWindow, () {
+          _flushMediaButtonClicks();
+        });
+    }
+  }
+
+  Future<void> _flushMediaButtonClicks() {
+    _mediaButtonTimer?.cancel();
+    _mediaButtonTimer = null;
+    final clicks = _mediaButtonClicks;
+    _mediaButtonClicks = 0;
+    if (clicks >= 3) return skipToPrevious();
+    if (clicks == 2) return skipToNext();
+    return _togglePlayPauseFromButton();
+  }
+
+  Future<void> _togglePlayPauseFromButton() =>
+      playbackState.value.playing ? pause(reason: 'media_button') : play(caller: 'media_button');
+
   @override
   Future<void> play({String? caller}) {
     final ext = _external;
@@ -1134,22 +1227,29 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     }
   }
 
+  /// A track picked from the queue (the app's queue sheet, or a car / watch
+  /// queue view) plays, like a tapped song row: it used to jump there and
+  /// stay paused. Local music takes the session back from YouTube first, as
+  /// every other local start does.
   @override
   Future<void> skipToQueueItem(int index) async {
     _userInteractedSinceNoisy = true;
     if (index < 0 || index >= _domainQueue.length) return;
+    _releaseExternal(reason: 'local_queue_item');
+    _wantPlaying = true;
     try {
       await _player.seek(Duration.zero, index: index);
     } catch (e) {
       DiagnosticsService.instance.logEvent('player_error', {'source': 'skip_to_queue_item'});
       final item = _domainQueue[index];
       _errorController.add('Unable to play "${item.title}": file missing or unsupported');
-      await _skipToNextLocalImpl();
+      await _skipToNextLocalImpl(fromUser: false);
       return;
     }
     _syncCurrentAudioServiceMediaItem();
     _broadcastAudioServiceState();
     _notifyDomainState();
+    _schedulePlayAfterSkips('skip_to_queue_item');
   }
 
   void _schedulePlayAfterSkips(String caller) {
@@ -1174,8 +1274,17 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return _skipToNextLocalImpl();
   }
 
-  Future<void> _skipToNextLocalImpl() {
+  /// Next. [fromUser] is a press (app, notification, headset): on the last
+  /// track with repeat off it does nothing, as the disabled buttons show.
+  /// Otherwise (a track that cannot play) the queue stops there, paused at
+  /// its start.
+  ///
+  /// The neighbours come from the handler's own play order, not from the
+  /// player's `hasNext` / `seekToNext`: with repeat one the player loops the
+  /// current item, so those only restarted the same track.
+  Future<void> _skipToNextLocalImpl({bool fromUser = true}) {
     _userInteractedSinceNoisy = true;
+    final wantedBefore = _wantPlaying;
     _wantPlaying = true; // Match Spotify: skipping starts playing
     _pendingSkips++;
     final caller = _formatCaller();
@@ -1193,11 +1302,18 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
           'beforeQueuePosition': beforeIdx,
         });
 
-        if (_player.hasNext) {
-          await _player.seekToNext();
+        final lastIdx = _domainQueue.length - 1;
+        if (beforeIdx >= 0 && beforeIdx < lastIdx) {
+          await _player.seek(Duration.zero, index: beforeIdx + 1);
+        } else if (fromUser && _repeatMode == domain.PlaybackRepeatMode.off) {
+          // Disabled: the last track with repeat off has no next. A paused
+          // track stays paused.
+          _wantPlaying = wantedBefore;
+          DiagnosticsService.instance.logEvent('skip_ignored', {'action': 'skipToNext', 'reason': 'queue_end'});
+          return;
         } else {
           // At the end of queue
-          if (_repeatMode == domain.PlaybackRepeatMode.all) {
+          if (_repeatMode != domain.PlaybackRepeatMode.off) {
             if (_shuffleEnabled && _domainQueue.length > 1) {
               // Reshuffle at wrap: ensure the new cycle does not start with the track that just played
               final lastPlayedItem = (beforeIdx >= 0 && beforeIdx < _domainQueue.length)
@@ -1284,21 +1400,24 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
           'beforeQueuePosition': beforeIdx,
         });
 
-        if (_player.position > const Duration(seconds: 3)) {
+        // Past the first seconds Previous restarts the track (DESIGN.md
+        // 7.17); before that it goes to the previous item. As with Next, the
+        // neighbour comes from the play order: under repeat one the player's
+        // own seekToPrevious only restarted the current track.
+        if (_player.position > restartThreshold) {
           await _seekLocalImpl(Duration.zero);
           return;
         }
 
-        if (_player.hasPrevious) {
-          await _player.seekToPrevious();
+        final lastIdx = _domainQueue.length - 1;
+        if (beforeIdx > 0 && beforeIdx <= lastIdx) {
+          await _player.seek(Duration.zero, index: beforeIdx - 1);
+        } else if (_repeatMode != domain.PlaybackRepeatMode.off && lastIdx > 0) {
+          // At the start of the queue with repeat on: round to the last item.
+          await _player.seek(Duration.zero, index: lastIdx);
         } else {
-          // At start of queue
-          if (_repeatMode == domain.PlaybackRepeatMode.all) {
-            final lastIdx = _domainQueue.length - 1;
-            await _player.seek(Duration.zero, index: lastIdx);
-          } else {
-            await _seekLocalImpl(Duration.zero);
-          }
+          // At the start with repeat off: the first track starts again.
+          await _seekLocalImpl(Duration.zero);
         }
 
         final afterIdx = _player.currentIndex ?? -1;
@@ -1323,12 +1442,13 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   }
 
   void _handlePlaybackCompleted() async {
+    final idx = _player.currentIndex ?? -1;
     if (_repeatMode == domain.PlaybackRepeatMode.one) {
       await _seekLocalImpl(Duration.zero);
       _wantPlaying = true;
       _safeStartPlayerPlay('repeat_one_completed');
-    } else if (_player.hasNext) {
-      await _skipToNextLocalImpl();
+    } else if (idx >= 0 && idx < _domainQueue.length - 1) {
+      await _skipToNextLocalImpl(fromUser: false);
     } else if (_repeatMode == domain.PlaybackRepeatMode.all) {
       await _player.seek(Duration.zero, index: 0);
       _wantPlaying = true;
@@ -1496,6 +1616,8 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   Future<void> dispose() async {
     DiagnosticsService.instance.logEvent('service_stop');
     _external = null;
+    _mediaButtonTimer?.cancel();
+    _debounceSkipPlayTimer?.cancel();
     await _player.dispose();
     await _errorController.close();
     await _domainStateController.close();

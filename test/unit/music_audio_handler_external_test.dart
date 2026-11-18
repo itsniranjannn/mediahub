@@ -163,7 +163,7 @@ void main() {
 
   test('no stale local controls while YouTube plays: no shuffle / repeat, no queue index', () async {
     await handler.loadQueue([_song('1'), _song('2')], autoPlay: false);
-    expect(handler.playbackState.value.controls.length, 5, reason: 'local: shuffle, prev, play, next, repeat');
+    expect(handler.playbackState.value.controls.length, 5, reason: 'local: prev, play, next, shuffle, repeat');
     handler.setExternalSource(yt, _yt(canSkipNext: false));
     final s = handler.playbackState.value;
     expect(s.controls, [MediaControl.skipToPrevious, MediaControl.pause]);
@@ -183,10 +183,46 @@ void main() {
     await handler.skipToPrevious();
     await handler.click(MediaButton.media); // headset button while playing → pause
     await handler.click(MediaButton.next);
-    expect(yt.calls, ['pause', 'play', 'seek 90', 'next', 'previous', 'pause', 'next']);
+    await handler.click(MediaButton.previous);
+    expect(yt.calls, ['pause', 'play', 'seek 90', 'next', 'previous', 'pause', 'next', 'previous']);
     verifyNever(() => player.play());
     verifyNever(() => player.seekToNext());
     verifyNever(() => player.seekToPrevious());
+    verifyNever(() => player.seek(any(), index: any(named: 'index')));
+  });
+
+  test('a paused video: the headset button plays it', () async {
+    handler.setExternalSource(yt, _yt(playing: false));
+    await handler.click(MediaButton.media);
+    expect(yt.calls, ['play']);
+  });
+
+  test('a single-button headset counts presses for YouTube too: two = next, three = previous', () async {
+    final counting = MusicAudioHandler(player: player, mediaButtonMultiClickWindow: const Duration(milliseconds: 40));
+    addTearDown(counting.dispose);
+    final page = RecordingDelegate();
+    counting.setExternalSource(page, _yt());
+    Future<void> wait() => Future<void>.delayed(const Duration(milliseconds: 90));
+
+    await counting.click(MediaButton.media);
+    await wait();
+    await counting.click(MediaButton.media);
+    await counting.click(MediaButton.media);
+    await wait();
+    for (var i = 0; i < 3; i++) {
+      await counting.click(MediaButton.media);
+    }
+    await wait();
+    expect(page.calls, ['pause', 'next', 'previous']);
+  });
+
+  test('YouTube without a next: Next is not offered anywhere, previous and play / pause are', () async {
+    handler.setExternalSource(yt, _yt(canSkipNext: false, playing: false));
+    final s = handler.playbackState.value;
+    expect(s.controls, [MediaControl.skipToPrevious, MediaControl.play]);
+    expect(s.androidCompactActionIndices, [0, 1]);
+    expect(s.systemActions, contains(MediaAction.skipToPrevious));
+    expect(s.systemActions, isNot(contains(MediaAction.skipToNext)));
   });
 
   test('local player events do not overwrite the video in the notification', () async {
@@ -238,7 +274,11 @@ void main() {
     expect(handler.mediaItem.value!.id, '1');
     final s = handler.playbackState.value;
     expect(s.controls.length, 5);
-    expect(s.androidCompactActionIndices, [1, 2, 3]);
+    // Previous, play / pause, next first; shuffle and repeat after them.
+    expect(s.androidCompactActionIndices, [0, 1, 2]);
+    expect(s.controls.take(3), [MediaControl.skipToPrevious, MediaControl.pause, MediaControl.skipToNext]);
+    expect(s.controls.skip(3).map((c) => c.customAction?.name),
+        [MusicAudioHandler.actionToggleShuffle, MusicAudioHandler.actionCycleRepeat]);
     // And the system's buttons are local again.
     await handler.skipToNext();
     expect(index, 1);
@@ -262,6 +302,17 @@ void main() {
     handler.setExternalSource(yt, _yt());
     await handler.skipToPreviousLocal();
     expect(yt.calls, ['pause', 'released', 'pause', 'released']);
+  });
+
+  test('picking a track in the local queue hands the session back and plays it', () async {
+    await handler.loadQueue([_song('1'), _song('2')], autoPlay: false);
+    handler.setExternalSource(yt, _yt());
+    await handler.skipToQueueItem(1);
+    expect(yt.calls, ['pause', 'released']);
+    expect(handler.isExternalActive, isFalse);
+    expect(index, 1);
+    expect(playing, isTrue);
+    expect(handler.mediaItem.value!.id, '2');
   });
 
   test('the page clearing the source restores the paused local track', () async {
