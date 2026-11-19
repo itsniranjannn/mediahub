@@ -14,7 +14,7 @@ also driven by hand on the Android emulator · **Needs phone** = only a real pho
 |---|------|--------|-------|
 | 1 | UI first: palette, fonts, type hierarchy, consistent components, dark **and** light | Done · Checked on the emulator. Design system "Bijuli" (Volt on Ink), see `docs/DESIGN.md` | `lib/app/theme/*`, `lib/shared/widgets/ui_kit.dart` |
 | 2 | Security: no unwanted permissions, nothing that threatens the device, no data loss | Done (section 3) | see section 3 |
-| 3 | Android **and** iOS, private family use only | Android: full. iOS: playback, the Online tab, downloads; background play hands over to the native audio stream. iOS picture-in-picture, the share sheet and library import need a Mac | `PlatformInfo` |
+| 3 | Android **and** iOS, private family use only | Android: full. iOS: **never built or run** (needs a Mac). In the code: playback, the library of MediaHub's own downloads, the basic video player, the Online tab (screen-off sound hands over to the iPhone's own player) and direct-link and YouTube downloads (no 1080p, no yt-dlp sites). Missing without Swift: picture-in-picture for local videos, the volume raiser, the share sheet, importing the iPhone's own files. Same / different / missing, today's fixes and the first-build checklist: `docs/IOS.md` | `PlatformInfo`, `docs/IOS.md` |
 | 4 | Online section: YouTube where you can search and see everything, with picture-in-picture and background play like Brave | Done · Checked on the emulator with a local stand-in page (this PC's network blocks YouTube) · Needs phone for real YouTube | `lib/features/online/` |
 | 5 | Copy a link in Online and download it from Downloads | Done: **Download** and **Copy link** on the watch strip hand the clean link to Downloads | `download_link_inbox.dart` |
 | 6 | Music controls like Spotify / YouTube Music | Done · Checked on the emulator (section 2) | `lib/features/music_player/`, `lib/features/library/` |
@@ -54,14 +54,25 @@ also driven by hand on the Android emulator · **Needs phone** = only a real pho
 - A decoder hiccup is retried once by itself; the error screen with Try again only shows if that fails.
 
 **Online (YouTube)**
-- The mobile YouTube site inside the app: browse, search, watch, everything the site offers, without
-  signing in. Background play (screen off or another app), picture-in-picture, media controls in the
-  notification, headphone-unplug pause. YouTube Music is one tap away in the menu.
+- The mobile YouTube site inside the app: browse, search, watch, everything the site offers. Background
+  play (screen off or another app), picture-in-picture, media controls in the notification,
+  headphone-unplug pause. YouTube Music is one tap away in the menu.
+- **Sign in to YouTube** (⋮ menu, or YouTube's own button): Google's sign-in pages open inside the tab,
+  and the login is kept. Google may still refuse an app's web view for some accounts; the tab works
+  without an account too. Clear site data signs you out.
 - The watch strip: **Download** (opens Downloads with the link filled in), picture-in-picture, Background,
   **Save** (to Liked songs or a playlist) and **Copy link**.
 
-**Downloads**: paste a YouTube, Instagram or direct https link, pick a quality, and the file joins the
-library. Spotify songs are refused with a plain explanation (they are protected).
+**Downloads**: paste a YouTube, Instagram (or another yt-dlp site) or direct https link, pick a quality,
+and the file joins the library: videos in Videos, sound in Music (checked from the file itself; sound
+you asked for always stays in Music). A missing quality saves the nearest one and the chip says so.
+yt-dlp **updates itself**: after a failure a newer version may fix (at most every 12 hours, never under
+a running download), and with a quiet weekly check at app start (not on mobile data). Spotify songs are
+refused with a plain explanation (they are protected).
+
+**Playback with other apps** (Android): when another app plays, the music pauses, and it plays again
+about 10 seconds after that app stops (Settings → Audio & headset → Resume after other apps, on by
+default, within 30 minutes).
 
 ## 3. Security model (what the app can touch)
 
@@ -69,11 +80,11 @@ library. Spotify songs are refused with a plain explanation (they are protected)
 |------|----------|
 | Permissions | Read audio, read video, notifications, internet, foreground service (media playback, downloads), wake lock. Nothing else: no contacts, location, camera, microphone, storage write, partial photo access, Bluetooth scanning. The notification permission is only asked when you start your first download. |
 | Other apps | No deep links; the router ignores routes handed in by the platform and always starts on Home. No share/view intent filters (taking shared links from other apps is deferred, see HANDOFF D). The download service is private. The media service is visible to the system (needed for Bluetooth, lock screen and car controls). Sharing a download goes through a private, read-only provider that serves only files inside the app's downloads folder. |
-| Online tab | Only YouTube's own page hosts can load as the page (`youtube_urls.dart`); everything else opens outside or is blocked. The JavaScript bridge answers only YouTube origins and checks a per-page secret token on every message. No sign-in; Settings → Online → **Clear YouTube data** removes cookies, cache and site data. |
+| Online tab | Only YouTube's own page hosts, plus Google's three sign-in hosts (`accounts.google.com`, `accounts.youtube.com`, `gds.google.com`; https only, exact names, no other port), can load as the page (`youtube_urls.dart`); everything else, other Google pages included, opens outside or is blocked. The JavaScript bridge answers only YouTube origins, checks a per-page secret token on every message, and is off on the sign-in pages: no command goes into them and no message from them counts, so MediaHub never sees or touches the password. The login lives only in the WebView's own cookies on the phone; Settings → Online → **Clear YouTube data** removes it with the cache and site data. The WebView presents itself as Chrome and sends no `X-Requested-With` header (so Google treats it like a browser); third-party cookies stay off. |
 | Network | HTTPS only (cleartext disabled twice). Direct downloads refuse private/local addresses (DNS checked, connection pinned to the checked address). |
-| yt-dlp | Runs only for links you start, on an allowlist of sites, with fixed safe options (no config files, no cookies, one item per link, live streams and playlists refused, lookups killed after 85 s). Output stays inside the app folder. "Update" fetches the newest yt-dlp from its official GitHub releases and is blocked while a download runs; **Use the built-in yt-dlp** goes back to the bundled copy. |
+| yt-dlp | Runs only for links you start, on an allowlist of 16 sites, with fixed safe options (no config files, no cookies, one item per link, live streams and playlists refused, lookups killed after 85 s). Output stays inside the app folder. Updates come from yt-dlp's official GitHub releases (not signature-checked, see HANDOFF D): by hand in Settings, after a failure a newer version may fix (at most every 12 hours), or in a weekly check at app start (release builds only, not on mobile data; a failed check waits a day). An update never replaces yt-dlp while it runs (a native lock, and downloads wait for each other). **Use the built-in yt-dlp** goes back to the bundled copy. |
 | Data | Everything stays on the phone. No account, no analytics, nothing in Google cloud backup. Diagnostics log stays local and strips links and file paths. Deleting a download removes its playlist entries and progress in one transaction; files are only ever deleted inside the downloads folder. |
-| Downloads | 2 GB per file, free space checked first, file names kept within 255 bytes, partial files cleaned only by their exact internal names, stuck downloads end as "failed". |
+| Downloads | 2 GB per file (refused on the link card when the size is known), free space checked first, file names kept within 255 bytes, partial files cleaned only by their exact internal names, stuck downloads end as "failed". Direct links of any site go through the same checks (https, no private addresses, the first bytes must be media). |
 | Builds | Release: not debuggable, R8-shrunk (keep rules for every icon named from Dart, checked by a test), signed with the private family key. A release build **refuses to build** without the key. |
 
 ### Family signing key (back this up!)
@@ -93,7 +104,9 @@ library. Spotify songs are refused with a plain explanation (they are protected)
    reinstall or a new phone never loses them.
 3. **"Save to phone" for downloads**: copy finished downloads into the shared Music/Movies folders.
 4. **Delete from phone** for songs and videos that came with the phone (needs Android's delete consent dialog).
-5. **iOS on a Mac**: build, picture-in-picture (AVKit), share sheet, Files import.
+5. **iOS on a Mac**: the first build and a pass on a real iPhone (`docs/IOS.md` sections 6 and 7),
+   then the share sheet, keeping downloads out of iCloud backup, Files import, picture-in-picture for
+   local videos.
 6. **App lock** (fingerprint / PIN) for Downloads and Online if children use the phones.
 7. **Offline extras**: lyrics, equalizer presets, gapless albums, Android Auto browsing, Folders and Genres chips
    (the data is already scanned).

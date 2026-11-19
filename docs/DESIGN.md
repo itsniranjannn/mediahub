@@ -667,6 +667,8 @@ Use the rule only on screen-level sections, never inside sheets or cards.
     long-press = media sheet.
   - When the Online tab is playing in the background, the mini player shows the YouTube title, a small accent PillTag
     "YOUTUBE", and play/pause (next only if the page exposes one).
+  - Hidden on the Videos and Online tabs: the row folds down behind the nav in 240ms (`MotionTokens.emphasized`;
+    instant with reduced motion) and comes back on the other tabs. Playback and the notification are untouched.
 - **Nav** (`NavigationBar`, 64dp + inset, transparent background, `labelBehavior: alwaysShow`):
   - Destinations: Home, Music, Videos, **Online** (replaces "Explore"), Downloads. Settings opens from a Home app-bar
     icon.
@@ -780,7 +782,7 @@ our chrome.
   | Back, forward | 48dp each. Disabled at 38% with no history. |
   | Address pill | Flexible, 40dp tall, stadium. Fill `surfaceElevated` (dark) or `#FFFFFF` + 1dp `outline` (light). 20dp search glyph and the page title or host in `metadata` textSecondary, 1 line. Tap opens YouTube's own search box (focus the page's search field via JS) or our search sheet. |
   | Reload | 48dp. Becomes "stop" (close glyph) while loading. |
-  | ⋮ | Reload · Open Downloads · Background play (switch) · Auto picture-in-picture (switch) · Clear site data (confirm dialog). |
+  | ⋮ | Reload · YouTube Music · Sign in to YouTube (opens Google's sign-in for YouTube in the tab) · Open Downloads · Background play (switch) · Auto picture-in-picture (switch) · Clear site data (confirm dialog; it also signs you out). The sheet is as tall as its rows. |
 
 - **Row 2, the "watch strip"** (52dp), shown on `/watch`, `/shorts/` and `/live` URLs:
   - It slides down in 240ms.
