@@ -144,6 +144,17 @@ void main() {
       final ready = parseBridgeMessage([{'t': token, 'k': 'ready', 'u': 'https://m.youtube.com/'}], token: token);
       expect(ready, isA<BridgeReadyMessage>());
     });
+
+    test('fullscreen messages (the page saw a video enter or leave fullscreen)', () {
+      const url = 'https://m.youtube.com/watch?v=dQw4w9WgXcQ';
+      final on = parseBridgeMessage([{'t': token, 'k': 'fs', 'on': true, 'u': url}], token: token);
+      expect(on, isA<BridgeFullscreenMessage>().having((m) => m.active, 'active', isTrue));
+      final off = parseBridgeMessage([{'t': token, 'k': 'fs', 'on': 'true', 'u': url}], token: token);
+      expect(off, isA<BridgeFullscreenMessage>().having((m) => m.active, 'active', isFalse), reason: 'only a real true');
+      expect(parseBridgeMessage([{'t': 'ffffffffffffffffffffffffffffffff', 'k': 'fs', 'on': true, 'u': url}], token: token),
+          isNull);
+      expect(parseBridgeMessage([{'t': token, 'k': 'fs', 'on': true, 'u': 'https://evil.example/'}], token: token), isNull);
+    });
   });
 
   group('BridgeCommand', () {

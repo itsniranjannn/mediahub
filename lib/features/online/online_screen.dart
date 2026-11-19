@@ -209,6 +209,9 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     _session.attachSender((command) async {
       final c = _controller;
       if (c == null) return false;
+      // Commands go to YouTube pages only: never into Google's sign-in
+      // pages (or any other site), where there is no bridge to answer.
+      if (!_onYouTubeOrBlank()) return false;
       final result = await c.evaluateJavascript(command.toJavaScript());
       // Android decodes the JSON `true`; iOS may hand back 1 for a JS boolean.
       return result == true || result == 1 || result == 'true';
@@ -287,16 +290,48 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     }
   }
 
+  /// False while the main frame is a web page other than YouTube (Google's
+  /// sign-in, say). Before the first address, and on about:blank or the
+  /// debug fixture's data page, it is true.
+  bool _onYouTubeOrBlank() {
+    final url = _url;
+    final web = url != null && (url.scheme == 'https' || url.scheme == 'http');
+    return !web || isYouTubePage(url);
+  }
+
   void _onBridgeMessage(Object? args) {
     final message = parseBridgeMessage(args, token: _token);
     if (message == null) return;
     // The page names its own address in every message; the WebView's own
-    // record of the main frame must not say it is some other web site.
-    final url = _url;
-    final web = url != null && (url.scheme == 'https' || url.scheme == 'http');
-    if (web && !isYouTubePage(url)) return;
-    if (message is BridgeReadyMessage) _pushPageSettings();
+    // record of the main frame must not say it is some other web site
+    // (Google's sign-in pages included).
+    if (!_onYouTubeOrBlank()) return;
+    if (message is BridgeFullscreenMessage) {
+      _onPageFullscreen(message.active);
+      return;
+    }
+    if (message is BridgeReadyMessage) {
+      _pushPageSettings();
+      // iOS: a new document has no fullscreen video (the old one went with it).
+      if (PlatformInfo.isIOS && _fullscreen) _onFullscreen(false);
+    }
     _session.handleMessage(message);
+  }
+
+  /// The WebView's own fullscreen events. Android: they are the truth. iOS:
+  /// the plugin calls any app window that appears (a share sheet, a system
+  /// prompt, even while this tab is not on screen) a fullscreen video, which
+  /// would hide the toolbar and turn the app sideways by mistake, so there only
+  /// the page's own word counts ([_onPageFullscreen]).
+  void _onWebViewFullscreen(bool fullscreen) {
+    if (PlatformInfo.isIOS) return;
+    _onFullscreen(fullscreen);
+  }
+
+  /// iOS: the bridge saw a video enter or leave fullscreen.
+  void _onPageFullscreen(bool fullscreen) {
+    if (!PlatformInfo.isIOS) return; // Android follows the WebView's events
+    _onFullscreen(fullscreen);
   }
 
   void _onFullscreen(bool fullscreen) {
@@ -599,6 +634,14 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     });
   }
 
+  /// Google's sign-in for YouTube, in the tab; it comes back to this page
+  /// (or YouTube's home) when done. Google may still refuse a sign-in inside
+  /// an app: its own page then says so.
+  void _openSignIn() {
+    DiagnosticsService.instance.logEvent('online_sign_in_opened');
+    _controller?.loadUrl(youTubeSignInUri(returnTo: _url));
+  }
+
   Future<void> _confirmClearData() async {
     final ok = await confirmClearYouTubeData(context);
     if (!ok || !mounted) return;
@@ -612,6 +655,10 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      // As tall as its rows (it still scrolls on a short screen), so Clear
+      // site data at the bottom is in view on a phone.
+      isScrollControlled: true,
+      useSafeArea: true,
       builder: (sheetContext) => _OnlineMenuSheet(
         onReload: () {
           Navigator.of(sheetContext).pop();
@@ -620,6 +667,10 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
         onYouTubeMusic: () {
           Navigator.of(sheetContext).pop();
           _controller?.loadUrl(Uri.parse(youTubeMusicHomeUrl));
+        },
+        onSignIn: () {
+          Navigator.of(sheetContext).pop();
+          _openSignIn();
         },
         onOpenDownloads: PlatformInfo.supportsDownloads
             ? () {
@@ -724,9 +775,11 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
                             key: const ValueKey('online_error'),
                             icon: _error!.offline ? Icons.wifi_off_rounded : Icons.cloud_off_rounded,
                             title: _error!.offline ? "You're offline" : "Couldn't load YouTube",
-                            message: _error!.offline
-                                ? 'Connect to the internet to browse YouTube.'
-                                : 'Something went wrong while opening the page.',
+                            message: _error!.mobileDataOff
+                                ? 'Mobile data is off for MediaHub. Turn it on in Settings, or use Wi-Fi.'
+                                : _error!.offline
+                                    ? 'Connect to the internet to browse YouTube.'
+                                    : 'Something went wrong while opening the page.',
                             action: FilledButton(onPressed: _retry, child: const Text('Retry')),
                           ),
                         ),
@@ -760,7 +813,7 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
       onScrollY: _onScrollY,
       onBridgeMessage: _onBridgeMessage,
       openExternally: ref.read(onlineExternalLauncherProvider),
-      onFullscreenChanged: _onFullscreen,
+      onFullscreenChanged: _onWebViewFullscreen,
       onRendererGone: _onRendererGone,
     );
     return KeyedSubtree(
@@ -1023,6 +1076,11 @@ class _SearchSheetState extends State<_SearchSheet> {
         controller: _text,
         autofocus: true,
         textInputAction: TextInputAction.search,
+        // What is typed is what is searched: no curly quotes or long dashes
+        // from the iPhone keyboard, no romanised Nepali word 'corrected'.
+        autocorrect: false,
+        smartQuotesType: SmartQuotesType.disabled,
+        smartDashesType: SmartDashesType.disabled,
         onSubmitted: (_) => _submit(),
         decoration: InputDecoration(
           hintText: 'Search YouTube',
@@ -1039,18 +1097,20 @@ class _SearchSheetState extends State<_SearchSheet> {
   }
 }
 
-/// The ⋮ sheet: Reload · YouTube Music · Open Downloads · Background play ·
-/// Auto PiP · Clear site data.
+/// The ⋮ sheet: Reload · YouTube Music · Sign in to YouTube · Open Downloads ·
+/// Background play · Auto PiP · Clear site data.
 class _OnlineMenuSheet extends ConsumerWidget {
   const _OnlineMenuSheet({
     required this.onReload,
     required this.onYouTubeMusic,
+    required this.onSignIn,
     required this.onOpenDownloads,
     required this.onClearData,
   });
 
   final VoidCallback onReload;
   final VoidCallback onYouTubeMusic;
+  final VoidCallback onSignIn;
   final VoidCallback? onOpenDownloads;
   final VoidCallback onClearData;
 
@@ -1075,6 +1135,12 @@ class _OnlineMenuSheet extends ConsumerWidget {
               leading: const Icon(Icons.library_music_outlined),
               title: const Text('YouTube Music'),
               onTap: onYouTubeMusic,
+            ),
+            ListTile(
+              key: const ValueKey('online_menu_sign_in'),
+              leading: const Icon(Icons.account_circle_outlined),
+              title: const Text('Sign in to YouTube'),
+              onTap: onSignIn,
             ),
             if (onOpenDownloads != null)
               ListTile(
@@ -1110,16 +1176,23 @@ class _OnlineMenuSheet extends ConsumerWidget {
   }
 }
 
+/// What "Clear YouTube data" removes, in the words of the confirm dialog.
+/// The cookies hold the sign-in, so it signs you out too. iOS clears
+/// WebKit's whole data store for the page (see clearInAppWebViewData), which
+/// includes the saved site data.
+String clearYouTubeDataDetails() => PlatformInfo.isIOS
+    ? "Signs you out and forgets YouTube's cookies, cache and saved site data on this iPhone. "
+        'Your downloads and library stay.'
+    : "Signs you out and forgets YouTube's cookies, cache and site settings on this phone. "
+        'Your downloads and library stay.';
+
 /// "Clear YouTube data?" confirm dialog (also used by Settings → Online).
 Future<bool> confirmClearYouTubeData(BuildContext context) async {
   final ok = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('Clear YouTube data?'),
-      content: const Text(
-        "Forgets YouTube's cookies, cache and site settings on this phone. "
-        'Your downloads and library stay.',
-      ),
+      content: Text(clearYouTubeDataDetails()),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
         TextButton(

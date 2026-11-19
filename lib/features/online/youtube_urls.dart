@@ -21,11 +21,28 @@ const Set<String> _pageHosts = {
   'm.youtube.com',
   'www.youtube.com',
   'music.youtube.com',
-  // EU / UK cookie consent and YouTube's own account hops.
+  // EU / UK cookie consent.
   'consent.youtube.com',
-  'accounts.youtube.com',
   // Short links redirect to a watch page.
   'youtu.be',
+};
+
+/// Google's sign-in pages that YouTube's "Sign in" walks through as whole
+/// pages, so a sign-in can finish inside the Online tab:
+/// - accounts.google.com: the sign-in itself (account, password, 2-Step
+///   Verification, the account chooser, and signing out);
+/// - accounts.youtube.com: the hop that hands the finished sign-in to
+///   YouTube (/accounts/SetSID) and back on sign-out;
+/// - gds.google.com: the "keep your account safe" prompts Google may show
+///   right after (a recovery phone or email).
+///
+/// Exact hosts, https only. They are not YouTube pages: the media bridge never
+/// runs or answers on them (see [isYouTubePage]). Anything else of Google's
+/// (My Account, Help) opens in the phone's browser, like any other site.
+const Set<String> _signInHosts = {
+  'accounts.google.com',
+  'accounts.youtube.com',
+  'gds.google.com',
 };
 
 /// Hosts whose URLs can carry a video id ("Copy link", "Download").
@@ -57,6 +74,42 @@ bool isYouTubePage(Uri uri) {
   if (uri.userInfo.isNotEmpty) return false; // "https://youtube.com@evil.example/"
   if (uri.hasPort && uri.port != 443 && uri.port != 80) return false;
   return isYouTubePageHost(_host(uri));
+}
+
+/// True when [uri] is one of Google's sign-in pages that may load inside the
+/// Online tab (https only, the default port, an exact host). Never a YouTube
+/// page: the bridge stays off there.
+bool isGoogleSignInPage(Uri uri) {
+  if (uri.scheme.toLowerCase() != 'https') return false;
+  if (uri.userInfo.isNotEmpty) return false;
+  if (uri.hasPort && uri.port != 443) return false;
+  return _signInHosts.contains(_host(uri));
+}
+
+/// YouTube's own sign-in (the Online menu's "Sign in to YouTube"): Google's
+/// sign-in for the YouTube service, the same address YouTube's own "Sign in"
+/// button opens. When it is done, Google hands the sign-in to YouTube and
+/// returns to [returnTo] when that is a YouTube page on the mobile site (the
+/// page the user was on), else to YouTube's home.
+Uri youTubeSignInUri({Uri? returnTo}) {
+  var next = youTubeHomeUrl;
+  if (returnTo != null && returnTo.scheme.toLowerCase() == 'https' && isYouTubePage(returnTo)) {
+    final host = _host(returnTo);
+    if (host == 'm.youtube.com' || host == 'www.youtube.com' || host == 'youtube.com') {
+      next = returnTo.toString();
+    }
+  }
+  final handOver = Uri.https('www.youtube.com', '/signin', {
+    'action_handle_signin': 'true',
+    'app': 'm',
+    'next': next,
+  });
+  return Uri.https('accounts.google.com', '/ServiceLogin', {
+    'service': 'youtube',
+    'uilel': '3',
+    'passive': 'true',
+    'continue': handOver.toString(),
+  });
 }
 
 /// What kind of page is open; the watch strip shows on [watch], [shorts] and [live].
@@ -182,8 +235,9 @@ class OnlineNavigationDecision {
 
 /// Navigation policy of the Online WebView.
 ///
-/// - Main frame: YouTube page hosts load inside; other http(s) links open in
-///   the phone's browser; every other scheme is cancelled.
+/// - Main frame: YouTube page hosts and Google's sign-in pages (https only,
+///   see [isGoogleSignInPage]) load inside; other http(s) links open in the
+///   phone's browser; every other scheme is cancelled.
 /// - Sub frames (iframes the page itself embeds): https and the inert
 ///   about:/data:/blob: documents are allowed, everything else is cancelled.
 ///   They never reach the media bridge (main frame only, plus a token).
@@ -208,6 +262,9 @@ OnlineNavigationDecision decideOnlineNavigation(Uri? uri, {required bool isMainF
       }
       return const OnlineNavigationDecision(OnlineNavigationKind.allow);
     }
+    // Signing in to YouTube: Google's sign-in pages load in place, so the
+    // sign-in finishes in the tab and its cookies stay with YouTube's.
+    if (isGoogleSignInPage(uri)) return const OnlineNavigationDecision(OnlineNavigationKind.allow);
     if (uri.host.isEmpty) return const OnlineNavigationDecision(OnlineNavigationKind.cancel);
     return OnlineNavigationDecision(OnlineNavigationKind.openExternally, uri);
   }
@@ -226,6 +283,22 @@ OnlineNavigationDecision decideOnlineNavigation(Uri? uri, {required bool isMainF
 /// phone to Safari or the App Store on its own.
 bool isUserNavigation({required bool? hasGesture, required bool linkOrFormActivated}) =>
     hasGesture ?? linkOrFormActivated;
+
+/// iOS: the page asked for a new window (a `target="_blank"` link, or
+/// `window.open`). Android never asks: its WebView loads those links in place
+/// (multiple windows are off), where [decideOnlineNavigation] handles them.
+///
+/// The new window would be a top-level page, so the main-frame rules apply:
+/// a YouTube page is [OnlineNavigationKind.allow]ed (it loads in place), an
+/// outside link opens in the phone's browser only when [userTapped] (see
+/// [isUserNavigation]), and everything else is [OnlineNavigationKind.cancel]led.
+OnlineNavigationDecision decideOnlineNewWindow(Uri? uri, {required bool userTapped}) {
+  final decision = decideOnlineNavigation(uri, isMainFrame: true);
+  if (decision.kind == OnlineNavigationKind.openExternally && !userTapped) {
+    return const OnlineNavigationDecision(OnlineNavigationKind.cancel);
+  }
+  return decision;
+}
 
 /// The YouTube search results page for [query] (our own search sheet's fallback
 /// when the page's search box cannot be focused).

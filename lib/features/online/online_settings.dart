@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/logging/diagnostics_service.dart';
+import '../../core/platform_info.dart';
 import '../../core/storage/settings_store.dart';
 
 /// Keeps YouTube audio playing with the screen off or the app in the
@@ -43,3 +44,15 @@ class OnlineAutoPipNotifier extends Notifier<bool> {
 }
 
 final onlineAutoPipProvider = NotifierProvider<OnlineAutoPipNotifier, bool>(OnlineAutoPipNotifier.new);
+
+/// Settings → Online: the sign-in row. Signing in happens in the Online tab
+/// (⋮ → Sign in to YouTube, or YouTube's own Sign in button); Google decides
+/// whether it lets an app's web view sign in, so the row says that too.
+const String youTubeSignInSettingsTitle = 'YouTube sign-in';
+const String youTubeSignInSettingsBody = 'In the Online tab, tap More options, then Sign in to YouTube. '
+    'Google may refuse it inside apps for some accounts. The tab works without an account too.';
+
+/// Settings → Online: what "Clear YouTube data" does, under its title.
+String clearYouTubeDataSettingsSubtitle() => PlatformInfo.isIOS
+    ? "Signs you out and forgets YouTube's cookies, cache and saved site data on this iPhone."
+    : "Signs you out and forgets YouTube's cookies, cache and site settings on this phone.";

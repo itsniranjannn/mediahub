@@ -318,6 +318,11 @@ test('installs on https YouTube pages only, so no other page sees the token', ()
     'https://notyoutube.com/',
     'http://m.youtube.com/watch?v=dQw4w9WgXcQ',
     'https://accounts.google.com/',
+    // Google's sign-in pages load in the tab, but never get the bridge.
+    'https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fwww.youtube.com%2Fsignin',
+    'https://accounts.youtube.com/accounts/SetSID?ssdc=1',
+    'https://ACCOUNTS.youtube.com/accounts/SetSID',
+    'https://gds.google.com/web/recoveryoptions',
   ]) {
     const p = makePage({ href });
     assert.equal(p.win.__mediahubBridge, undefined, href);
@@ -866,6 +871,108 @@ test('search submits the query inside the page, by structure, never by label', (
   const searchFn = SOURCE.slice(SOURCE.indexOf('function search('), SOURCE.indexOf('function exitPip('));
   assert.ok(searchFn.length > 100);
   assert.ok(!/aria-label/.test(searchFn), 'no aria-label selectors');
+});
+
+// --- iOS parity: search without requestSubmit, fullscreen reports ----------
+
+function searchPage({ requestSubmit, button }) {
+  const p = makePage();
+  const form = new Element('form', p.body);
+  form.submits = 0;
+  if (requestSubmit) form.requestSubmit = () => form.submits++;
+  const controls = [];
+  if (button) {
+    // A plain <button> in a form is a submit button (its type defaults to
+    // "submit"); its click submits the form, so the page's handler runs.
+    const b = new Element('button', form);
+    b.type = button;
+    b.click = () => {
+      b.clicks++;
+      if (b.type === 'submit') form.submits++;
+    };
+    controls.push(b);
+  }
+  form.querySelectorAll = () => controls;
+  const input = new Element('input', form);
+  input.form = form;
+  const keys = [];
+  input.dispatchEvent = (ev) => keys.push(ev.type);
+  p.selectors['input[name="search_query"]'] = input;
+  vm.runInContext(
+    'window.KeyboardEvent = function (type) { this.type = type; }; window.Event = function (type) { this.type = type; };',
+    p.context
+  );
+  return { p, form, input, keys, button: controls[0] };
+}
+
+test('search without requestSubmit (iOS 15) clicks the form\'s submit button, never a fake Enter', () => {
+  const { p, form, input, keys, button } = searchPage({ requestSubmit: false, button: 'submit' });
+  assert.equal(p.command('search', 'lofi beats'), true);
+  assert.equal(input.value, 'lofi beats');
+  assert.equal(button.clicks, 1);
+  assert.equal(form.submits, 1, 'the form was really submitted');
+  assert.ok(!keys.includes('keydown'), 'no scripted Enter key');
+});
+
+test('search without requestSubmit or a submit button says so, so Dart loads the results page', () => {
+  for (const button of [null, 'button']) {
+    const { p, form, keys } = searchPage({ requestSubmit: false, button });
+    assert.equal(p.command('search', 'lofi'), false, `button: ${button}`);
+    assert.equal(form.submits, 0);
+    assert.ok(!keys.includes('keydown'), 'a scripted Enter does not submit a form: not tried');
+  }
+});
+
+test('search with requestSubmit is unchanged: the form is submitted, no button click', () => {
+  const { p, form, button } = searchPage({ requestSubmit: true, button: 'submit' });
+  assert.equal(p.command('search', 'lofi'), true);
+  assert.equal(form.submits, 1);
+  assert.equal(button.clicks, 0);
+});
+
+function fullscreenReports(p) {
+  return p.env.posted.filter((x) => x.msg.k === 'fs').map((x) => x.msg);
+}
+
+test('fullscreen: iOS native video fullscreen is reported on and off, with the token and page', () => {
+  const p = makePage();
+  p.video.webkitDisplayingFullscreen = true;
+  p.dispatch(p.video, 'webkitbeginfullscreen', [p.win, p.doc, p.video], false);
+  // The flag can lag behind the end event.
+  p.dispatch(p.video, 'webkitendfullscreen', [p.win, p.doc, p.video], false);
+  const fs = fullscreenReports(p);
+  assert.deepEqual(fs.map((m) => m.on), [true, false]);
+  assert.equal(fs[0].t, TOKEN);
+  assert.equal(fs[0].u, 'https://m.youtube.com/watch?v=dQw4w9WgXcQ');
+});
+
+test('fullscreen: the player element going fullscreen counts; one report per change', () => {
+  const p = makePage();
+  p.doc.fullscreenElement = p.player; // YouTube puts the player box fullscreen, not the <video>
+  p.dispatch(p.player, 'fullscreenchange', [p.win, p.doc, p.player]);
+  p.dispatch(p.player, 'webkitfullscreenchange', [p.win, p.doc, p.player]);
+  p.doc.fullscreenElement = null;
+  p.dispatch(p.player, 'fullscreenchange', [p.win, p.doc, p.player]);
+  assert.deepEqual(fullscreenReports(p).map((m) => m.on), [true, false]);
+});
+
+test('fullscreen: an element with no video in it is not a fullscreen video', () => {
+  const p = makePage();
+  const banner = new Element('div', p.body);
+  p.doc.webkitFullscreenElement = banner;
+  p.dispatch(banner, 'webkitfullscreenchange', [p.win, p.doc, banner]);
+  assert.deepEqual(fullscreenReports(p), []);
+});
+
+test('fullscreen: the presentation mode "fullscreen" counts, picture-in-picture does not', () => {
+  const p = makePage();
+  p.video.webkitPresentationMode = 'fullscreen';
+  p.dispatch(p.video, 'webkitpresentationmodechanged', [p.win, p.doc, p.video], false);
+  p.video.webkitPresentationMode = 'picture-in-picture';
+  p.dispatch(p.video, 'webkitpresentationmodechanged', [p.win, p.doc, p.video], false);
+  assert.deepEqual(fullscreenReports(p).map((m) => m.on), [true, false]);
+  const pip = p.env.posted.filter((x) => x.msg.k === 'pip').map((x) => x.msg.on);
+  assert.deepEqual(pip, [false, true], 'the picture-in-picture reports stay as they were');
 });
 
 // --- the platform bridge is captured once (ONL-13) -------------------------

@@ -121,7 +121,10 @@ void main() {
     test('other web links open in the browser', () {
       for (final url in [
         'https://example.com/',
-        'https://accounts.google.com/ServiceLogin',
+        // Google, but not its sign-in: My Account, Help, Search.
+        'https://myaccount.google.com/',
+        'https://support.google.com/accounts/answer/7675428',
+        'https://www.google.com/search?q=x',
         'https://youtube.com.evil.example/',
         'https://www.youtube.com:8443/',
         'http://example.com/page',
@@ -147,6 +150,67 @@ void main() {
         expect(main(url), OnlineNavigationKind.cancel, reason: url);
       }
       expect(decideOnlineNavigation(null, isMainFrame: true).kind, OnlineNavigationKind.cancel);
+    });
+
+    // The owner could not sign in: the sign-in page used to open the browser.
+    test("Google's sign-in pages load inside, so a YouTube sign-in can finish in the tab", () {
+      for (final url in [
+        'https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin',
+        'https://accounts.google.com/v3/signin/identifier?flowName=GlifWebSignIn',
+        'https://accounts.google.com/v3/signin/challenge/pwd',
+        'https://accounts.google.com/AccountChooser',
+        'https://accounts.google.com/Logout?continue=https://m.youtube.com/',
+        'https://accounts.youtube.com/accounts/SetSID?ssdc=1',
+        'https://gds.google.com/web/recoveryoptions',
+        'https://ACCOUNTS.Google.com./signin',
+        'https://accounts.google.com:443/signin',
+      ]) {
+        final d = decideOnlineNavigation(u(url), isMainFrame: true);
+        expect(d.kind, OnlineNavigationKind.allow, reason: url);
+        expect(d.uri, isNull, reason: 'loaded as it is: $url');
+      }
+    });
+
+    test('sign-in pages: exact hosts, https only', () {
+      for (final url in [
+        'http://accounts.google.com/ServiceLogin',
+        'https://accounts.google.com:8443/',
+        'https://accounts.google.com@evil.example/',
+        'https://user@accounts.google.com/',
+        'https://accounts.google.com.evil.example/',
+        'https://evilaccounts.google.com/',
+        'https://xaccounts.youtube.com/',
+        'https://accounts.google.co.uk/',
+        'https://google.com/accounts',
+      ]) {
+        final uri = u(url);
+        expect(isGoogleSignInPage(uri), isFalse, reason: url);
+        expect(decideOnlineNavigation(uri, isMainFrame: true).kind, isNot(OnlineNavigationKind.allow), reason: url);
+      }
+      // A plain-http sign-in link is never loaded in the tab: it goes the
+      // way of any other site (the browser, only for a tap).
+      expect(main('http://accounts.google.com/ServiceLogin'), OnlineNavigationKind.openExternally);
+    });
+
+    test('sign-in pages are never YouTube pages (the media bridge stays off there)', () {
+      for (final url in [
+        'https://accounts.google.com/ServiceLogin',
+        'https://accounts.youtube.com/accounts/SetSID',
+        'https://gds.google.com/web/recoveryoptions',
+      ]) {
+        expect(isYouTubePage(u(url)), isFalse, reason: url);
+        expect(isGoogleSignInPage(u(url)), isTrue, reason: url);
+        expect(youTubeVideoId(u(url)), isNull, reason: url);
+      }
+      // consent.youtube.com is still YouTube's own cookie page.
+      expect(isYouTubePage(u('https://consent.youtube.com/m?continue=x')), isTrue);
+    });
+
+    test('a new window (iOS target="_blank") for the sign-in loads in place too', () {
+      expect(
+        decideOnlineNewWindow(u('https://accounts.google.com/ServiceLogin'), userTapped: false).kind,
+        OnlineNavigationKind.allow,
+      );
     });
 
     test('sub frames: https and inert documents only', () {
@@ -189,6 +253,43 @@ void main() {
     expect(addressLabel(title: 'YouTube', url: u('https://m.youtube.com/')), 'm.youtube.com');
     expect(addressLabel(title: null, url: null), 'YouTube');
     expect(addressLabel(title: 'https://m.youtube.com/', url: u('https://m.youtube.com/')), 'm.youtube.com');
+  });
+
+  group("YouTube's sign-in address", () {
+    Uri handOver(Uri signIn) => Uri.parse(signIn.queryParameters['continue']!);
+
+    test("Google's sign-in for the YouTube service, handed back to YouTube's mobile site", () {
+      final signIn = youTubeSignInUri();
+      expect(signIn.scheme, 'https');
+      expect(signIn.host, 'accounts.google.com');
+      expect(signIn.path, '/ServiceLogin');
+      expect(signIn.queryParameters['service'], 'youtube');
+      expect(signIn.queryParameters['passive'], 'true');
+      final back = handOver(signIn);
+      expect(back.toString(), startsWith('https://www.youtube.com/signin?'));
+      expect(back.queryParameters['action_handle_signin'], 'true');
+      expect(back.queryParameters['app'], 'm');
+      expect(back.queryParameters['next'], youTubeHomeUrl);
+      // The whole hand-over travels as one encoded value.
+      expect(signIn.toString(), contains('continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3F'));
+      // Every step of it may load in the tab.
+      expect(decideOnlineNavigation(signIn, isMainFrame: true).kind, OnlineNavigationKind.allow);
+      expect(decideOnlineNavigation(back, isMainFrame: true).kind, OnlineNavigationKind.allow);
+    });
+
+    test('it returns to the YouTube page the user was on, never anywhere else', () {
+      const watch = 'https://m.youtube.com/watch?v=dQw4w9WgXcQ&t=42';
+      expect(handOver(youTubeSignInUri(returnTo: u(watch))).queryParameters['next'], watch);
+      for (final other in [
+        'https://evil.example/',
+        'https://accounts.google.com/ServiceLogin',
+        'http://m.youtube.com/watch?v=dQw4w9WgXcQ',
+        'https://music.youtube.com/',
+        'about:blank',
+      ]) {
+        expect(handOver(youTubeSignInUri(returnTo: u(other))).queryParameters['next'], youTubeHomeUrl, reason: other);
+      }
+    });
   });
 
   test('search uri encodes the query', () {

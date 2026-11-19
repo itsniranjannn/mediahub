@@ -51,10 +51,19 @@ class _Player implements HandoffPlayer {
   @override
   domain.PlaybackState? captureLocal() => local;
 
+  /// The next this many tries fail the way the real player reports a
+  /// refused stream: the item is loaded but does not play.
+  int failNext = 0;
+
   @override
   Future<void> playAlone(domain.MediaItem item, Duration position) async {
     log.add('play ${item.id} @${position.inMilliseconds}');
     this.item = item;
+    if (failNext > 0) {
+      failNext--;
+      current = HandoffPlayerState(itemId: item.id, position: position);
+      throw const HandoffPlaybackException('failed');
+    }
     host.localPlaybackStarts();
     current = HandoffPlayerState(itemId: item.id, position: position, playing: true);
   }
@@ -70,6 +79,9 @@ class _Player implements HandoffPlayer {
     log.add('restore ${saved?.queue.length ?? 0}');
     restored = saved;
   }
+
+  @override
+  Future<void> restoreSettings() async => log.add('settings');
 }
 
 OnlineStreams _streams() => const OnlineStreams(
@@ -236,7 +248,7 @@ void main() {
     unlock();
     await _settle();
     expect(sent, isEmpty);
-    expect(player.log, ['play yt_dQw4w9WgXcQ @42000']);
+    expect(player.log, ['play yt_dQw4w9WgXcQ @42000', 'settings'], reason: 'only the user\'s repeat mode comes back');
   });
 
   test('back before the stream was ready: nothing native starts, and the page plays on', () async {
@@ -279,6 +291,65 @@ void main() {
     push(_state(OnlineMediaStatus.paused, event: 'pause'));
     await _settle();
     expect(player.log, isEmpty);
+    expect(sent.last, const BridgeCommand.play());
+  });
+
+  test('the stream is refused: one more try with a newly looked-up link, which plays', () async {
+    var lookups = 0;
+    resolver = (id) async {
+      lookups++;
+      return OnlineStreams(audio: [
+        OnlineStream(url: '$_m4a&n=$lookups', kind: OnlineStreamKind.audio, label: '', container: 'mp4', sizeBytes: 1),
+      ], video: const []);
+    };
+    player.failNext = 1;
+    push(_state(OnlineMediaStatus.playing, event: 'play'));
+    lock();
+    push(_state(OnlineMediaStatus.paused, event: 'pause'));
+    await _settle();
+
+    expect(resolves, 2, reason: 'the cached link is dropped and looked up again');
+    expect(player.log, ['play yt_dQw4w9WgXcQ @42000', 'play yt_dQw4w9WgXcQ @42000']);
+    expect(player.item!.uri, '$_m4a&n=2');
+    expect(handoff.isHandedOff, isTrue);
+    expect(sent, isNot(contains(const BridgeCommand.play())), reason: 'the page stays held');
+    expect(session.holdPage, isTrue);
+  });
+
+  test('both tries fail: the page is asked to play on, and the user\'s queue comes back', () async {
+    player.local = domain.PlaybackState(queue: [_song('a'), _song('b')], queueIndex: 1, updatedAt: DateTime(2026));
+    player.failNext = 2;
+    push(_state(OnlineMediaStatus.playing, event: 'play'));
+    lock();
+    push(_state(OnlineMediaStatus.paused, event: 'pause'));
+    await _settle();
+
+    expect(player.log, ['play yt_dQw4w9WgXcQ @42000', 'play yt_dQw4w9WgXcQ @42000', 'restore 2']);
+    expect(player.restored!.queueIndex, 1);
+    expect(handoff.isHandedOff, isFalse);
+    expect(sent.last, const BridgeCommand.play(), reason: 'last try: the page itself (WebKit may allow it)');
+    expect(session.holdPage, isFalse);
+
+    // Back in the app later: nothing is given back twice.
+    player.log.clear();
+    unlock();
+    await _settle();
+    expect(player.log, isEmpty);
+  });
+
+  test('no new link for the second try: the page plays on at once', () async {
+    var lookups = 0;
+    resolver = (id) async {
+      lookups++;
+      if (lookups > 1) throw const OnlineException('offline');
+      return _streams();
+    };
+    player.failNext = 1;
+    push(_state(OnlineMediaStatus.playing, event: 'play'));
+    lock();
+    push(_state(OnlineMediaStatus.paused, event: 'pause'));
+    await _settle();
+    expect(player.log, ['play yt_dQw4w9WgXcQ @42000', 'restore 0']);
     expect(sent.last, const BridgeCommand.play());
   });
 

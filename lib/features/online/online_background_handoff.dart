@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:audio_service/audio_service.dart' show AudioServiceRepeatMode;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:just_audio/just_audio.dart' show PlayerState, ProcessingState;
 
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/platform_info.dart';
@@ -32,24 +34,49 @@ abstract class HandoffPlayer {
   /// The local queue as it is now, to put back afterwards (null when empty).
   domain.PlaybackState? captureLocal();
 
-  /// Plays [item] alone, from [position].
+  /// Plays [item] alone, from [position], and returns once it really plays.
+  /// Throws (a [HandoffPlaybackException]) when the stream is refused or
+  /// does not start in time; nothing plays then.
   Future<void> playAlone(domain.MediaItem item, Duration position);
 
   HandoffPlayerState get current;
 
   Future<void> pause();
 
-  /// Puts [saved] back, paused where it was (null: an empty player).
+  /// Puts [saved] back, paused where it was (null: an empty player), with
+  /// the user's own settings (repeat).
   Future<void> restoreLocal(domain.PlaybackState? saved);
+
+  /// Puts only the user's own settings back (repeat): other music took over
+  /// the player meanwhile and stays.
+  Future<void> restoreSettings();
+}
+
+/// The hand-off's stream did not play.
+class HandoffPlaybackException implements Exception {
+  const HandoffPlaybackException(this.reason);
+  final String reason;
+
+  @override
+  String toString() => 'HandoffPlaybackException: $reason';
 }
 
 /// The real music player: [PlaybackNotifier] for playing (so the item goes
 /// through the same queue, notification and lock screen as any song), and
 /// the handler's own session restore for putting the local queue back.
 class MusicHandoffPlayer implements HandoffPlayer {
-  MusicHandoffPlayer(this._ref);
+  MusicHandoffPlayer(this._ref, {this.startTimeout = defaultStartTimeout});
 
   final Ref _ref;
+
+  /// How long the stream gets to load and start playing. Short: iOS gives an
+  /// app that left the screen only seconds, and a failure still has to leave
+  /// time for the second try and for the page to play on.
+  static const Duration defaultStartTimeout = Duration(seconds: 4);
+  final Duration startTimeout;
+
+  /// The user's repeat mode while the hand-off plays with repeat off.
+  domain.PlaybackRepeatMode? _repeatBefore;
 
   MusicAudioHandler get _handler => _ref.read(audioHandlerProvider);
   PlaybackNotifier get _playback => _ref.read(playbackNotifierProvider.notifier);
@@ -62,11 +89,67 @@ class MusicHandoffPlayer implements HandoffPlayer {
 
   @override
   Future<void> playAlone(domain.MediaItem item, Duration position) async {
-    await _playback.loadQueue([item], autoPlay: false);
-    if (position > Duration.zero) await _playback.seek(position);
-    // Local playback starting hands the media session over from the page
-    // (which is told to pause).
-    await _playback.play();
+    final handler = _handler;
+    bool onItem() => handler.getCurrentDomainState().currentItemId == item.id;
+    final failed = Completer<void>();
+    final started = Completer<void>();
+    void check() {
+      final p = handler.player;
+      if (!started.isCompleted && p.playing && p.processingState == ProcessingState.ready && onItem()) {
+        started.complete();
+      }
+    }
+
+    // The player's own reports (its error stream, a load that failed).
+    final failures = handler.trackFailures.listen((id) {
+      if (id == item.id && !failed.isCompleted) failed.complete();
+    });
+    StreamSubscription<PlayerState>? states;
+    // Set once the time is up: the steps still under way must not start
+    // the stream after that (the page has been asked to play on).
+    var gaveUp = false;
+    try {
+      await () async {
+        // The one video plays once: with the user's repeat one, its sound
+        // would loop for good with the screen off. Their mode comes back
+        // with their queue.
+        _repeatBefore ??= handler.repeatMode;
+        if (handler.repeatMode != domain.PlaybackRepeatMode.off) {
+          await handler.setRepeatMode(AudioServiceRepeatMode.none);
+        }
+        await _playback.loadQueue([item], autoPlay: false);
+        if (failed.isCompleted || !onItem() || handler.player.processingState == ProcessingState.idle) {
+          throw const HandoffPlaybackException('not_loaded');
+        }
+        if (position > Duration.zero) await _playback.seek(position);
+        if (gaveUp) throw const HandoffPlaybackException('too_late');
+        states = handler.player.playerStateStream.listen((_) => check());
+        // Local playback starting hands the media session over from the page
+        // (which is told to pause).
+        await _playback.play();
+        check();
+        await Future.any<void>([
+          started.future,
+          failed.future.then<void>((_) => throw const HandoffPlaybackException('failed')),
+        ]);
+      }()
+          .timeout(startTimeout);
+    } catch (e) {
+      // Nothing may start late, once the page has been asked to play on.
+      gaveUp = true;
+      try {
+        await handler.cancelLoading();
+        if (onItem()) await _playback.pause();
+      } catch (_) {}
+      DiagnosticsService.instance.logEvent('online_handoff_play_failed', {
+        'reason': e is HandoffPlaybackException ? e.reason : (e is TimeoutException ? 'timeout' : e.runtimeType.toString()),
+      });
+      if (e is HandoffPlaybackException) rethrow;
+      throw HandoffPlaybackException(e is TimeoutException ? 'timeout' : e.runtimeType.toString());
+    } finally {
+      await failures.cancel();
+      await states?.cancel();
+    }
   }
 
   @override
@@ -82,11 +165,26 @@ class MusicHandoffPlayer implements HandoffPlayer {
   Future<void> restoreLocal(domain.PlaybackState? saved) async {
     if (saved == null || saved.queue.isEmpty) {
       await _playback.loadQueue(const [], autoPlay: false);
+      await restoreSettings();
       return;
     }
     // The hand-off's stream item is still loaded: a plain restore would see
-    // a queue and leave it there, so this one replaces it.
+    // a queue and leave it there, so this one replaces it. It brings back
+    // the repeat mode saved with the queue.
+    _repeatBefore = null;
     await _handler.restoreSession(saved.copyWith(isPlaying: false), replace: true);
+  }
+
+  @override
+  Future<void> restoreSettings() async {
+    final repeat = _repeatBefore;
+    _repeatBefore = null;
+    if (repeat == null || _handler.repeatMode == repeat) return;
+    await _handler.setRepeatMode(switch (repeat) {
+      domain.PlaybackRepeatMode.off => AudioServiceRepeatMode.none,
+      domain.PlaybackRepeatMode.all => AudioServiceRepeatMode.all,
+      domain.PlaybackRepeatMode.one => AudioServiceRepeatMode.one,
+    });
   }
 }
 
@@ -270,11 +368,38 @@ class OnlineBackgroundHandoff {
     await session.send(const BridgeCommand.pause());
     if (generation != _generation) return; // back meanwhile: the page was told to play on
     _saved = player.captureLocal();
-    try {
-      await player.playAlone(item, position);
-    } catch (e) {
-      debugPrint('[Online] hand-off playback failed: $e');
+    var played = await _tryPlay(item, position);
+    if (!played && generation == _generation) {
+      // Stream links expire, and they only work from the network they were
+      // made on (a cached one breaks after a move from Wi-Fi to mobile
+      // data): one more try with a new link.
+      DiagnosticsService.instance.logEvent('online_handoff_retry');
+      _cache.remove(videoId);
+      String? fresh;
+      try {
+        fresh = await _streamUrl(videoId);
+      } catch (_) {
+        fresh = null;
+      }
+      if (fresh != null && generation == _generation) {
+        played = await _tryPlay(item.copyWith(uri: fresh), position);
+      }
+    }
+    if (!played) {
+      final saved = _saved;
+      _saved = null;
+      // The page first (iOS gives a backgrounded app only seconds), then the
+      // user's own queue comes back, paused, unless other music took over.
       if (generation == _generation) _fail('play_failed');
+      try {
+        if (player.current.itemId == item.id) {
+          await player.restoreLocal(saved);
+        } else {
+          await player.restoreSettings();
+        }
+      } catch (e) {
+        debugPrint('[Online] hand-off restore failed: $e');
+      }
       return;
     }
     _itemId = item.id;
@@ -286,6 +411,17 @@ class OnlineBackgroundHandoff {
     }
     _phase = _Phase.native;
     DiagnosticsService.instance.logEvent('online_handoff_native');
+  }
+
+  /// True once [item] really plays natively.
+  Future<bool> _tryPlay(domain.MediaItem item, Duration position) async {
+    try {
+      await player.playAlone(item, position);
+      return true;
+    } catch (e) {
+      debugPrint('[Online] hand-off playback failed: $e');
+      return false;
+    }
   }
 
   void _fail(String reason) {
@@ -332,8 +468,12 @@ class OnlineBackgroundHandoff {
     _leftPlaying = false;
     session.holdPage = false;
     if (now.itemId != null && now.itemId != ours) {
-      // The music player moved on to something else meanwhile: leave it be.
+      // The music player moved on to something else meanwhile: leave it be
+      // (only the user's repeat mode comes back).
       DiagnosticsService.instance.logEvent('online_handoff_back', {'synced': false});
+      try {
+        await player.restoreSettings();
+      } catch (_) {}
       return;
     }
     if (now.itemId == ours) {

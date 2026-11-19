@@ -153,6 +153,8 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
         _onState(state);
       case BridgePipMessage(:final active):
         browserPipActive.value = active;
+      case BridgeFullscreenMessage():
+        break; // the Online screen's toolbar and orientation, not the media session
       case BridgeReadyMessage(:final pageUrl):
         documentReplaced(pageUrl);
     }

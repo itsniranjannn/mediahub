@@ -53,6 +53,8 @@ class _NoPlayer implements HandoffPlayer {
   Future<void> playAlone(domain.MediaItem item, Duration position) async {}
   @override
   Future<void> restoreLocal(domain.PlaybackState? saved) async {}
+  @override
+  Future<void> restoreSettings() async {}
 }
 
 Future<_Harness> _pumpOnline(WidgetTester tester, {int? androidSdk, ThemeData? theme, Uri? openRequest}) async {
@@ -364,6 +366,11 @@ void main() {
     await tester.tap(key('online_address'));
     await tester.pumpAndSettle();
     expect(key('online_search_field'), findsOneWidget, reason: 'always our own sheet');
+    // What is typed is what is searched: no autocorrect, curly quotes or long dashes.
+    final field = tester.widget<TextField>(key('online_search_field'));
+    expect(field.autocorrect, isFalse);
+    expect(field.smartQuotesType, SmartQuotesType.disabled);
+    expect(field.smartDashesType, SmartDashesType.disabled);
     await tester.enterText(key('online_search_field'), 'lofi beats');
     await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pumpAndSettle();
@@ -627,6 +634,196 @@ void main() {
     h.web.events!.onFullscreenChanged(true);
     await tester.pump();
     expect(h.chrome, [(true, false)]);
+  });
+
+  // --- iOS parity: fullscreen only on the page's word ---------------------------
+
+  void pageFullscreen(_Harness h, bool on) => h.web.events!.onBridgeMessage([
+        {'t': h.web.token, 'k': 'fs', 'on': on, 'u': 'https://m.youtube.com/watch?v=dQw4w9WgXcQ'}
+      ]);
+
+  testWidgets("iOS: the plugin's fullscreen event alone never hides the toolbar or turns the app", (tester) async {
+    PlatformInfo.debugIsIOS = true;
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.postMedia();
+    // Any app window appearing reads as "fullscreen" to the iOS plugin.
+    h.web.events!.onFullscreenChanged(true);
+    await tester.pump();
+    expect(h.chrome, isEmpty, reason: 'no landscape lock, no hidden status bar');
+    expect(key('online_address'), findsOneWidget, reason: 'the toolbar stays');
+
+    // The page itself says a video went fullscreen: now it is real.
+    pageFullscreen(h, true);
+    await tester.pump();
+    expect(h.chrome, [(true, true)]);
+    expect(key('online_address'), findsNothing);
+
+    // The plugin's exit (another window going away) does not end it either.
+    h.web.events!.onFullscreenChanged(false);
+    await tester.pump();
+    expect(h.chrome, [(true, true)]);
+    pageFullscreen(h, false);
+    await tester.pump();
+    expect(h.chrome, [(true, true), (false, false)]);
+    expect(key('online_address'), findsOneWidget);
+  });
+
+  testWidgets('iOS: a new document ends a fullscreen the page had reported', (tester) async {
+    PlatformInfo.debugIsIOS = true;
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    pageFullscreen(h, true);
+    await tester.pump();
+    expect(key('online_address'), findsNothing);
+    h.web.events!.onBridgeMessage([
+      {'t': h.web.token, 'k': 'ready', 'u': 'https://m.youtube.com/'}
+    ]);
+    await tester.pump();
+    expect(h.chrome.last, (false, false));
+    expect(key('online_address'), findsOneWidget);
+  });
+
+  testWidgets("Android: fullscreen follows the WebView's own events; the page's report changes nothing", (tester) async {
+    PlatformInfo.debugIsAndroid = true;
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.postMedia();
+    pageFullscreen(h, true);
+    await tester.pump();
+    expect(h.chrome, isEmpty);
+    expect(key('online_address'), findsOneWidget);
+    h.web.events!.onFullscreenChanged(true);
+    await tester.pump();
+    expect(h.chrome, [(true, true)]);
+  });
+
+  testWidgets('iOS: mobile data off for MediaHub says so, with Retry', (tester) async {
+    PlatformInfo.debugIsIOS = true;
+    final h = await _pumpOnline(tester);
+    h.web.events!.onMainFrameError(const OnlineLoadError(offline: true, description: 'x', mobileDataOff: true));
+    await tester.pump();
+    expect(find.text("You're offline"), findsOneWidget);
+    expect(find.text('Mobile data is off for MediaHub. Turn it on in Settings, or use Wi-Fi.'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+  });
+
+  for (final ios in [true, false]) {
+    testWidgets('Clear YouTube data: the dialog says what goes on ${ios ? 'an iPhone' : 'Android'}', (tester) async {
+      if (ios) {
+        PlatformInfo.debugIsIOS = true;
+      } else {
+        PlatformInfo.debugIsAndroid = true;
+      }
+      final h = await _pumpOnline(tester);
+      h.web.navigate('https://m.youtube.com/');
+      await tester.pumpAndSettle();
+      await tester.tap(key('online_menu'));
+      await tester.pumpAndSettle();
+      // The phone's menu has more rows (downloads), so Clear may be below the fold.
+      await tester.ensureVisible(key('online_menu_clear'));
+      await tester.pumpAndSettle();
+      await tester.tap(key('online_menu_clear'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(ios
+            ? "Signs you out and forgets YouTube's cookies, cache and saved site data on this iPhone. "
+                'Your downloads and library stay.'
+            : "Signs you out and forgets YouTube's cookies, cache and site settings on this phone. "
+                'Your downloads and library stay.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(h.cleared, 0);
+    });
+  }
+
+  // --- signing in to YouTube --------------------------------------------------
+
+  testWidgets('menu: Sign in to YouTube opens Google sign-in in the tab, back to this page after', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    await tester.tap(key('online_menu'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sign in to YouTube'), findsOneWidget);
+    await tester.tap(key('online_menu_sign_in'));
+    await tester.pumpAndSettle();
+
+    final load = h.web.controller.calls.last;
+    expect(load, startsWith('load https://accounts.google.com/ServiceLogin?'));
+    final signIn = Uri.parse(load.substring('load '.length));
+    expect(signIn.queryParameters['service'], 'youtube');
+    final back = Uri.parse(signIn.queryParameters['continue']!);
+    expect(back.host, 'www.youtube.com');
+    expect(back.queryParameters['next'], watchUrl);
+    expect(h.opened, isEmpty, reason: 'not the browser');
+    expect(find.text('Sign in to YouTube'), findsNothing, reason: 'the menu closed');
+  });
+
+  testWidgets("on Google's sign-in pages the bridge is off: no commands go in, no messages count", (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.postMedia();
+    expect(h.host.log, ['set']);
+
+    for (final page in [
+      'https://accounts.google.com/v3/signin/identifier?flowName=GlifWebSignIn',
+      'https://accounts.youtube.com/accounts/SetSID?ssdc=1',
+    ]) {
+      h.web.controller.scripts.clear();
+      h.web.navigate(page, title: 'Sign in - Google Accounts');
+      await tester.pumpAndSettle();
+      expect(h.web.controller.scripts, isEmpty, reason: 'nothing is run in $page');
+      // Even with the right token and a YouTube address in it.
+      final before = List.of(h.host.log);
+      h.web.postMedia();
+      expect(h.host.log, before, reason: page);
+      // Our own search falls back to YouTube's results page.
+      await tester.tap(key('online_address'));
+      await tester.pumpAndSettle();
+      await tester.enterText(key('online_search_field'), 'lofi');
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+      expect(h.web.controller.scripts, isEmpty);
+      expect(h.web.controller.calls.last, 'load https://m.youtube.com/results?search_query=lofi');
+      expect(find.byKey(const ValueKey('online_watch_strip')), findsNothing);
+    }
+
+    // Back on YouTube, all is as before.
+    h.web.navigate('https://m.youtube.com/');
+    await tester.pumpAndSettle();
+    expect(h.web.controller.commands, containsAll(['setBackgroundPlay', 'requestState']));
+  });
+
+  testWidgets('the menu with Sign in still shows every row, Clear site data included, on a 360x740 phone',
+      (tester) async {
+    PlatformInfo.debugIsAndroid = true; // Open Downloads too
+    tester.view.physicalSize = const Size(360 * 3, 740 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final h = await _pumpOnline(tester);
+    h.web.navigate('https://m.youtube.com/');
+    await tester.pumpAndSettle();
+    await tester.tap(key('online_menu'));
+    await tester.pumpAndSettle();
+    for (final row in ['Reload', 'YouTube Music', 'Sign in to YouTube', 'Open Downloads', 'Clear site data']) {
+      expect(find.text(row).hitTestable(), findsOneWidget, reason: row);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a sign-in page shows its own title in the address pill', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate('https://accounts.google.com/v3/signin/identifier', title: 'Sign in - Google Accounts');
+    await tester.pumpAndSettle();
+    expect(find.text('Sign in - Google Accounts'), findsOneWidget);
+    expect(find.byType(EmptyHint), findsNothing);
   });
 
   // --- YouTube Music, Save, open requests (ONL-12) ------------------------------

@@ -44,11 +44,14 @@
   // https YouTube pages only. The WebView is told to inject into those
   // origins alone, but iOS ignores that list and Android's fallback for older
   // WebViews injects everywhere, so the script checks for itself: any other
-  // page never sees the token.
+  // page never sees the token. Google's sign-in pages (accounts.google.com,
+  // and accounts.youtube.com, the hop that hands a sign-in to YouTube) load
+  // in the tab too, but never get the bridge.
   try {
     var loc = w.location;
     var host = String(loc.hostname || '').toLowerCase();
     if (String(loc.protocol) !== 'https:' || !/(^|\.)youtube\.com$/.test(host)) return;
+    if (host === 'accounts.youtube.com') return;
   } catch (e) {
     return;
   }
@@ -519,6 +522,58 @@
     }
   );
 
+  // Fullscreen, as the page sees it: an element holding a video is the
+  // page's fullscreen element, or a video plays in iOS's native fullscreen
+  // player. Dart trusts this on iOS, where the plugin's own fullscreen event
+  // also fires for app windows that have nothing to do with the page.
+  function holdsVideo(el) {
+    if (!el) return false;
+    if (isVideo(el)) return true;
+    var v = findVideo();
+    for (var p = v; p; p = p.parentElement) {
+      if (p === el) return true;
+    }
+    return !!(typeof el.querySelector === 'function' && el.querySelector('video'));
+  }
+
+  function elementFullscreen() {
+    return safe(function () {
+      return holdsVideo(doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitCurrentFullScreenElement || null);
+    }, false);
+  }
+
+  function nativeVideoFullscreen(v) {
+    return !!v && (v.webkitDisplayingFullscreen === true || v.webkitPresentationMode === 'fullscreen');
+  }
+
+  var lastFullscreen = false;
+  function postFullscreen(on) {
+    if (on === lastFullscreen) return;
+    lastFullscreen = on;
+    post({ t: TOKEN, k: 'fs', on: on, u: String(w.location.href) });
+  }
+
+  function onFullscreenEvent(event) {
+    safe(function () {
+      var type = event && event.type;
+      var el = event && event.target;
+      var on;
+      if (type === 'webkitbeginfullscreen' || type === 'webkitendfullscreen') {
+        if (!isVideo(el)) return;
+        // The video's own flag may still be the old one while the event runs.
+        on = type === 'webkitbeginfullscreen' || elementFullscreen();
+      } else {
+        on = elementFullscreen() || nativeVideoFullscreen(findVideo());
+      }
+      postFullscreen(!!on);
+    });
+  }
+  ['fullscreenchange', 'webkitfullscreenchange', 'webkitbeginfullscreen', 'webkitendfullscreen'].forEach(function (type) {
+    safe(function () {
+      doc.addEventListener(type, onFullscreenEvent, true);
+    });
+  });
+
   function onPresentationChange(event) {
     safe(function () {
       var el = event && event.target;
@@ -526,6 +581,9 @@
       var mode = el.webkitPresentationMode;
       var on = event.type === 'enterpictureinpicture' || mode === 'picture-in-picture';
       post({ t: TOKEN, k: 'pip', on: !!on, u: String(w.location.href) });
+      if (event.type === 'webkitpresentationmodechanged') {
+        postFullscreen(mode === 'fullscreen' || elementFullscreen());
+      }
     });
   }
   ['webkitpresentationmodechanged', 'enterpictureinpicture', 'leavepictureinpicture'].forEach(function (type) {
@@ -667,11 +725,26 @@
     }, false);
   }
 
+  // The form's own submit button (a <button> with no type is one too), by
+  // structure only, never by its label.
+  function submitButton(form) {
+    return safe(function () {
+      if (typeof form.querySelectorAll !== 'function') return null;
+      var list = form.querySelectorAll('button, input[type="submit"]');
+      for (var i = 0; i < list.length; i++) {
+        var b = list[i];
+        if (b && String(b.type || '').toLowerCase() === 'submit' && !b.disabled && typeof b.click === 'function') return b;
+      }
+      return null;
+    }, null);
+  }
+
   // Our own search box's query, submitted inside YouTube's single-page app
   // (so its mini player keeps playing). Only structural selectors: the
   // search field's name and YouTube's own element names, never a label in
-  // one language. False when the page has no search field to use; Dart then
-  // loads the results page itself.
+  // one language. False when the page has no search field to use, or no way
+  // to submit it that is sure to work; Dart then loads the results page
+  // itself.
   function search(query) {
     if (typeof query !== 'string') return false;
     var q = query.replace(/\s+/g, ' ').trim();
@@ -695,6 +768,17 @@
       var form = input.form || null;
       if (form && typeof form.requestSubmit === 'function') {
         form.requestSubmit(); // the app's own submit handler runs (no page load)
+        return true;
+      }
+      if (form) {
+        // No requestSubmit (iOS 15's WebKit). A scripted Enter key never
+        // submits a form, so it is not tried here: a click on the form's
+        // submit button does submit it (the app's handler runs, as above).
+        // Without one, false: Dart loads the results page, which is what
+        // form.submit() would do, but at an address known to be right.
+        var button = submitButton(form);
+        if (!button) return false;
+        button.click();
         return true;
       }
       if (typeof w.KeyboardEvent === 'function') {

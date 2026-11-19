@@ -162,6 +162,14 @@ class BridgePipMessage extends BridgeMessage {
   final bool active;
 }
 
+/// A video in the page entered or left fullscreen (the page's own fullscreen
+/// events, or iOS's native video player). On iOS this, not the plugin's
+/// window watch, decides whether the toolbar hides.
+class BridgeFullscreenMessage extends BridgeMessage {
+  const BridgeFullscreenMessage(this.active);
+  final bool active;
+}
+
 /// The script is installed on a new document.
 class BridgeReadyMessage extends BridgeMessage {
   const BridgeReadyMessage(this.pageUrl);
@@ -241,6 +249,8 @@ BridgeMessage? parseBridgeMessage(Object? args, {required String token}) {
       return BridgeReadyMessage(pageUrl);
     case 'pip':
       return BridgePipMessage(raw['on'] == true);
+    case 'fs':
+      return BridgeFullscreenMessage(raw['on'] == true);
     case 'media':
       final pos = (_num(raw['p']) ?? 0).clamp(0.0, 1e7);
       final dur = _num(raw['d']);

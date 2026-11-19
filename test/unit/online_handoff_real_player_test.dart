@@ -4,8 +4,10 @@
 // HandoffPlayer, so it could not see the handler's restore guard leaving the
 // YouTube stream loaded, or the save during the hand-off emptying the
 // stored session.
+import 'package:audio_service/audio_service.dart' show AudioServiceRepeatMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:just_audio/just_audio.dart' show LoopMode, ProcessingState;
 import 'package:mediahub/core/logging/diagnostics_service.dart';
 import 'package:mediahub/domain/models/media_item.dart' as domain;
 import 'package:mediahub/domain/models/playback_state.dart' as domain;
@@ -57,6 +59,9 @@ class _RecordingRepo implements PlaybackRepository {
 }
 
 final _handoffPlayer = Provider<MusicHandoffPlayer>((ref) => MusicHandoffPlayer(ref));
+final _quickHandoffPlayer = Provider<MusicHandoffPlayer>(
+  (ref) => MusicHandoffPlayer(ref, startTimeout: const Duration(milliseconds: 100)),
+);
 
 List<String> _ids(Iterable<domain.MediaItem> items) => [for (final m in items) m.id];
 
@@ -139,6 +144,112 @@ void main() {
 
     expect(_ids(repo.saved.last.queue), ['s0', 's1', 's2'],
         reason: 'the stored session must not become empty while only the online item is queued');
+  });
+
+  group('a stream Apple\'s player does not play', () {
+    test('refused (an expired link, or one made on another network): playAlone throws, nothing plays', () async {
+      player.brokenIds.add(_stream.id);
+      final hp = container.read(_handoffPlayer);
+      await expectLater(
+        hp.playAlone(_stream, const Duration(seconds: 30)),
+        throwsA(isA<HandoffPlaybackException>()),
+      );
+      await _settle();
+      expect(player.playing, isFalse);
+      expect(handler.wantPlaying, isFalse);
+    });
+
+    test('a link that never answers: playAlone gives up in time, and it cannot start later', () async {
+      player.hangingIds.add(_stream.id);
+      final hp = container.read(_quickHandoffPlayer);
+      await expectLater(
+        hp.playAlone(_stream, const Duration(seconds: 30)).timeout(const Duration(seconds: 2)),
+        throwsA(isA<HandoffPlaybackException>().having((e) => e.reason, 'reason', 'timeout')),
+      );
+      expect(player.stopCalls, greaterThan(0), reason: 'the load is stopped');
+      await _settle();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(player.playing, isFalse);
+      expect(player.playCalls, 0);
+    });
+
+    test('time up while it still seeks to the page\'s spot: it does not start afterwards', () async {
+      player.seekDelay = const Duration(milliseconds: 300);
+      final hp = container.read(_quickHandoffPlayer);
+      await expectLater(
+        hp.playAlone(_stream, const Duration(seconds: 30)),
+        throwsA(isA<HandoffPlaybackException>()),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await _settle();
+      expect(player.playing, isFalse, reason: 'the page was asked to play on: two sounds at once otherwise');
+      expect(player.playCalls, 0);
+    });
+
+    test('a stream that plays: playAlone returns once it really plays', () async {
+      final hp = container.read(_handoffPlayer);
+      await hp.playAlone(_stream, Duration.zero);
+      expect(player.playing, isTrue);
+      expect(player.processingState, ProcessingState.ready);
+      expect(player.currentId, _stream.id);
+    });
+  });
+
+  group('the user\'s repeat mode', () {
+    test('the stream plays once (repeat one would loop it for good); repeat comes back with the queue', () async {
+      await handler.loadQueue(_songs(3), autoPlay: true);
+      await _settle();
+      await handler.setRepeatMode(AudioServiceRepeatMode.one);
+      await handler.pause();
+      await _settle();
+
+      final hp = container.read(_handoffPlayer);
+      final saved = hp.captureLocal();
+      await hp.playAlone(_stream, Duration.zero);
+      await _settle();
+      expect(handler.repeatMode, domain.PlaybackRepeatMode.off);
+      expect(player.loopMode, LoopMode.off);
+
+      await hp.pause();
+      await hp.restoreLocal(saved);
+      await _settle();
+      expect(handler.repeatMode, domain.PlaybackRepeatMode.one);
+      expect(player.loopMode, LoopMode.one);
+    });
+
+    test('no queue before: the mode still comes back', () async {
+      await handler.setRepeatMode(AudioServiceRepeatMode.all);
+      final hp = container.read(_handoffPlayer);
+      final saved = hp.captureLocal();
+      await hp.playAlone(_stream, Duration.zero);
+      expect(handler.repeatMode, domain.PlaybackRepeatMode.off);
+      await hp.restoreLocal(saved);
+      await _settle();
+      expect(handler.repeatMode, domain.PlaybackRepeatMode.all);
+    });
+
+    test('other music took over meanwhile: it stays, and only the mode comes back', () async {
+      await handler.setRepeatMode(AudioServiceRepeatMode.all);
+      final hp = container.read(_handoffPlayer);
+      await hp.playAlone(_stream, Duration.zero);
+      await handler.loadQueue(_songs(2), autoPlay: true); // e.g. Siri started a playlist
+      await _settle();
+      await hp.restoreSettings();
+      expect(handler.repeatMode, domain.PlaybackRepeatMode.all);
+      expect(_ids(handler.getCurrentDomainState().queue), ['s0', 's1']);
+      expect(player.playing, isTrue);
+    });
+
+    test('a failed try leaves the mode to be put back too', () async {
+      await handler.setRepeatMode(AudioServiceRepeatMode.one);
+      player.brokenIds.add(_stream.id);
+      final hp = container.read(_handoffPlayer);
+      final saved = hp.captureLocal();
+      await expectLater(hp.playAlone(_stream, Duration.zero), throwsA(isA<HandoffPlaybackException>()));
+      await hp.restoreLocal(saved);
+      await _settle();
+      expect(handler.repeatMode, domain.PlaybackRepeatMode.one);
+    });
   });
 
   test('a plain restore still leaves a loaded queue alone (media resumption got there first)', () async {
