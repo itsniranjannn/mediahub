@@ -44,6 +44,69 @@ class FormatChoice {
 class FormatOptions {
   FormatOptions._();
 
+  // --- yt-dlp format selectors --------------------------------------------
+  //
+  // Every selector ends with yt-dlp's own catch-all, so a download that cannot
+  // get the exact quality saves the nearest one instead of failing with
+  // "Requested format is not available" (YouTube hands some of its clients
+  // fewer formats than the quality list was read from). The format sort
+  // ([formatSortFor]) keeps the chosen height as the cap for the catch-all
+  // too, and prefers H.264 video with AAC (M4A) sound, which merge into an
+  // MP4 that plays everywhere.
+
+  /// Video and sound together; yt-dlp's default selector.
+  static const String anyVideoSelector = 'bv*+ba/b';
+
+  /// Sound only (or, when a site has no such stream, the best file there is).
+  static const String audioSelector = 'ba/b';
+
+  /// Best video at most [maxHeight] pixels high merged with the best sound,
+  /// else the best file with both at most that high, else anything.
+  /// Without [maxHeight]: the best there is.
+  static String videoSelector(int? maxHeight) => maxHeight == null
+      ? anyVideoSelector
+      : 'bv*[height<=$maxHeight]+ba/b[height<=$maxHeight]/$anyVideoSelector';
+
+  static final RegExp _heightCap = RegExp(r'height<=\??(\d{2,5})');
+
+  /// The height cap in [selector] (`[height<=1080]` -> 1080), if any.
+  static int? maxHeightOf(String? selector) {
+    final m = _heightCap.firstMatch(selector ?? '');
+    return m == null ? null : int.tryParse(m.group(1)!);
+  }
+
+  /// True for a selector that asks for sound only.
+  static bool isAudioSelector(String selector) {
+    final s = selector.trim();
+    return s.startsWith('ba') || s.startsWith('bestaudio') || s.startsWith('wa') || s.startsWith('worstaudio');
+  }
+
+  /// [selector] with the catch-all added when it has none, so downloads
+  /// queued by older versions of the app (still in the list, or retried) also
+  /// get the nearest quality instead of failing. [audio]: the download is
+  /// audio only. Selectors that already end in a catch-all stay as they are.
+  static String withCatchAll(String selector, {required bool audio}) {
+    final s = selector.trim();
+    if (s.isEmpty) return s;
+    final last = s.split('/').last.trim();
+    // "b" / "best" (with no filter) already takes whatever there is.
+    if (last == 'b' || last == 'best') return s;
+    return '$s/${audio ? audioSelector : anyVideoSelector}';
+  }
+
+  /// yt-dlp format sort (`-S`) for a download with [selector]: at most the
+  /// selector's height (the nearest one when that is missing), H.264 before
+  /// VP9 / AV1 at the same height, MP4 video and M4A sound first. Null for
+  /// sound-only downloads ([audioFormat] set, or an audio selector), so the
+  /// sound picked is the one the quality sheet showed.
+  static String? formatSortFor(String? selector, {String? audioFormat}) {
+    if (audioFormat != null && audioFormat.isNotEmpty) return null;
+    final s = selector?.trim() ?? '';
+    if (s.isEmpty || isAudioSelector(s)) return null;
+    final cap = maxHeightOf(s);
+    return '${cap == null ? 'res' : 'height:$cap'},vcodec:h264,ext:mp4:m4a';
+  }
+
   static int sizeOf(ExtractorFormat f, int durationSec) {
     if (f.filesize > 0) return f.filesize;
     if (f.tbr > 0 && durationSec > 0) {
@@ -84,6 +147,16 @@ class FormatOptions {
     return candidates.first;
   }
 
+  /// The file a download at [height] ends up in: MP4 when an H.264 stream
+  /// exists there (the format sort picks it), MKV when only VP9 does (YouTube
+  /// above 1080p), otherwise MP4.
+  static String containerAt(List<ExtractorFormat> formats, int height) {
+    final codecs = formats.where((f) => f.hasVideo && f.height == height).map((f) => f.vcodec.toLowerCase());
+    if (codecs.any((c) => c.startsWith('avc') || c.startsWith('h264'))) return 'MP4';
+    if (codecs.any((c) => c.startsWith('vp'))) return 'MKV';
+    return 'MP4';
+  }
+
   static List<FormatChoice> build(ExtractorMetadata meta) {
     final formats = meta.formats;
     final duration = meta.durationSec;
@@ -109,9 +182,9 @@ class FormatOptions {
       video.add(FormatChoice(
         id: 'v$h',
         label: label,
-        subtitle: 'MP4 · ${_approx(total)}',
+        subtitle: '${containerAt(formats, h)} · ${_approx(total)}',
         isAudio: false,
-        selector: 'bestvideo[height<=$h]+bestaudio/best[height<=$h]',
+        selector: videoSelector(h),
         qualityLabel: label,
         estimatedBytes: total > 0 ? total : null,
         streamSizes: [
@@ -129,7 +202,7 @@ class FormatOptions {
         label: 'Best available (${top.label})',
         subtitle: top.subtitle,
         isAudio: false,
-        selector: 'bestvideo+bestaudio/best',
+        selector: anyVideoSelector,
         qualityLabel: top.qualityLabel,
         estimatedBytes: top.estimatedBytes,
         streamSizes: top.streamSizes,
@@ -142,7 +215,7 @@ class FormatOptions {
         label: 'Best available',
         subtitle: 'MP4',
         isAudio: false,
-        selector: 'bestvideo+bestaudio/best',
+        selector: anyVideoSelector,
         qualityLabel: 'Best',
       ));
     }
@@ -156,7 +229,7 @@ class FormatOptions {
       label: audioLabel,
       subtitle: 'No conversion · ${_approx(audioSize)}',
       isAudio: true,
-      selector: 'bestaudio/best',
+      selector: audioSelector,
       qualityLabel: audio != null && audio.abr > 0
           ? 'Audio ${audio.abr.round()} kbps'
           : 'Audio',
@@ -170,7 +243,7 @@ class FormatOptions {
       label: 'MP3 (converted)',
       subtitle: 'Plays everywhere · ${_approx(mp3Bytes)}',
       isAudio: true,
-      selector: 'bestaudio/best',
+      selector: audioSelector,
       audioFormat: 'mp3',
       qualityLabel: 'MP3',
       estimatedBytes: mp3Bytes > 0 ? mp3Bytes : null,

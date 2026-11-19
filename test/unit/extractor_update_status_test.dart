@@ -4,9 +4,11 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mediahub/core/storage/settings_store.dart';
 import 'package:mediahub/data/database/app_database.dart';
 import 'package:mediahub/data/downloads/extractor_download_runner.dart';
 import 'package:mediahub/features/downloads/download_providers.dart';
+import 'package:mediahub/personal/extractor_auto_updater.dart';
 import 'package:mediahub/personal/extractor_backend.dart';
 import 'package:mediahub/personal/format_options.dart';
 import 'package:mediahub/personal/personal_tools_notifier.dart';
@@ -39,9 +41,16 @@ void main() {
   late _Backend backend;
   late ProviderContainer container;
 
+  late ExtractorAutoUpdater updater;
+
   setUp(() {
     backend = _Backend();
-    container = ProviderContainer(overrides: [extractorBackendProvider.overrideWithValue(backend)]);
+    // Its own settings file: update times never leak into other tests.
+    updater = ExtractorAutoUpdater(backend: backend, store: SettingsStore.forTesting(), enabled: () => true);
+    container = ProviderContainer(overrides: [
+      extractorBackendProvider.overrideWithValue(backend),
+      extractorAutoUpdaterProvider.overrideWithValue(updater),
+    ]);
   });
 
   tearDown(() => container.dispose());
@@ -109,6 +118,41 @@ void main() {
       await first;
       expect(slow.updates, 1);
       expect(slow.resetCalls, 0);
+    });
+  });
+
+  group('Settings shows when yt-dlp was last updated (it updates itself now)', () {
+    final now = DateTime(2026, 11, 19, 18);
+
+    test('the version line', () {
+      String line({DateTime? updated, DateTime? checked, String v = '2026.11.10'}) =>
+          PersonalToolsState.formatVersionLine(v, lastUpdated: updated, lastChecked: checked, now: now);
+      expect(line(v: ''), 'Loading...');
+      expect(line(), '2026.11.10');
+      expect(line(updated: now), '2026.11.10 · Updated today');
+      expect(line(updated: now.subtract(const Duration(days: 1))), '2026.11.10 · Updated yesterday');
+      expect(line(updated: DateTime(2026, 11, 16, 23)), '2026.11.10 · Updated 3 days ago');
+      expect(line(updated: DateTime(2026, 10, 2)), '2026.11.10 · Updated on 2 Oct 2026');
+      // Checked after the last update: the version is the newest.
+      expect(line(updated: DateTime(2026, 10, 2), checked: now), '2026.11.10 · Checked today');
+      expect(line(checked: now), '2026.11.10 · Checked today');
+      // The same update and check: "Updated".
+      expect(line(updated: now, checked: now), '2026.11.10 · Updated today');
+    });
+
+    test('Update in Settings is remembered', () async {
+      expect(state().lastUpdated, isNull);
+      await tools().updateYtDlp();
+      expect(state().lastUpdated, isNotNull);
+      expect(state().lastChecked, isNotNull);
+      expect(state().versionLine(), '2026.11.15 · Updated today');
+    });
+
+    test('an update MediaHub did by itself shows up without a restart', () async {
+      expect(state().lastUpdated, isNull);
+      expect(await updater.updateAfterFailure(), ExtractorUpdateOutcome.updated);
+      expect(state().lastUpdated, isNotNull);
+      expect(state().updateStatus, isNull, reason: 'no status line for a quiet update');
     });
   });
 

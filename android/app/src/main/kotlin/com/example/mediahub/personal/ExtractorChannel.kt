@@ -1,6 +1,9 @@
 package com.example.mediahub.personal
 
 import android.content.Context
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.net.ConnectivityManager
 import android.os.Handler
 import android.os.Looper
 import com.yausername.ffmpeg.FFmpeg
@@ -15,6 +18,7 @@ import java.io.File
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.locks.ReentrantReadWriteLock
 
 class ExtractorChannel(
     private val context: Context,
@@ -33,11 +37,21 @@ class ExtractorChannel(
     // Link lookups the user cancelled: stop probing further YouTube clients for them.
     private val cancelledInfo: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    // Every yt-dlp run (lookup, download, version) holds the read lock; Update and Reset
+    // take the write lock without waiting (BUSY otherwise). So yt-dlp's files are never
+    // replaced under a running process, and a run that starts during an update waits for it.
+    private val engineLock = ReentrantReadWriteLock()
+
+    // Version of the yt-dlp copy shipped inside the app (read once with --version).
+    @Volatile
+    private var bundledVersion: String? = null
+
     private fun infoProcessId(requestId: String) = "info-$requestId"
 
     companion object {
         const val PERSONAL_TOOLS = true
 
+        // Kept in step with lib/personal/extractor_hosts.dart (a Dart test compares the two).
         private val ALLOWED_HOSTS = listOf(
             "youtube.com",
             "youtu.be",
@@ -50,7 +64,11 @@ class ExtractorChannel(
             "twitter.com",
             "spotify.com",
             "soundcloud.com",
-            "vimeo.com"
+            "vimeo.com",
+            "dailymotion.com",
+            "dai.ly",
+            "reddit.com",
+            "redd.it"
         )
 
         // The task id becomes part of the output file name: keep it boring.
@@ -59,8 +77,21 @@ class ExtractorChannel(
         // yt-dlp format selectors only ever need this small alphabet. Never starts with '-'.
         private val FORMAT_SELECTOR_REGEX = Regex("^[A-Za-z0-9_\\[\\]<>=!*+/,.()^$~:?][A-Za-z0-9_\\[\\]<>=!*+/,.()^$~:?-]{0,299}$")
 
+        // yt-dlp format sort (-S), e.g. "height:1080,vcodec:h264,ext:mp4:m4a". Never starts with '-'.
+        private val FORMAT_SORT_REGEX = Regex("^[a-z0-9]+(:[a-z0-9.]+)*(,[a-z0-9]+(:[a-z0-9.]+)*){0,5}$")
+
         // Only extractor-args we generate ourselves are accepted (YouTube player clients).
         private val EXTRACTOR_ARGS_REGEX = Regex("^youtube:player_client=[a-z0-9_,]{1,80}$")
+
+        // Errors another YouTube client (or the catch-all format) may get past. Everything
+        // else (private, age-restricted, unavailable, live, offline, cancelled ...) stops at once.
+        private val RETRY_WITH_OTHER_CLIENT = setOf(
+            "EXTRACTION_FAILED", "FORMAT_UNAVAILABLE", "BOT_CHECK", "NETWORK_ERROR"
+        )
+
+        // At most this many YouTube clients at the chosen quality, then the catch-all once:
+        // each try is a full yt-dlp run, and many runs in a row make YouTube limit the phone.
+        private const val MAX_CLIENT_TRIES = 3
 
         private val AUDIO_FORMATS = setOf("mp3", "m4a", "opus", "aac", "flac", "wav")
 
@@ -70,11 +101,13 @@ class ExtractorChannel(
 
         // YouTube hides its high-resolution formats from some clients. We try the default
         // client first and only fall back when it only exposes low qualities.
+        // A client a newer yt-dlp no longer knows is skipped with a warning (the default is used).
         private val YOUTUBE_CLIENT_VARIANTS = listOf(
             null,
             "youtube:player_client=android_vr",
             "youtube:player_client=web_safari",
-            "youtube:player_client=mweb"
+            "youtube:player_client=mweb",
+            "youtube:player_client=tv_simply"
         )
 
         fun isHostAllowed(url: String): Boolean {
@@ -166,6 +199,8 @@ class ExtractorChannel(
             "version" -> handleVersion(result)
             "update" -> handleUpdate(result)
             "resetToBundled" -> handleResetToBundled(result)
+            // null when the phone cannot tell (e.g. no network-state permission).
+            "isMetered" -> result.success(isMeteredNetwork())
             "getInfo" -> {
                 val url = call.argument<String>("url")
                 if (url == null) {
@@ -195,11 +230,12 @@ class ExtractorChannel(
                 val outDir = call.argument<String>("outDir")
                 val extractorArgs = call.argument<String>("extractorArgs")
                 val audioFormat = call.argument<String>("audioFormat")
+                val formatSort = call.argument<String>("formatSort")
                 if (taskId == null || url == null || outDir == null) {
                     result.error("INVALID_ARGUMENT", "Missing required arguments", null)
                     return
                 }
-                handleDownload(taskId, url, formatSelector, outDir, extractorArgs, audioFormat, result)
+                handleDownload(taskId, url, formatSelector, formatSort, outDir, extractorArgs, audioFormat, result)
             }
             "cancel" -> {
                 val taskId = call.argument<String>("taskId")
@@ -215,6 +251,9 @@ class ExtractorChannel(
 
     private fun handleInit(result: MethodChannel.Result) {
         executor.execute {
+            // Init unpacks yt-dlp when it is missing: never in the middle of an update.
+            val readLock = engineLock.readLock()
+            readLock.lock()
             try {
                 ensureInitialized()
                 mainHandler.post { result.success(true) }
@@ -222,21 +261,56 @@ class ExtractorChannel(
                 mainHandler.post {
                     result.error("INIT_FAILED", e.localizedMessage ?: "Failed to initialize extractor", null)
                 }
+            } finally {
+                readLock.unlock()
             }
         }
     }
 
     private fun handleVersion(result: MethodChannel.Result) {
         executor.execute {
+            val readLock = engineLock.readLock()
+            readLock.lock()
             try {
                 ensureInitialized()
+                // Only known after an update; the copy inside the app is asked directly.
                 val ver = YoutubeDL.getInstance().version(context.applicationContext)
+                    ?.takeIf { it.isNotBlank() } ?: readBundledVersion()
                 mainHandler.post { result.success(ver) }
             } catch (e: Exception) {
                 mainHandler.post {
                     result.error("VERSION_ERROR", e.localizedMessage ?: "Could not get version", null)
                 }
+            } finally {
+                readLock.unlock()
             }
+        }
+    }
+
+    /** `yt-dlp --version` of the copy in use (only asked when the library does not know it). */
+    private fun readBundledVersion(): String? {
+        bundledVersion?.let { return it }
+        return try {
+            val request = YoutubeDLRequest(emptyList<String>()).apply {
+                addOption("--ignore-config")
+                addOption("--version")
+            }
+            val out = YoutubeDL.getInstance().execute(request).out ?: ""
+            val ver = out.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }?.take(40)
+            bundledVersion = ver
+            ver
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun isMeteredNetwork(): Boolean? {
+        return try {
+            val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            cm?.isActiveNetworkMetered
+        } catch (e: Exception) {
+            // SecurityException without ACCESS_NETWORK_STATE: unknown.
+            null
         }
     }
 
@@ -247,18 +321,27 @@ class ExtractorChannel(
             return
         }
         executor.execute {
+            val writeLock = engineLock.writeLock()
+            // A lookup or download is running yt-dlp right now.
+            if (!writeLock.tryLock()) {
+                mainHandler.post { result.error("BUSY", "Wait for the current downloads to finish first", null) }
+                return@execute
+            }
             try {
                 ensureInitialized()
                 val status = YoutubeDL.getInstance().updateYoutubeDL(
                     context.applicationContext,
                     YoutubeDL.UpdateChannel._STABLE
                 )
+                bundledVersion = null
                 val statusName = status?.name ?: "DONE"
                 mainHandler.post { result.success(statusName) }
             } catch (e: Exception) {
                 mainHandler.post {
                     result.error("UPDATE_ERROR", e.localizedMessage ?: "Could not update", null)
                 }
+            } finally {
+                writeLock.unlock()
             }
         }
     }
@@ -274,6 +357,11 @@ class ExtractorChannel(
             return
         }
         executor.execute {
+            val writeLock = engineLock.writeLock()
+            if (!writeLock.tryLock()) {
+                mainHandler.post { result.error("BUSY", "Wait for the current downloads to finish first", null) }
+                return@execute
+            }
             try {
                 val app = context.applicationContext
                 val ytdlpDir = File(File(app.noBackupFilesDir, "youtubedl-android"), "yt-dlp")
@@ -285,11 +373,14 @@ class ExtractorChannel(
                     .apply()
                 // Unpacks the bundled copy again (it only does so when the file is missing).
                 YoutubeDL.getInstance().init_ytdlp(app, ytdlpDir)
+                bundledVersion = null
                 mainHandler.post { result.success(true) }
             } catch (e: Exception) {
                 mainHandler.post {
                     result.error("RESET_FAILED", e.localizedMessage ?: "Could not reset yt-dlp", null)
                 }
+            } finally {
+                writeLock.unlock()
             }
         }
     }
@@ -361,6 +452,8 @@ class ExtractorChannel(
         }
 
         executor.execute {
+            val readLock = engineLock.readLock()
+            readLock.lock()
             try {
                 ensureInitialized()
 
@@ -391,6 +484,8 @@ class ExtractorChannel(
                     } catch (e: Exception) {
                         lastError = e
                         if ((e.message ?: "").startsWith("INFO_TIMEOUT")) break
+                        // Private, age-restricted, removed, offline ...: no other client helps.
+                        if (isOffline(e) || mapException(e).first !in RETRY_WITH_OTHER_CLIENT) break
                     }
                 }
 
@@ -465,6 +560,7 @@ class ExtractorChannel(
                 mainHandler.post { result.error(code, msg, detail) }
             } finally {
                 if (requestId != null) cancelledInfo.remove(requestId)
+                readLock.unlock()
             }
         }
     }
@@ -488,10 +584,70 @@ class ExtractorChannel(
         return bestUrl
     }
 
+    /** One yt-dlp run of a download: which YouTube client and which format selector. */
+    private data class Attempt(val extractorArgs: String?, val selector: String?)
+
+    /**
+     * [selector] without its trailing catch-all ("/bv*+ba/b" or "/ba/b"): what each YouTube
+     * client is tried with first, so one client offering fewer formats cannot lower the
+     * quality while another still has it. The catch-all is the very last try.
+     */
+    private fun withoutCatchAll(selector: String?): String? {
+        if (selector.isNullOrEmpty()) return selector
+        for (tail in listOf("/bv*+ba/b", "/ba/b")) {
+            if (selector.length > tail.length && selector.endsWith(tail)) return selector.removeSuffix(tail)
+        }
+        return selector
+    }
+
+    /**
+     * The last-chance selector: whatever yt-dlp can get ("ba/b" for audio, otherwise its own
+     * default "bv*+ba/b"). Null when [selector] already ends with it (or is yt-dlp's default).
+     */
+    private fun catchAllSelector(selector: String?, audioFormat: String?): String? {
+        if (selector.isNullOrEmpty()) return null
+        val isAudio = (audioFormat != null && audioFormat in AUDIO_FORMATS) ||
+            selector.startsWith("ba") || selector.startsWith("bestaudio")
+        val catchAll = if (isAudio) "ba/b" else "bv*+ba/b"
+        return if (selector == catchAll || selector.endsWith("/$catchAll")) null else catchAll
+    }
+
+    /** What the finished file holds: a video track or sound only, and the video's height. */
+    private data class TrackInfo(val hasVideo: Boolean?, val height: Int?)
+
+    /**
+     * Whether the finished file holds a video track (false: audio only, null: unknown) and,
+     * when it does, the video's height in pixels (null when the file does not say).
+     */
+    private fun trackInfo(file: File): TrackInfo {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            var video = false
+            var height: Int? = null
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("video/")) {
+                    video = true
+                    if (height == null && format.containsKey(MediaFormat.KEY_HEIGHT)) {
+                        height = format.getInteger(MediaFormat.KEY_HEIGHT)
+                    }
+                }
+            }
+            if (extractor.trackCount == 0) TrackInfo(null, null) else TrackInfo(video, height)
+        } catch (e: Exception) {
+            TrackInfo(null, null)
+        } finally {
+            runCatching { extractor.release() }
+        }
+    }
+
     private fun handleDownload(
         taskId: String,
         url: String,
         formatSelector: String?,
+        formatSort: String?,
         outDir: String,
         extractorArgs: String?,
         audioFormat: String?,
@@ -509,6 +665,10 @@ class ExtractorChannel(
             result.error("INVALID_ARGUMENT", "Invalid format selector", null)
             return
         }
+        if (!formatSort.isNullOrEmpty() && (formatSort.length > 80 || !FORMAT_SORT_REGEX.matches(formatSort))) {
+            result.error("INVALID_ARGUMENT", "Invalid format sort", null)
+            return
+        }
         val outputDir = safeOutputDir(outDir)
         if (outputDir == null) {
             result.error("INVALID_ARGUMENT", "Invalid output folder", null)
@@ -516,6 +676,8 @@ class ExtractorChannel(
         }
 
         executor.execute {
+            val readLock = engineLock.readLock()
+            readLock.lock()
             try {
                 ensureInitialized()
                 activeTasks[taskId] = taskId
@@ -523,18 +685,24 @@ class ExtractorChannel(
                 cancelledTasks.remove(taskId)
                 if (!outputDir.exists()) outputDir.mkdirs()
 
-                // First the client the quality list came from, then (YouTube only) the other
-                // clients: some of them hand out stream URLs that fail with HTTP 403.
+                // First the client the quality list came from, then (YouTube only) every
+                // other client: YouTube hands some clients fewer formats, or stream URLs that
+                // fail with HTTP 403. Last, once, the catch-all format with the default client.
                 val variants = mutableListOf<String?>()
                 if (extractorArgs != null && EXTRACTOR_ARGS_REGEX.matches(extractorArgs)) variants.add(extractorArgs)
                 if (isYoutubeHost(url)) {
                     for (v in YOUTUBE_CLIENT_VARIANTS) if (v !in variants) variants.add(v)
                 }
                 if (variants.isEmpty()) variants.add(null)
+                val strict = withoutCatchAll(formatSelector)
+                val attempts = variants.take(MAX_CLIENT_TRIES).map { Attempt(it, strict) }.toMutableList()
+                // Last, once: the nearest quality there is (the format sort keeps the cap).
+                val last = if (strict != formatSelector) formatSelector else catchAllSelector(formatSelector, audioFormat)
+                if (last != null) attempts.add(Attempt(null, last))
 
                 var lastError: Exception? = null
                 var done = false
-                for (variant in variants.take(3)) {
+                for (attempt in attempts) {
                     if (cancelledTasks.contains(taskId)) throw YoutubeDLException("Interrupted")
                     val request = YoutubeDLRequest(url).apply {
                         addOption("--no-playlist")
@@ -550,11 +718,15 @@ class ExtractorChannel(
                         addOption("--fragment-retries", "5")
                         addOption("--concurrent-fragments", "4")
                         addOption("-o", "${outputDir.absolutePath}/$taskId.%(ext)s")
-                        if (!formatSelector.isNullOrEmpty()) {
-                            addOption("-f", formatSelector)
+                        if (!attempt.selector.isNullOrEmpty()) {
+                            addOption("-f", attempt.selector)
                         }
-                        if (variant != null) {
-                            addOption("--extractor-args", variant)
+                        // Which of the matching formats wins (e.g. at most 1080p, H.264 + AAC first).
+                        if (!formatSort.isNullOrEmpty()) {
+                            addOption("-S", formatSort)
+                        }
+                        if (attempt.extractorArgs != null) {
+                            addOption("--extractor-args", attempt.extractorArgs)
                         }
                         if (audioFormat != null && audioFormat in AUDIO_FORMATS) {
                             addOption("-x")
@@ -597,9 +769,10 @@ class ExtractorChannel(
                     } catch (e: Exception) {
                         lastError = e
                         if (isCancelled(taskId, e)) throw e
-                        // Wrong credentials / private / DRM / not found / too large: another client cannot help.
-                        val code = mapException(e).first
-                        if (code != "EXTRACTION_FAILED" && code != "NETWORK_ERROR") throw e
+                        // Offline, private, age-restricted, removed, DRM, too large ...:
+                        // another client or format cannot help.
+                        if (isOffline(e)) throw e
+                        if (mapException(e).first !in RETRY_WITH_OTHER_CLIENT) throw e
                     }
                 }
                 if (!done) throw (lastError ?: YoutubeDLException("Download failed"))
@@ -619,13 +792,18 @@ class ExtractorChannel(
                 if (targetFile == null) {
                     throw YoutubeDLException("Download finished but no output file was produced")
                 }
+                // Videos go to Videos, sound only to Music (a "video" link can turn out audio only).
+                // The height tells Dart when the nearest quality was saved instead of the chosen one.
+                val tracks = trackInfo(targetFile)
 
                 mainHandler.post {
                     result.success(mapOf(
                         "taskId" to taskId,
                         "filePath" to targetFile.absolutePath,
                         "ext" to targetFile.extension.lowercase(),
-                        "fileSize" to targetFile.length()
+                        "fileSize" to targetFile.length(),
+                        "hasVideo" to tracks.hasVideo,
+                        "height" to tracks.height
                     ))
                 }
             } catch (e: Exception) {
@@ -633,6 +811,8 @@ class ExtractorChannel(
                 val (code, msg) = mapException(e)
                 val detail = errorDetail(e)
                 mainHandler.post { result.error(code, msg, detail) }
+            } finally {
+                readLock.unlock()
             }
         }
     }
@@ -680,31 +860,81 @@ class ExtractorChannel(
             msg.contains("destroy", ignoreCase = true)
     }
 
+    /**
+     * The text an error is judged by: yt-dlp's ERROR lines when there are any. Its WARNING
+     * lines (one client asked to sign in, another worked ...) must not decide the outcome.
+     */
+    private fun errorText(e: Exception): String {
+        val raw = e.localizedMessage ?: ""
+        val errors = raw.lines().map { it.trim() }.filter { it.startsWith("ERROR:") }
+        return if (errors.isEmpty()) raw else errors.joinToString("\n")
+    }
+
+    /** The phone has no connection at all: no other client or format can help. */
+    private fun isOffline(e: Exception): Boolean {
+        val msg = errorText(e)
+        return OFFLINE_MARKERS.any { msg.contains(it, ignoreCase = true) }
+    }
+
+    private val OFFLINE_MARKERS = listOf(
+        "Unable to resolve host",
+        "No address associated with hostname",
+        "Name or service not known",
+        "Temporary failure in name resolution",
+        "Failed to resolve",
+        "getaddrinfo failed",
+        "Network is unreachable"
+    )
+
+    private val HTTP_404 = Regex("(^|[^A-Za-z0-9_-])404([^A-Za-z0-9_-]|$)")
+
     private fun mapException(e: Exception): Pair<String, String> {
-        val msg = e.localizedMessage ?: ""
+        val msg = errorText(e)
+        fun has(text: String) = msg.contains(text, ignoreCase = true)
         return when {
             msg.startsWith("PLAYLIST_NOT_SUPPORTED") ->
                 Pair("PLAYLIST_NOT_SUPPORTED", "Playlists and channels can't be downloaded. Open a single video link instead.")
-            msg.startsWith("LIVE_NOT_SUPPORTED") || msg.contains("does not pass filter") ->
+            msg.startsWith("LIVE_NOT_SUPPORTED") || msg.contains("does not pass filter") ||
+                has("This live event will begin") || has("Premieres in") ->
                 Pair("LIVE_NOT_SUPPORTED", "Live streams can't be downloaded.")
             msg.startsWith("INFO_TIMEOUT") ->
                 Pair("INFO_TIMEOUT", "This link is taking too long. Try again later.")
-            msg.contains("Private video", ignoreCase = true) ->
+            // "Video unavailable. This content isn't available, try again later." is YouTube
+            // limiting this phone's address for a while, not a removed video. Checked before
+            // UNAVAILABLE; no other client or update can help (more runs make it worse).
+            has("try again later") || has("rate-limit") || has("rate limit") ||
+                has("Too Many Requests") || has("HTTP Error 429") ->
+                Pair("RATE_LIMITED", "YouTube is limiting downloads from this phone for now")
+            has("Private video") ->
                 Pair("PRIVATE_CONTENT", "This content is private and cannot be downloaded")
-            msg.contains("Sign in", ignoreCase = true) || msg.contains("login", ignoreCase = true) ->
+            has("confirm your age") || has("age-restricted") || has("inappropriate for some users") ->
+                Pair("AGE_RESTRICTED", "This video is age-restricted")
+            // "Sign in to confirm you're not a bot": YouTube checks this client or address.
+            has("not a bot") ->
+                Pair("BOT_CHECK", "YouTube asked to confirm this is not a bot")
+            has("Sign in") || has("login") || has("log in") ->
                 Pair("LOGIN_REQUIRED", "This video requires login or authentication")
-            msg.contains("DRM", ignoreCase = true) ->
+            msg.contains("DRM") ->
                 Pair("DRM_PROTECTED", "This content is protected by DRM")
-            msg.contains("404", ignoreCase = true) || msg.contains("Not Found", ignoreCase = true) ->
+            has("Video unavailable") || has("This video is unavailable") || has("This video is not available") ||
+                has("video has been removed") || has("not available in your country") ||
+                has("account associated with this video has been terminated") ->
+                Pair("UNAVAILABLE", "This video is unavailable")
+            has("Requested format is not available") || has("No video formats found") ->
+                Pair("FORMAT_UNAVAILABLE", "The site offered no format that could be saved")
+            has("Unsupported URL") || has("No video could be found") || has("There is no video") ->
+                Pair("NO_MEDIA", "This link has no video or audio to save")
+            HTTP_404.containsMatchIn(msg) || has("Not Found") ->
                 Pair("NOT_FOUND", "The requested media was not found")
-            msg.contains("max-filesize", ignoreCase = true) || msg.contains("File is larger than", ignoreCase = true) ->
+            has("max-filesize") || has("File is larger than") ->
                 Pair("FILE_TOO_LARGE", "The media exceeds the 2 GB download limit")
-            msg.contains("Interrupted", ignoreCase = true) || msg.contains("destroy", ignoreCase = true) ->
+            has("Interrupted") || has("destroy") ->
                 Pair("CANCELLED", "The download was cancelled")
-            msg.contains("Unable to resolve host", ignoreCase = true) ||
-                msg.contains("timed out", ignoreCase = true) ||
-                msg.contains("Network is unreachable", ignoreCase = true) ||
-                msg.contains("Connection reset", ignoreCase = true) ->
+            OFFLINE_MARKERS.any { has(it) } ||
+                has("timed out") ||
+                has("Connection reset") ||
+                has("Connection refused") ||
+                has("Remote end closed connection") ->
                 Pair("NETWORK_ERROR", "Network problem while downloading. Check your connection and try again")
             else ->
                 Pair("EXTRACTION_FAILED", "Could not extract or download media")

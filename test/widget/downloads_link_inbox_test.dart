@@ -10,6 +10,7 @@ import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/data/database/app_database.dart';
 import 'package:mediahub/data/downloads/download_engine.dart';
+import 'package:mediahub/data/downloads/youtube_stream_source.dart';
 import 'package:mediahub/data/repositories/direct_url_resolver.dart';
 import 'package:mediahub/domain/models/download_progress.dart';
 import 'package:mediahub/domain/repositories/platform_resolver.dart';
@@ -54,6 +55,7 @@ class _RecordingEngine extends Fake implements DownloadEngine {
     String? uploader,
     int? durationSec,
     int? totalBytes,
+    String? linkSource,
   }) async {
     enqueued.add({
       'url': url,
@@ -65,6 +67,7 @@ class _RecordingEngine extends Fake implements DownloadEngine {
       'uploader': uploader,
       'durationSec': durationSec,
       'totalBytes': totalBytes,
+      'linkSource': linkSource,
     });
   }
 }
@@ -130,7 +133,7 @@ void main() {
   late _FakeDirectUrlResolver directResolver;
   late _ScriptedBackend backend;
   late Future<YoutubeVideoDetails> Function(String id) details;
-  late int freeBytes;
+  late int? freeBytes;
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
@@ -263,6 +266,14 @@ void main() {
     expect(queued['durationSec'], 210);
     expect(queued['totalBytes'], 3 * 1024 * 1024);
     expect(queued['thumbnailUrl'], 'https://i.ytimg.com/vi/$_idA/mqdefault.jpg');
+    // YouTube's link to the file expires after some hours: the row keeps the
+    // video and the choice, so a resume or retry later can find it again.
+    final kept = YoutubeStreamSource.tryDecode(queued['linkSource'] as String?);
+    expect(kept, isNotNull);
+    expect(kept!.videoId, _idA);
+    expect(kept.choiceId, 'yt_audio');
+    expect(kept.itag, 140);
+    expect(DateTime.now().difference(kept.resolvedAt).inMinutes, lessThan(5));
     expect(coordinator.triggers, 1);
     expect(find.text('Added to Downloads: Mountain Song (Audio 128 kbps)'), findsOneWidget);
     expect(fieldText(tester), isEmpty, reason: 'the queued link is cleared');
@@ -426,6 +437,20 @@ void main() {
     expect(find.text('Not enough free space: this download needs about 12.0 MB and 50.0 MB is free.'), findsOneWidget);
   });
 
+  testWidgets('iPhone: free space it cannot know never refuses a download up front', (tester) async {
+    // Nothing on iPhone tells the free space (it used to be a made-up 10 GB).
+    freeBytes = null;
+    final container = makeContainer();
+    send(container, _linkA);
+    await pumpScreen(tester, container);
+    await animate(tester);
+
+    await tester.tap(find.text('360p'));
+    await animate(tester);
+    expect(engine.enqueued, hasLength(1));
+    expect(find.textContaining('Not enough free space'), findsNothing);
+  });
+
   testWidgets('Android with the web link downloader off: YouTube uses the direct path, Settings offers more',
       (tester) async {
     PlatformInfo.debugIsAndroid = true;
@@ -449,6 +474,26 @@ void main() {
     expect(find.textContaining('For every quality up to 4K'), findsOneWidget);
   });
 
+  testWidgets('Android without yt-dlp: a YouTube download is queued as before (no link source)', (tester) async {
+    PlatformInfo.debugIsAndroid = true;
+    PlatformInfo.debugIsIOS = false;
+    // Android asks for the notification permission first: granted.
+    const permissions = MethodChannel('flutter.baseflow.com/permissions/methods');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(permissions, (call) async => 1);
+    addTearDown(() => messenger.setMockMethodCallHandler(permissions, null));
+    final container = makeContainer(personalTools: false);
+    send(container, _linkA);
+    await pumpScreen(tester, container);
+    await animate(tester);
+
+    await tester.tap(find.text('360p'));
+    await animate(tester);
+    final queued = engine.enqueued.single;
+    expect((queued['url']! as Uri).host, 'rr1---sn-test.googlevideo.com');
+    expect(queued['linkSource'], isNull);
+  });
+
   testWidgets('Android with yt-dlp on: YouTube goes to yt-dlp (every quality)', (tester) async {
     PlatformInfo.debugIsAndroid = true;
     PlatformInfo.debugIsIOS = false;
@@ -460,6 +505,29 @@ void main() {
     expect(backend.infoCalls, [_linkA]);
     expect(source.streamCalls, isEmpty);
     expect(find.text('Best available (1080p)'), findsOneWidget, reason: 'the yt-dlp quality list');
+  });
+
+  testWidgets('Android with yt-dlp on: a web page from another site offers no Choose quality', (tester) async {
+    PlatformInfo.debugIsAndroid = true;
+    PlatformInfo.debugIsIOS = false;
+    // A news page: yt-dlp does not read this site, so Choose quality could
+    // only end in "not supported".
+    directResolver = _FakeDirectUrlResolver((uri) async => SourceInfo(
+          providerId: 'direct',
+          uri: uri,
+          capabilities: const {},
+          contentType: 'text/html; charset=utf-8',
+        ));
+    final container = makeContainer(personalTools: true);
+    send(container, 'https://news.example.com/story/123');
+    await pumpScreen(tester, container);
+    await animate(tester);
+
+    expect(find.text('Inspection Result'), findsOneWidget);
+    expect(find.textContaining('This is a web page'), findsOneWidget);
+    expect(find.text('Open link'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Choose quality'), findsNothing);
+    expect(backend.infoCalls, isEmpty);
   });
 
   testWidgets('Android: when yt-dlp cannot run, a YouTube link falls back to the direct path', (tester) async {
@@ -476,6 +544,10 @@ void main() {
     expect(source.streamCalls, [_idA]);
     expect(find.byType(FormatSelectionSheet), findsOneWidget);
     expect(find.text(_audioLabel), findsOneWidget);
+    // The downloader is already on: the sheet says why the list is short,
+    // instead of asking to turn it on.
+    expect(find.text(YoutubeDirectDownloadFlow.fallbackSheetNote), findsOneWidget);
+    expect(find.text(YoutubeDirectDownloadFlow.sheetNote), findsNothing);
   });
 
   testWidgets('Android: a link problem from yt-dlp is shown, not hidden by the fallback', (tester) async {
@@ -522,12 +594,26 @@ void main() {
   });
 
   test('an expired YouTube file link is explained in plain words', () {
+    PlatformInfo.debugIsAndroid = true;
+    PlatformInfo.debugIsIOS = false;
     expect(
       formatPlainErrorMessage('http_403', host: 'rr4---sn-abc.googlevideo.com'),
       "YouTube's link to this file has expired. Paste the video link again to download it.",
     );
-    expect(formatPlainErrorMessage('http_403', host: 'example.com'), 'Server returned error (HTTP 403).');
+    expect(formatPlainErrorMessage('http_403', host: 'example.com'), 'The website refused the download. Check the link, then tap Retry.');
+    // Plain words and the next step (task: plain Downloads messages).
     expect(formatPlainErrorMessage('insufficient_disk_space'),
-        'Not enough free storage space available. Your other files are safe.');
+        'Your phone is out of space. Free up some space, then tap Retry.');
+  });
+
+  test('iPhone: an expired link is only shown when looking it up again failed too', () {
+    // setUp made this an iPhone.
+    expect(
+      formatPlainErrorMessage('http_403', host: 'rr4---sn-abc.googlevideo.com'),
+      "YouTube's link to this file has expired and a new one could not be found. "
+      'Tap Retry, or paste the video link again.',
+    );
+    expect(formatPlainErrorMessage('http_410', host: 'rr4---sn-abc.googlevideo.com'), contains('Tap Retry'));
+    expect(formatPlainErrorMessage('http_403', host: 'example.com'), 'The website refused the download. Check the link, then tap Retry.');
   });
 }

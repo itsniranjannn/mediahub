@@ -2,13 +2,17 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'thumbnail_fetcher.dart';
 import 'youtube_link.dart';
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/downloads/download_state_machine.dart';
+import '../../core/downloads/ios_playable_formats.dart';
+import '../../core/downloads/media_kind_classifier.dart';
 import '../../core/downloads/media_sniffer.dart';
+import '../../core/platform_info.dart';
 import '../../core/security/safe_filename.dart';
 import '../../core/security/safe_http_client.dart';
 import '../../domain/models/download_progress.dart';
@@ -16,11 +20,52 @@ import '../../domain/models/download_state.dart';
 import '../../domain/models/media_item.dart';
 import '../database/app_database.dart';
 
-typedef FreeSpaceProvider = Future<int> Function();
+/// Free bytes where downloads are saved, or null when the phone cannot tell
+/// (iOS has no free-space call here): then no up-front check is made, and a
+/// phone that fills up fails while writing (`insufficient_disk_space`).
+typedef FreeSpaceProvider = Future<int?> Function();
 
 /// Size of the byte ranges a download from [url] is fetched in, or null to
 /// fetch it in one response (resuming with a Range request after a break).
 typedef RangeChunkPolicy = int? Function(Uri url);
+
+/// A new address for a download whose link to its file stopped working.
+class RefreshedStreamLink {
+  const RefreshedStreamLink({
+    required this.uri,
+    this.linkSource,
+    this.sizeBytes,
+    this.sameFile = true,
+  });
+
+  final Uri uri;
+
+  /// Replaces the row's saved link source (for example with the new lookup
+  /// time); null keeps the old one.
+  final String? linkSource;
+
+  /// The file's size at the new address, when known.
+  final int? sizeBytes;
+
+  /// The new address serves the very same file, so a partial download
+  /// carries on from where it stopped. False: it starts over.
+  final bool sameFile;
+}
+
+/// Finds a new link for downloads whose links expire (YouTube's links to its
+/// files stop working after about six hours). The engine asks before a
+/// download starts or resumes, and once more when the server refuses the
+/// link (HTTP 403 or 410).
+abstract class StreamLinkRefresher {
+  /// True when [task] carries what is needed to look its link up again.
+  bool canRefresh(DownloadEntry task);
+
+  /// True when [task]'s link has expired or is about to.
+  bool isStale(DownloadEntry task, DateTime now);
+
+  /// A fresh link for [task], or null when none was found.
+  Future<RefreshedStreamLink?> refresh(DownloadEntry task);
+}
 
 class DownloadEngine {
   final AppDatabase _db;
@@ -32,6 +77,9 @@ class DownloadEngine {
   final Future<Directory> _downloadDirFuture;
   final FreeSpaceProvider _freeSpaceProvider;
   final RangeChunkPolicy _rangeChunkBytes;
+
+  /// Looks up expired links again (iOS YouTube downloads); null: never.
+  final StreamLinkRefresher? _streamLinkRefresher;
 
   /// The engine's own partial-file name: `<id>.part`, where the id is the
   /// millisecond timestamp the callers use as task id. The startup orphan sweep
@@ -68,13 +116,19 @@ class DownloadEngine {
     required FutureOr<Directory> downloadDir,
     FreeSpaceProvider? freeSpaceProvider,
     RangeChunkPolicy? rangeChunkBytes,
+    StreamLinkRefresher? streamLinkRefresher,
   })  : _db = db, // ignore: prefer_initializing_formals
         _httpClient = httpClient, // ignore: prefer_initializing_formals
         _downloadDirFuture = settleDirectory(downloadDir),
         _freeSpaceProvider = freeSpaceProvider ?? defaultFreeSpaceProvider,
-        _rangeChunkBytes = rangeChunkBytes ?? defaultRangeChunkBytes;
+        _rangeChunkBytes = rangeChunkBytes ?? defaultRangeChunkBytes,
+        _streamLinkRefresher = streamLinkRefresher; // ignore: prefer_initializing_formals
 
   Stream<DownloadProgressUpdate> get progressStream => _progressController.stream;
+
+  /// True when expired links are looked up again (iOS YouTube downloads).
+  @visibleForTesting
+  bool get refreshesExpiredLinks => _streamLinkRefresher != null;
 
   /// YouTube's media servers get [youtubeRangeChunkBytes] ranges; every other
   /// host is fetched in one response.
@@ -104,8 +158,10 @@ class DownloadEngine {
   }
 
   /// Free bytes on the storage that holds the download folder. Shared with
-  /// the web-link runner so both use the same check.
-  static Future<int> defaultFreeSpaceProvider() async {
+  /// the web-link runner so both use the same check. Null on iOS: nothing
+  /// there answers the question (it used to report a made-up 10 GB).
+  static Future<int?> defaultFreeSpaceProvider() async {
+    if (PlatformInfo.isIOS) return null;
     try {
       final res = await _platformChannel.invokeMethod<int>('freeSpaceBytes');
       return res ?? (10 * 1024 * 1024 * 1024);
@@ -194,6 +250,86 @@ class DownloadEngine {
     return recovered;
   }
 
+  /// Name of the empty file in the download folder that says the one-time
+  /// check of [repairLibraryKinds] is done.
+  static const String kindsCheckedMarker = '.kinds-checked-v1';
+
+  /// Once per install: puts every finished download in the library section
+  /// its file really belongs to.
+  ///
+  /// Before files were classified by their tracks, an MP4 or WebM with sound
+  /// only (a song served as `video/mp4`, a web-link audio file) was saved as
+  /// a video and showed in Videos, and a video served as `audio/mp4` showed
+  /// in Music. Each downloaded file is checked with [MediaKindClassifier];
+  /// only a file that itself says what it is changes rows, and only its own
+  /// library row (`media_type`) and download row (`kind`, `mime_type`).
+  ///
+  /// Never touches songs and videos from the phone (MediaStore), web links,
+  /// or any file outside the download folder, and never moves a web-link
+  /// download the user asked to save as sound ("Original audio", MP3) to
+  /// Videos: that one stays in Music even when the site only had a file
+  /// with pictures. Returns how many library rows
+  /// moved. Running it again does nothing (a marker file records it), and a
+  /// run that fails part way is simply repeated at the next start.
+  Future<int> repairLibraryKinds() async {
+    final Directory dir;
+    try {
+      dir = await _dir();
+      if (!dir.existsSync()) return 0;
+    } catch (_) {
+      return 0;
+    }
+    final marker = File(p.join(dir.path, kindsCheckedMarker));
+    if (marker.existsSync()) return 0;
+
+    var moved = 0;
+    final rows = await (_db.select(_db.mediaItemsTable)..where((t) => t.source.equals('download'))).get();
+    for (final row in rows) {
+      final path = row.uri;
+      if (path.contains('://') || !p.isWithin(p.normalize(dir.path), p.normalize(path))) continue;
+      final file = File(path);
+      if (!file.existsSync()) continue;
+      final decision = MediaKindClassifier.classifyFile(file, fileName: path);
+      // Let the app breathe between files.
+      await Future<void>.delayed(Duration.zero);
+      if (decision == null || !decision.byContent) continue;
+      final type = decision.isVideo ? MediaType.video : MediaType.audio;
+      if (row.mediaType == type.name) continue;
+      if (type == MediaType.video && await _askedForSound(row.id)) continue;
+
+      await (_db.update(_db.mediaItemsTable)..where((t) => t.id.equals(row.id))).write(
+        MediaItemsTableCompanion(mediaType: Value(type.name)),
+      );
+      await (_db.update(_db.downloadsTable)..where((t) => t.mediaId.equals(row.id))).write(
+        DownloadsTableCompanion(kind: Value(decision.kind), mimeType: Value(decision.mimeType)),
+      );
+      moved++;
+    }
+
+    try {
+      marker.writeAsStringSync('1', flush: true);
+    } catch (_) {
+      // Checked again next start; nothing changes then.
+    }
+    if (moved > 0) DiagnosticsService.instance.logEvent('download_kinds_repaired', {'rows': moved});
+    return moved;
+  }
+
+  /// True when library row [mediaId] is a web-link (yt-dlp) download the
+  /// user asked to save as sound.
+  Future<bool> _askedForSound(String mediaId) async {
+    final rows = await (_db.select(_db.downloadsTable)..where((t) => t.mediaId.equals(mediaId))).get();
+    return rows.any((d) =>
+        d.engine == 'extractor' &&
+        (d.kind == 'audio' || (d.audioFormat ?? '').isNotEmpty || _isSoundSelector(d.formatSelector)));
+  }
+
+  /// yt-dlp's "sound only" selectors ('ba/b', 'bestaudio...').
+  static bool _isSoundSelector(String? selector) {
+    final s = selector?.trim() ?? '';
+    return s.startsWith('ba') || s.startsWith('bestaudio');
+  }
+
   /// Pause an in-flight or queued task
   Future<void> pause(String id) async {
     _pausedTasks[id] = true;
@@ -279,7 +415,11 @@ class DownloadEngine {
     String? uploader,
     int? durationSec,
     int? totalBytes,
+    String? linkSource,
   }) async {
+    // [linkSource]: what finds the file again once [url] expires (see
+    // [StreamLinkRefresher]), kept in the row's formatSelector column, which
+    // direct-link rows do not use otherwise.
     // Queueing only writes the row and never waits for the download folder:
     // runTask resolves the folder (creating it if needed) before writing.
     final safeName = SafeFilename.sanitize(suggestedFileName, defaultExtension: 'bin');
@@ -299,6 +439,7 @@ class DownloadEngine {
         uploader: Value(uploader),
         durationSec: Value(durationSec),
         totalBytes: Value(totalBytes),
+        formatSelector: linkSource == null ? const Value.absent() : Value(linkSource),
         createdAt: now,
         updatedAt: now,
       ),
@@ -361,13 +502,29 @@ class DownloadEngine {
       final partFile = File(p.join(downloadDir.path, '$id.part'));
       int existingBytes = partFile.existsSync() ? partFile.lengthSync() : 0;
 
-      // Free disk space check
+      // A link that expires (YouTube's, after some hours) and is too old by
+      // now is looked up again before it is used: a resume or retry later
+      // that day still finds the file. Only one new lookup per run.
+      final refresher = _streamLinkRefresher;
+      var linkRefreshed = false;
+      var sized = task;
+      if (refresher != null && refresher.canRefresh(task) && refresher.isStale(task, DateTime.now())) {
+        linkRefreshed = true;
+        final updated = await _refreshLink(id, partFile);
+        if (_isPausedOrCancelled(id)) return;
+        if (updated != null) {
+          sized = updated;
+          existingBytes = partFile.existsSync() ? partFile.lengthSync() : 0;
+        }
+      }
+
+      // Free disk space check (skipped where the phone cannot tell: iOS).
       final freeBytes = await _freeSpaceProvider();
-      final requiredBytes = (task.totalBytes != null && task.totalBytes! > 0)
-          ? (task.totalBytes! - existingBytes + freeSpaceMarginBytes)
+      final requiredBytes = (sized.totalBytes != null && sized.totalBytes! > 0)
+          ? (sized.totalBytes! - existingBytes + freeSpaceMarginBytes)
           : (200 * 1024 * 1024);
 
-      if (freeBytes < requiredBytes) {
+      if (freeBytes != null && freeBytes < requiredBytes) {
         await _failTask(id, 'insufficient_disk_space', task.host);
         return;
       }
@@ -406,6 +563,19 @@ class DownloadEngine {
           success = true;
         } catch (e) {
           if (_isPausedOrCancelled(id)) return;
+
+          // The server refused an expiring link (YouTube's, once it is too old
+          // or the phone's address changed): look it up once more, go on.
+          if (!linkRefreshed && refresher != null && _isRefusedLinkError(e)) {
+            linkRefreshed = true;
+            final updated = await _refreshLink(id, partFile);
+            if (_isPausedOrCancelled(id)) return;
+            if (updated != null) {
+              existingBytes = partFile.existsSync() ? partFile.lengthSync() : 0;
+              attempts = 0;
+              continue;
+            }
+          }
 
           final isTransient = _isTransientError(e);
           if (isTransient && attempts <= maxRetries) {
@@ -455,6 +625,23 @@ class DownloadEngine {
     }
   }
 
+  static const Set<String> _mediaExtensions = {
+    'mp3', 'm4a', 'aac', 'flac', 'wav', 'ogg', 'oga', 'opus', 'weba', 'wma',
+    'mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', '3gp', 'ts',
+  };
+
+  /// The library title for a download named [displayName]: a direct link's
+  /// name is its file name ("Song-1.mp3"), so a media extension at the end is
+  /// dropped ("Song-1"). Anything else, an empty result included, stays as it is.
+  static String libraryTitleFor(String displayName) {
+    final name = displayName.trim();
+    final dot = name.lastIndexOf('.');
+    if (dot <= 0 || dot == name.length - 1) return displayName;
+    if (!_mediaExtensions.contains(name.substring(dot + 1).toLowerCase())) return displayName;
+    final base = name.substring(0, dot).trim();
+    return base.isEmpty ? displayName : base;
+  }
+
   /// Error code for an unexpected exception, using the codes the Downloads
   /// screen already explains to the user.
   static String unexpectedErrorCode(Object error) {
@@ -477,6 +664,61 @@ class DownloadEngine {
 
   bool _isPausedOrCancelled(String id) {
     return (_pausedTasks[id] == true) || (_cancelledTasks[id] == true);
+  }
+
+  /// HTTP 403 / 410: what YouTube's servers answer for an expired link.
+  static bool _isRefusedLinkError(Object e) =>
+      e is SafeHttpClientException && (e.code == 'http_403' || e.code == 'http_410');
+
+  /// Asks [_streamLinkRefresher] for a new link for task [id] and saves it on
+  /// the row. When the new address serves a different file, the download
+  /// starts over (its partial file is removed). Returns the updated row, or
+  /// null when no new link was found (the row is then left as it was).
+  Future<DownloadEntry?> _refreshLink(String id, File partFile) async {
+    final refresher = _streamLinkRefresher;
+    if (refresher == null) return null;
+    DownloadEntry? row = await (_db.select(_db.downloadsTable)..where((t) => t.id.equals(id))).getSingleOrNull();
+    if (row == null || !refresher.canRefresh(row)) return null;
+
+    RefreshedStreamLink? fresh;
+    try {
+      fresh = await refresher.refresh(row);
+    } catch (_) {
+      fresh = null;
+    }
+    DiagnosticsService.instance.logEvent('download_link_refresh', {
+      'host': row.host,
+      'found': fresh != null,
+    });
+    if (fresh == null) return null;
+
+    final known = (row.totalBytes != null && row.totalBytes! > 0) ? row.totalBytes : null;
+    final startOver = !fresh.sameFile || (fresh.sizeBytes != null && known != null && fresh.sizeBytes != known);
+    if (startOver && partFile.existsSync()) {
+      try {
+        partFile.deleteSync();
+      } catch (_) {
+        // Appending another file's bytes to it would corrupt the download.
+        return null;
+      }
+    }
+
+    await (_db.update(_db.downloadsTable)..where((t) => t.id.equals(id))).write(
+      DownloadsTableCompanion(
+        url: Value(fresh.uri.toString()),
+        host: Value(fresh.uri.host),
+        formatSelector: fresh.linkSource == null ? const Value.absent() : Value(fresh.linkSource),
+        totalBytes: startOver || (known == null && fresh.sizeBytes != null)
+            ? Value(fresh.sizeBytes)
+            : const Value.absent(),
+        receivedBytes: startOver ? const Value(0) : const Value.absent(),
+        etag: startOver ? const Value(null) : const Value.absent(),
+        lastModified: startOver ? const Value(null) : const Value.absent(),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+    row = await (_db.select(_db.downloadsTable)..where((t) => t.id.equals(id))).getSingleOrNull();
+    return row;
   }
 
   bool _isTransientError(dynamic e) {
@@ -902,18 +1144,15 @@ class DownloadEngine {
       }
     }
 
-    // Sniff magic bytes
-    final sniffBytes = <int>[];
-    final raf = partFile.openSync(mode: FileMode.read);
-    try {
-      final header = raf.readSync(min(64, fileSize));
-      sniffBytes.addAll(header);
-    } finally {
-      raf.closeSync();
-    }
-
-    final detectedMime = applyKindHint(MediaSniffer.sniff(sniffBytes), updatedTask.kind);
-    if (detectedMime == null) {
+    // Magic bytes say whether it is media at all; for MP4 / WebM / Ogg the
+    // file's own track list then says song or video (an MP4 with sound only
+    // belongs in Music, whatever the server called it).
+    final decision = MediaKindClassifier.classifyFile(
+      partFile,
+      kindHint: updatedTask.kind,
+      fileName: task.fileName,
+    );
+    if (decision == null) {
       // Anything else (HTML, JSON, text) fails with "not_media" and .part is deleted
       if (partFile.existsSync()) {
         try {
@@ -923,15 +1162,33 @@ class DownloadEngine {
       await _failTask(id, 'not_media', task.host);
       return;
     }
+    final detectedMime = decision.mimeType;
+
+    // iPhone's players cannot open some kinds of file (WebM, MKV, Ogg): kept,
+    // it would sit in the library and never play. The Downloads card refuses
+    // such links up front; this catches a file whose link did not say so.
+    if (PlatformInfo.isIOS && IosPlayableFormats.unplayableFormat(mimeType: detectedMime) != null) {
+      if (partFile.existsSync()) {
+        try {
+          partFile.deleteSync();
+        } catch (_) {}
+      }
+      await _failTask(id, IosPlayableFormats.errorCode, task.host);
+      return;
+    }
 
     // A finished file never keeps an internal extension (.part, .thumb, ...):
     // "song.part" is saved as "song.mp3" (extension from the sniffed type), so
-    // no cleanup pass can ever mistake it for a work file.
-    final hadReservedExtension = SafeFilename.hasReservedExtension(SafeFilename.sanitize(task.fileName));
-    final safeOriginalName = SafeFilename.finalMediaName(
-      task.fileName,
-      mediaExtension: extensionForMime(detectedMime),
+    // no cleanup pass can ever mistake it for a work file. A name with no
+    // media extension ("track", "get.bin", "download.php": links without one)
+    // gets the real one, so every player knows what the file is.
+    final mediaExtension = extensionForMime(detectedMime);
+    final sanitizedName = SafeFilename.sanitize(task.fileName);
+    final reservedName = SafeFilename.finalMediaName(task.fileName, mediaExtension: mediaExtension);
+    final safeOriginalName = SafeFilename.sanitize(
+      MediaKindClassifier.nameWithMediaExtension(reservedName, mediaExtension),
     );
+    final nameChanged = safeOriginalName != sanitizedName;
     final ext = p.extension(safeOriginalName);
     final baseWithoutExt = p.basenameWithoutExtension(safeOriginalName);
 
@@ -950,7 +1207,7 @@ class DownloadEngine {
     partFile.renameSync(finalDest.path);
 
     final mediaId = 'dl_$id';
-    final mediaType = detectedMime.startsWith('video') ? MediaType.video : MediaType.audio;
+    final mediaType = decision.isVideo ? MediaType.video : MediaType.audio;
 
     try {
       // Insert into media_items table
@@ -959,7 +1216,7 @@ class DownloadEngine {
           id: mediaId,
           uri: finalDest.path,
           mediaType: mediaType.name,
-          title: task.displayName,
+          title: libraryTitleFor(task.displayName),
           artist: Value(updatedTask.uploader),
           durationMs: (updatedTask.durationSec ?? 0) * 1000,
           sizeBytes: fileSize,
@@ -976,7 +1233,7 @@ class DownloadEngine {
         DownloadsTableCompanion(
           state: Value(DownloadTaskState.completed.name),
           // The card shows the real name when the extension had to be replaced.
-          fileName: hadReservedExtension ? Value(finalFileName) : const Value.absent(),
+          fileName: nameChanged ? Value(finalFileName) : const Value.absent(),
           kind: Value(mediaType.name),
           mimeType: Value(detectedMime),
           finalPath: Value(finalDest.path),
@@ -1051,6 +1308,18 @@ class DownloadEngine {
         return 'wav';
       case 'audio/aac':
         return 'aac';
+      case 'audio/webm':
+        return 'webm';
+      case 'video/x-matroska':
+        return 'mkv';
+      case 'audio/x-matroska':
+        return 'mka';
+      case 'video/quicktime':
+        return 'mov';
+      case 'video/x-msvideo':
+        return 'avi';
+      case 'video/ogg':
+        return 'ogv';
       default:
         final sub = mime.split('/').last.toLowerCase();
         return RegExp(r'^[a-z0-9]{1,5}$').hasMatch(sub) ? sub : 'bin';

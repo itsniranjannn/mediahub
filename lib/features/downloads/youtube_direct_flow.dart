@@ -5,6 +5,7 @@ import '../../core/platform_info.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/downloads/download_engine.dart';
 import '../../data/downloads/youtube_link.dart';
+import '../../data/downloads/youtube_stream_source.dart';
 import '../../personal/extractor_backend.dart';
 import '../../personal/format_options.dart';
 import '../../personal/format_selection_sheet.dart';
@@ -31,6 +32,11 @@ class YoutubeDirectDownloadFlow {
       ? 'YouTube serves these files ready to save. Turn on "Enable web link downloader" in Settings for every quality up to 4K.'
       : 'YouTube serves these files ready to save: video with sound in the qualities it offers, and audio only.';
 
+  /// Shown instead on Android when the web link downloader is on: this sheet
+  /// then only appears after yt-dlp could not read the video.
+  static const String fallbackSheetNote = "MediaHub couldn't read every quality of this video, so only the files "
+      'YouTube serves directly are offered. They are lower quality.';
+
   /// Plain words for anything the lookup can throw.
   static String friendlyError(Object? error) {
     if (error == null) return YoutubeDirectException.failed.message;
@@ -51,6 +57,8 @@ class YoutubeDirectDownloadFlow {
   }) async {
     final messenger = ScaffoldMessenger.of(context);
     final resolver = ref.read(youtubeDirectResolverProvider);
+    // Read before the first wait (the screen may be gone afterwards).
+    final footnote = PlatformInfo.isAndroid && WebLinkDownloadFlow.isAvailable(ref) ? fallbackSheetNote : sheetNote;
 
     final outcome = await WebLinkDownloadFlow.lookupWithDialog<YoutubeDirectResult>(
       context,
@@ -75,7 +83,7 @@ class YoutubeDirectDownloadFlow {
       builder: (_) => FormatSelectionSheet(
         metadata: sheetMetadata(result),
         choices: [for (final c in result.choices) formatChoiceFor(c)],
-        footnote: sheetNote,
+        footnote: footnote,
         onSelect: (choice) => picked = byId[choice.id],
       ),
     );
@@ -139,7 +147,8 @@ class YoutubeDirectDownloadFlow {
     if (size != null) {
       int free;
       try {
-        free = await freeSpace();
+        // Null where the phone cannot tell (iOS): no check up front.
+        free = await freeSpace() ?? -1;
       } catch (_) {
         free = -1; // unknown: the engine checks again before writing
       }
@@ -152,6 +161,18 @@ class YoutubeDirectDownloadFlow {
 
     final d = result.details;
     final title = d.title.trim().isNotEmpty ? d.title.trim() : 'YouTube video';
+    // iPhone: YouTube's link to the file expires after some hours, and a
+    // download there often waits (it pauses whenever MediaHub is left). The
+    // row keeps the video and the choice, so a resume or retry later finds
+    // the file again. Android keeps its rows as they were.
+    final linkSource = PlatformInfo.isIOS
+        ? YoutubeStreamSource(
+            videoId: result.link.videoId,
+            choiceId: choice.id,
+            itag: YoutubeStreamSource.itagOf(choice.uri),
+            resolvedAt: DateTime.now(),
+          ).encode()
+        : null;
     try {
       await engine.enqueueDownload(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -166,6 +187,7 @@ class YoutubeDirectDownloadFlow {
         uploader: d.author.isNotEmpty ? d.author : null,
         durationSec: d.duration?.inSeconds,
         totalBytes: size,
+        linkSource: linkSource,
       );
     } catch (_) {
       say('Could not add this download. Please try again.');

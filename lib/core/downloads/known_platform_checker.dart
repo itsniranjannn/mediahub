@@ -14,6 +14,10 @@ class KnownPlatformChecker {
     'spotify.com': 'Spotify',
     'soundcloud.com': 'SoundCloud',
     'vimeo.com': 'Vimeo',
+    'dailymotion.com': 'Dailymotion',
+    'dai.ly': 'Dailymotion',
+    'reddit.com': 'Reddit',
+    'redd.it': 'Reddit',
   };
 
   /// Said at once for a Spotify song, album or playlist link.

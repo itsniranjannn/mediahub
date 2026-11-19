@@ -131,6 +131,13 @@ class SafeHttpClient {
     // Track host of original request to restrict credential/cookie leakage across hosts
     final initialHost = initialUri.host.toLowerCase();
     Map<String, String> activeHeaders = Map<String, String>.from(headers ?? {});
+    // Ask for the file exactly as it is. Dart's HttpClient always offers
+    // gzip, and with autoUncompress off a server that takes the offer (a
+    // download script with compression on) hands over a compressed copy,
+    // which is then refused as "not media" or fails the size check.
+    if (!activeHeaders.keys.any((k) => k.toLowerCase() == 'accept-encoding')) {
+      activeHeaders[HttpHeaders.acceptEncodingHeader] = 'identity';
+    }
 
     while (true) {
       // 1. Validate URL with UrlPolicy (or allow non-standard port in seam)

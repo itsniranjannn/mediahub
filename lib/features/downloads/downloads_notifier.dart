@@ -4,11 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/downloads/known_platform_checker.dart';
 import '../../data/database/app_database.dart';
+import '../../data/downloads/direct_link_probe.dart';
 import '../../data/repositories/direct_url_resolver.dart';
 import '../../domain/models/download_progress.dart';
 import '../../domain/models/download_state.dart';
 import '../../domain/repositories/platform_resolver.dart';
 import '../../core/platform_info.dart';
+import '../../personal/personal_tools_notifier.dart';
 import '../music_player/playback_notifier.dart';
 import 'download_providers.dart';
 
@@ -28,16 +30,24 @@ class InspectionState {
 
 class InspectionNotifier extends Notifier<InspectionState> {
   DirectUrlResolver? _resolver;
+
+  /// Settles what the headers could not: a link with no extension, a
+  /// generic type, a name only after redirects (see [DirectLinkProbe]).
+  DirectLinkProbe? _probe;
   CancelableOperation? _activeOperation;
 
   @override
   InspectionState build() {
     _resolver = DirectUrlResolver();
+    _probe = DirectLinkProbe();
     return const InspectionState();
   }
 
-  void setResolverForTesting(DirectUrlResolver resolver) {
+  /// Tests: [resolver] answers every check, and nothing else touches the
+  /// network unless a [probe] is given too.
+  void setResolverForTesting(DirectUrlResolver resolver, {DirectLinkProbe? probe}) {
     _resolver = resolver;
+    _probe = probe;
   }
 
   Future<void> inspect(Uri uri) async {
@@ -79,12 +89,28 @@ class InspectionNotifier extends Notifier<InspectionState> {
     );
 
     try {
-      final info = await _resolver!.inspect(uri).timeout(
-        const Duration(seconds: 15),
-        onTimeout: () {
-          throw TimeoutException('Inspection timed out. The server did not respond in time.');
-        },
-      );
+      SourceInfo? info;
+      Object? failure;
+      try {
+        info = await _resolver!.inspect(uri).timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            throw TimeoutException('Inspection timed out. The server did not respond in time.');
+          },
+        );
+      } on TimeoutException {
+        rethrow;
+      } catch (e) {
+        failure = e;
+      }
+
+      // Headers that could not tell (or a check that tripped over an odd
+      // address): the file's first bytes decide.
+      final probe = _probe;
+      if (probe != null && !isCancelled && (info == null || DirectLinkProbe.needsProbe(info))) {
+        info = await probe.refine(info, uri);
+      }
+      if (info == null) throw failure ?? StateError('no result');
 
       if (!isCancelled) {
         state = InspectionState(isInspecting: false, result: info);
@@ -173,7 +199,10 @@ final downloadProgressMapProvider =
 // Storage space info provider
 class StorageInfo {
   final int usedBytes;
-  final int freeBytes;
+
+  /// Free space on the phone; null when it cannot be known (iOS), and then
+  /// no figure is shown.
+  final int? freeBytes;
 
   const StorageInfo({required this.usedBytes, required this.freeBytes});
 }
@@ -186,6 +215,10 @@ final storageInfoProvider = FutureProvider.autoDispose<StorageInfo>((ref) async 
   for (final d in downloads) {
     used += d.receivedBytes;
   }
+
+  // Nothing on iOS answers the free-space call: show no figure rather than
+  // the made-up 10 GB below.
+  if (PlatformInfo.isIOS) return StorageInfo(usedBytes: used, freeBytes: null);
 
   int free = 10 * 1024 * 1024 * 1024;
   try {
@@ -378,6 +411,11 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
     }
     await ref.read(extractorDownloadRunnerProvider).reconcileOnStartup();
     await trigger();
+    // Once per install: downloads saved in the wrong section (a song in
+    // Videos) move to the right one. Never holds up the downloads above.
+    try {
+      await engine.repairLibraryKinds();
+    } catch (_) {}
   }
 }
 
@@ -406,4 +444,8 @@ final downloadNoticeAgreedProvider =
 /// Reads once from main() after the first frame to recover interrupted downloads.
 final downloadStartupProvider = FutureProvider<void>((ref) async {
   await ref.read(downloadQueueCoordinatorProvider.notifier).recoverAndResume();
+  // Builds the web link downloader's state: when it is on, it reads the
+  // yt-dlp version and checks for a newer yt-dlp once a week (release builds,
+  // not on metered data).
+  if (PlatformInfo.supportsWebLinkDownloader) ref.read(personalToolsProvider);
 });

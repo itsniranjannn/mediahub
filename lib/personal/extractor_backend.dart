@@ -98,6 +98,24 @@ class ExtractorMetadata {
   }
 }
 
+/// What a finished yt-dlp download left behind.
+class ExtractorDownloadResult {
+  const ExtractorDownloadResult({required this.filePath, this.hasVideo, this.height});
+
+  /// The finished file (empty when yt-dlp reported none).
+  final String filePath;
+
+  /// True when the file holds a picture track, false for sound only, null
+  /// when the phone could not tell. A "video" link can turn out to be audio
+  /// only (and then belongs in Music).
+  final bool? hasVideo;
+
+  /// The video's height in pixels, as the phone read it from the file (null
+  /// for sound only, or when it could not tell). When the chosen quality was
+  /// missing, yt-dlp saves the nearest one, and this says which.
+  final int? height;
+}
+
 /// Abstract contract for extractor backends.
 abstract class ExtractorBackend {
   Future<bool> init();
@@ -107,17 +125,25 @@ abstract class ExtractorBackend {
   /// Goes back to the yt-dlp copy shipped inside the app (undoes [update]).
   Future<void> resetToBundled();
 
+  /// True on metered data (mobile data, a metered hotspot), false on Wi-Fi,
+  /// null when the phone cannot tell. The quiet weekly update skips metered data.
+  Future<bool?> isMeteredNetwork();
+
   /// Reads the qualities of [url]. Pass a [requestId] (letters, digits, `_`, `-`)
   /// to be able to stop the lookup with [cancelInfo].
   Future<ExtractorMetadata> getInfo(String url, {String? requestId});
 
   /// Stops a running [getInfo] started with the same [requestId]. Best effort.
   Future<void> cancelInfo(String requestId);
-  Future<String> download({
+
+  /// Downloads [url] with yt-dlp format selector [formatSelector] and format
+  /// sort [formatSort] (yt-dlp `-S`, which of the matching formats wins).
+  Future<ExtractorDownloadResult> download({
     required String taskId,
     required String url,
     required String outDir,
     String? formatSelector,
+    String? formatSort,
     String? extractorArgs,
     String? audioFormat,
     void Function(double progress, int eta)? onProgress,
@@ -204,6 +230,16 @@ class AndroidExtractorBackend implements ExtractorBackend {
   }
 
   @override
+  Future<bool?> isMeteredNetwork() async {
+    if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) return null;
+    try {
+      return await _channel.invokeMethod<bool>('isMetered');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
   Future<void> cancelInfo(String requestId) async {
     if (!PlatformInfo.isAndroid || !kPersonalToolsEnabled) return;
     try {
@@ -231,11 +267,12 @@ class AndroidExtractorBackend implements ExtractorBackend {
   }
 
   @override
-  Future<String> download({
+  Future<ExtractorDownloadResult> download({
     required String taskId,
     required String url,
     required String outDir,
     String? formatSelector,
+    String? formatSort,
     String? extractorArgs,
     String? audioFormat,
     void Function(double progress, int eta)? onProgress,
@@ -256,12 +293,18 @@ class AndroidExtractorBackend implements ExtractorBackend {
         'taskId': taskId,
         'url': url,
         'formatSelector': formatSelector,
+        'formatSort': formatSort,
         'outDir': outDir,
         'extractorArgs': extractorArgs,
         'audioFormat': audioFormat,
       });
-      final filePath = res?['filePath']?.toString() ?? '';
-      return filePath;
+      final hasVideo = res?['hasVideo'];
+      final height = res?['height'];
+      return ExtractorDownloadResult(
+        filePath: res?['filePath']?.toString() ?? '',
+        hasVideo: hasVideo is bool ? hasVideo : null,
+        height: height is int && height > 0 ? height : null,
+      );
     } on PlatformException catch (e) {
       throw ExtractorException(e.code, e.message ?? 'Download failed', details: e.details?.toString());
     } finally {
@@ -286,9 +329,10 @@ class AndroidExtractorBackend implements ExtractorBackend {
 class ExtractorException implements Exception {
   /// Machine-readable reason from the native side, e.g. `HOST_NOT_ALLOWED`,
   /// `LOGIN_REQUIRED`, `NETWORK_ERROR`, `PLAYLIST_NOT_SUPPORTED` (playlist or
-  /// channel link), `LIVE_NOT_SUPPORTED` (live stream) or `INFO_TIMEOUT` (the
-  /// native watchdog stopped a quality lookup that took too long). The web
-  /// link flow's `friendlyError` turns these into the text shown to the user.
+  /// channel link), `LIVE_NOT_SUPPORTED` (live stream), `INFO_TIMEOUT` (the
+  /// native watchdog stopped a quality lookup that took too long),
+  /// `FORMAT_UNAVAILABLE`, `BOT_CHECK`, `AGE_RESTRICTED`, `UNAVAILABLE` or
+  /// `NO_MEDIA`. `ExtractorErrors` turns these into the text shown to the user.
   final String code;
   final String message;
 

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/core/downloads/known_platform_checker.dart';
 import 'package:mediahub/features/downloads/downloads_notifier.dart';
+import 'package:mediahub/personal/extractor_hosts.dart';
 
 void main() {
   group('TASK 5.2c Item 3: Known Platforms Host Matching', () {
@@ -83,5 +84,18 @@ void main() {
       expect(container.read(inspectionProvider).errorMessage, isNull);
       expect(container.read(inspectionProvider).knownPlatformName, 'Spotify');
     });
+  });
+
+  // Every site the web link downloader reads gets the Platform Link card
+  // (with Choose quality) at once, not a direct-file check first.
+  test('every web link downloader site is a known platform (Dailymotion and Reddit too)', () {
+    for (final host in ExtractorHosts.allowed) {
+      expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://$host/watch')), isNotNull, reason: host);
+    }
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://www.dailymotion.com/video/x8abc')), 'Dailymotion');
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://dai.ly/x8abc')), 'Dailymotion');
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://v.redd.it/abc123')), 'Reddit');
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://www.reddit.com/r/videos/comments/abc/')), 'Reddit');
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://notreddit.com/r/x')), isNull);
   });
 }

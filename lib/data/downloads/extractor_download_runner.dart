@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
+import '../../core/downloads/media_kind_classifier.dart';
 import '../../core/downloads/media_sniffer.dart';
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/security/safe_filename.dart';
@@ -10,18 +11,34 @@ import '../../core/security/safe_http_client.dart';
 import '../../domain/models/download_progress.dart';
 import '../../domain/models/download_state.dart';
 import '../../domain/models/media_item.dart';
+import '../../personal/extractor_auto_updater.dart';
 import '../../personal/extractor_backend.dart';
+import '../../personal/extractor_errors.dart';
 import '../../personal/format_options.dart';
 import '../database/app_database.dart';
 import 'download_engine.dart';
 import 'thumbnail_fetcher.dart';
+import 'youtube_link.dart';
+
+/// Saves [row], a YouTube web-link download yt-dlp could not save, another
+/// way (the files YouTube serves directly), as a new download. Returns true
+/// when that download was queued. [stillWanted] is false once the user paused
+/// or cancelled [row]: nothing may be queued then.
+typedef ExtractorFallback = Future<bool> Function(DownloadEntry row, {required bool Function() stillWanted});
 
 /// Runs web-link downloads (yt-dlp) and keeps the `downloads` table in sync so
 /// they show up in the same list, with the same pause / resume / cancel /
 /// retry controls, as direct-link downloads.
+///
+/// When yt-dlp fails in a way a newer yt-dlp may fix, it is updated (see
+/// [ExtractorAutoUpdater]) and the download tried once more. When a YouTube
+/// download still fails, the [ExtractorFallback] saves it at a lower quality
+/// as a new download, and this one leaves the list.
 class ExtractorDownloadRunner {
   final AppDatabase _db;
   final ExtractorBackend _backend;
+  final ExtractorAutoUpdater? _autoUpdater;
+  final ExtractorFallback? _fallback;
 
   /// The download folder; may still be resolving at app start. Every file
   /// operation awaits it, so nothing is ever written to a fallback folder.
@@ -39,10 +56,32 @@ class ExtractorDownloadRunner {
   final Set<String> _paused = {};
   final Set<String> _cancelled = {};
 
+  /// Downloads inside a yt-dlp run right now (yt-dlp's files are in use).
+  final Set<String> _inYtDlp = {};
+
+  /// Failed downloads waiting to update yt-dlp. While there are any, new
+  /// downloads hold back before starting yt-dlp, so the update never
+  /// replaces it under a running one.
+  int _updateWaiters = 0;
+
+  /// Longest a failed download waits for the others to finish before it
+  /// updates yt-dlp (after that it gives up on the update).
+  final Duration _updateWaitLimit;
+
+  /// Something the waits above depend on changed (a run ended, a pause or
+  /// cancel, an update finished).
+  final StreamController<void> _changes = StreamController<void>.broadcast();
+
+  /// Added to the quality chip when the file is lower than the chosen
+  /// quality (the same words as the YouTube fallback's chip).
+  static const String lowerQualityNote = 'lower quality';
+
   static const _videoExts = {'mp4', 'webm', 'mkv', 'mov', 'm4v'};
 
   /// [downloadDir] is either the folder itself or a future of it.
   /// [freeSpaceProvider] defaults to the same check [DownloadEngine] uses.
+  /// [autoUpdater] and [fallback] are optional (without them a failure just
+  /// ends the download as failed).
   ExtractorDownloadRunner({
     required AppDatabase db,
     required ExtractorBackend backend,
@@ -51,8 +90,14 @@ class ExtractorDownloadRunner {
     SafeHttpClient? httpClient,
     FreeSpaceProvider? freeSpaceProvider,
     void Function(int running)? onRunningChanged,
+    ExtractorAutoUpdater? autoUpdater,
+    ExtractorFallback? fallback,
+    Duration updateWaitLimit = const Duration(minutes: 10),
   })  : _db = db, // ignore: prefer_initializing_formals
+        _updateWaitLimit = updateWaitLimit, // ignore: prefer_initializing_formals
         _onRunningChanged = onRunningChanged, // ignore: prefer_initializing_formals
+        _autoUpdater = autoUpdater, // ignore: prefer_initializing_formals
+        _fallback = fallback, // ignore: prefer_initializing_formals
         _backend = backend, // ignore: prefer_initializing_formals
         _downloadDirFuture = DownloadEngine.settleDirectory(downloadDir),
         _publish = publish, // ignore: prefer_initializing_formals
@@ -109,9 +154,42 @@ class ExtractorDownloadRunner {
     try {
       _onRunningChanged?.call(_running.length);
     } catch (_) {}
+    _signalChange();
+  }
+
+  void _signalChange() {
+    if (!_changes.isClosed) _changes.add(null);
+  }
+
+  /// The next change (see [_changes]), or [deadline], or 5 seconds: the
+  /// caller checks its condition again either way.
+  Future<void> _nextChange(DateTime deadline) {
+    final left = deadline.difference(DateTime.now());
+    if (left <= Duration.zero) return Future<void>.value();
+    final wait = left < const Duration(seconds: 5) ? left : const Duration(seconds: 5);
+    return _changes.stream.first.timeout(wait, onTimeout: () {});
+  }
+
+  /// A failed download is about to update yt-dlp: a new one starts its own
+  /// yt-dlp run only after that.
+  Future<void> _holdForUpdate(String id) async {
+    while (_updateWaiters > 0 && !_stopped(id)) {
+      await _nextChange(DateTime.now().add(const Duration(seconds: 5)));
+    }
   }
 
   // ---------------------------------------------------------------- enqueue
+
+  static int _lastIdMicros = 0;
+
+  /// 'x' and the time in microseconds, never the same twice (two downloads
+  /// queued within the clock's resolution got the same id).
+  static String _newId() {
+    var t = DateTime.now().microsecondsSinceEpoch;
+    if (t <= _lastIdMicros) t = _lastIdMicros + 1;
+    _lastIdMicros = t;
+    return 'x$t';
+  }
 
   /// Creates the queue row (state `queued`) and starts fetching the thumbnail.
   /// The caller triggers the queue coordinator afterwards.
@@ -120,7 +198,7 @@ class ExtractorDownloadRunner {
     required String pageUrl,
     required FormatChoice choice,
   }) async {
-    final id = 'x${DateTime.now().microsecondsSinceEpoch}';
+    final id = _newId();
     final host = Uri.tryParse(pageUrl)?.host ?? '';
     final title = meta.title.trim().isEmpty ? 'Media' : meta.title.trim();
     final guessedExt = choice.isAudio ? (choice.audioFormat ?? 'm4a') : 'mp4';
@@ -239,7 +317,7 @@ class ExtractorDownloadRunner {
     // resume does not need room again for the parts it already has.
     final freeBytes = await _freeSpaceProvider();
     final existingWorkBytes = _workBytesIn(workDir, id);
-    if (freeBytes < requiredFreeBytes(row.totalBytes, existingWorkBytes: existingWorkBytes)) {
+    if (freeBytes != null && freeBytes < requiredFreeBytes(row.totalBytes, existingWorkBytes: existingWorkBytes)) {
       await _fail(id, row.host, 'insufficient_disk_space');
       return;
     }
@@ -247,10 +325,17 @@ class ExtractorDownloadRunner {
     try {
       await _backend.init();
     } catch (e) {
-      await _fail(id, row.host, e is ExtractorException ? 'x_${e.code.toLowerCase()}' : 'x_init_failed');
+      final code = e is ExtractorException ? e.code : 'INIT_FAILED';
+      // yt-dlp cannot run at all: a YouTube video can still be saved without it.
+      if (ExtractorErrors.youtubeFallbackMayHelp.contains(code) && await _saveAnotherWay(id, row)) return;
+      if (_stopped(id)) return;
+      await _fail(id, row.host, 'x_${code.toLowerCase()}');
       return;
     }
-    // Covers every wait above (folder, free space, init): see the top.
+    // Another download failed and is about to update yt-dlp: this one starts
+    // after that (it then runs with the new yt-dlp too).
+    await _holdForUpdate(id);
+    // Covers every wait above (folder, free space, init, update): see the top.
     if (_stopped(id)) return;
 
     await _setState(id, DownloadTaskState.downloading);
@@ -260,6 +345,16 @@ class ExtractorDownloadRunner {
     // start yt-dlp at all. Nothing awaits between here and the download call.
     if (_stopped(id)) return;
 
+    // Downloads queued by older versions keep their strict selector: give them
+    // the catch-all too, so a retry saves the nearest quality instead of
+    // failing with "Requested format is not available" again.
+    final isAudio = row.kind == 'audio' || (row.audioFormat ?? '').isNotEmpty;
+    final storedSelector = row.formatSelector;
+    final selector = storedSelector == null || storedSelector.isEmpty
+        ? storedSelector
+        : FormatOptions.withCatchAll(storedSelector, audio: isAudio);
+    final formatSort = FormatOptions.formatSortFor(selector, audioFormat: row.audioFormat);
+
     final expected = _decodeSizes(row.streamSizes);
     final parsed = <int>[];
     var streamIndex = 0;
@@ -268,7 +363,7 @@ class ExtractorDownloadRunner {
     int? total = row.totalBytes;
     double? speed;
     var lastDbWrite = DateTime.fromMillisecondsSinceEpoch(0);
-    final startedAt = DateTime.now();
+    var startedAt = DateTime.now();
     var mergeStateShown = false;
 
     List<int> sizes() => expected.isNotEmpty ? expected : parsed;
@@ -355,39 +450,188 @@ class ExtractorDownloadRunner {
       }
     }
 
-    String path;
-    try {
-      path = await _backend.download(
-        taskId: id,
-        url: row.url,
-        outDir: workDir.path,
-        formatSelector: row.formatSelector,
-        extractorArgs: row.extractorArgs,
-        audioFormat: row.audioFormat,
-        onProgress: onProgress,
-        onLine: onLine,
-      );
-    } on ExtractorException catch (e) {
-      if (_stopped(id)) return;
-      DiagnosticsService.instance.logEvent('extractor_download_failed', {
-        'host': row.host,
-        'code': e.code,
-        if (e.details != null) 'reason': e.details,
-      });
-      await _fail(id, row.host, 'x_${e.code.toLowerCase()}', detail: e.details);
-      return;
-    } catch (e) {
-      if (_stopped(id)) return;
-      await _fail(id, row.host, 'x_error');
-      return;
+    ExtractorDownloadResult result;
+    var updateTried = false;
+    while (true) {
+      // When this try began: a newer yt-dlp installed after it (by another
+      // download's update) is worth one more try without updating again.
+      final triedAt = DateTime.now();
+      try {
+        _inYtDlp.add(id);
+        try {
+          result = await _backend.download(
+            taskId: id,
+            url: row.url,
+            outDir: workDir.path,
+            formatSelector: selector,
+            formatSort: formatSort,
+            extractorArgs: row.extractorArgs,
+            audioFormat: row.audioFormat,
+            onProgress: onProgress,
+            onLine: onLine,
+          );
+        } finally {
+          _inYtDlp.remove(id);
+          _signalChange();
+        }
+        break;
+      } on ExtractorException catch (e) {
+        if (_stopped(id)) return;
+        DiagnosticsService.instance.logEvent('extractor_download_failed', {
+          'host': row.host,
+          'code': e.code,
+          if (e.details != null) 'reason': e.details,
+        });
+        // The site may have changed: a newer yt-dlp, then one more try.
+        if (!updateTried && ExtractorErrors.updateMayHelp.contains(e.code) && await _updateYtDlp(id, triedAt)) {
+          updateTried = true;
+          if (_stopped(id)) return;
+          await _setState(id, DownloadTaskState.downloading);
+          // See the first start above: no await between this and the download.
+          if (_stopped(id)) return;
+          // The retry reports its streams from the start again.
+          parsed.clear();
+          streamIndex = 0;
+          lastPct = 0;
+          received = 0;
+          total = row.totalBytes;
+          speed = null;
+          startedAt = DateTime.now();
+          mergeStateShown = false;
+          continue;
+        }
+        updateTried = true;
+        // YouTube: save the file YouTube serves directly (lower quality).
+        if (ExtractorErrors.youtubeFallbackMayHelp.contains(e.code) && await _saveAnotherWay(id, row)) return;
+        if (_stopped(id)) return;
+        await _fail(id, row.host, 'x_${e.code.toLowerCase()}', detail: e.details);
+        return;
+      } catch (e) {
+        if (_stopped(id)) return;
+        await _fail(id, row.host, 'x_error');
+        return;
+      }
     }
 
     if (_stopped(id)) return;
     await _setState(id, DownloadTaskState.finalizing);
-    await _finalize(id, path, downloadDir);
+    await _finalize(id, result.filePath, downloadDir, hasVideo: result.hasVideo, height: result.height);
   }
 
-  Future<void> _finalize(String id, String path, Directory downloadDir) async {
+  /// Updates yt-dlp after a failure it may fix (see [ExtractorAutoUpdater]).
+  /// True when a newer yt-dlp is in place and the download should be tried
+  /// again: installed now, or by another download's update since [triedAt].
+  ///
+  /// yt-dlp is never replaced under a running download: while other
+  /// downloads run it, this one waits for them (shown as Preparing, at most
+  /// [_updateWaitLimit]) and new ones hold back; then one update serves every
+  /// download that failed meanwhile. Before, downloads that failed together
+  /// all skipped the update and went straight to the lower-quality fallback.
+  Future<bool> _updateYtDlp(String id, DateTime triedAt) async {
+    final updater = _autoUpdater;
+    if (updater == null) return false;
+    if (_stopped(id)) return false;
+    await _setState(id, DownloadTaskState.preparing);
+    if (_updatedSince(updater, triedAt)) return true;
+    _updateWaiters++;
+    try {
+      final deadline = DateTime.now().add(_updateWaitLimit);
+      while (_inYtDlp.isNotEmpty && !_stopped(id) && DateTime.now().isBefore(deadline)) {
+        await _nextChange(deadline);
+      }
+      if (_stopped(id)) return false;
+      if (_updatedSince(updater, triedAt)) return true;
+      ExtractorUpdateOutcome outcome;
+      try {
+        outcome = await updater.updateAfterFailure(otherDownloadsRunning: _inYtDlp.isNotEmpty);
+      } catch (_) {
+        outcome = ExtractorUpdateOutcome.failed;
+      }
+      DiagnosticsService.instance.logEvent('extractor_auto_update', {'outcome': outcome.name});
+      return outcome == ExtractorUpdateOutcome.updated || _updatedSince(updater, triedAt);
+    } finally {
+      _updateWaiters--;
+      _signalChange();
+    }
+  }
+
+  static bool _updatedSince(ExtractorAutoUpdater updater, DateTime since) {
+    final at = updater.lastUpdated;
+    return at != null && at.isAfter(since);
+  }
+
+  /// yt-dlp could not save YouTube video [row]: queue the file YouTube serves
+  /// directly instead (see [ExtractorFallback]) and take this download out of
+  /// the list. False (nothing changed) when that is not possible, so the
+  /// caller marks the download failed.
+  Future<bool> _saveAnotherWay(String id, DownloadEntry row) async {
+    final fallback = _fallback;
+    if (fallback == null || YoutubeLink.tryParse(row.url) == null) return false;
+    if (_stopped(id)) return false;
+    await _setState(id, DownloadTaskState.preparing);
+    bool queued;
+    try {
+      queued = await fallback(row, stillWanted: () => !_stopped(id));
+    } catch (_) {
+      queued = false;
+    }
+    if (!queued) return false;
+    DiagnosticsService.instance.logEvent('extractor_download_replaced', {'host': row.host});
+    await _removeReplaced(id, row);
+    return true;
+  }
+
+  /// Deletes the row of a download that was replaced by another one, with
+  /// its yt-dlp work files and its cover image.
+  Future<void> _removeReplaced(String id, DownloadEntry row) async {
+    final dir = await _downloadDirFuture;
+    _deleteWorkFilesIn(_workDirIn(dir), id);
+    final thumb = row.thumbnailPath;
+    if (thumb != null && p.isWithin(dir.path, thumb)) {
+      try {
+        final f = File(thumb);
+        if (f.existsSync()) f.deleteSync();
+      } catch (_) {}
+    }
+    await (_db.delete(_db.downloadsTable)..where((t) => t.id.equals(id))).go();
+  }
+
+  /// Whether a finished download goes to Videos (true) or Music (false).
+  /// Sound asked for ([kind] 'audio': "Original audio", MP3) is always Music,
+  /// even when the site had only a file with pictures (TikTok and many X,
+  /// Facebook and Instagram links). Otherwise what is in the file decides,
+  /// as everywhere else in the app: first what the phone found when yt-dlp
+  /// finished ([hasVideo]), then the shared [MediaKindClassifier]
+  /// ([decision], when the file itself told it), so a "video" link that
+  /// turns out to be sound only goes to Music. Only when neither could tell:
+  /// the extension.
+  static bool isVideoResult({
+    required String ext,
+    required String? kind,
+    bool? hasVideo,
+    MediaKindDecision? decision,
+  }) {
+    if (kind == 'audio') return false;
+    if (hasVideo != null) return hasVideo;
+    if (decision != null && decision.byContent) return decision.isVideo;
+    return _videoExts.contains(ext);
+  }
+
+  /// The quality chip of a finished video. yt-dlp saves the nearest quality
+  /// when the chosen one is missing, so when the file's own height
+  /// ([savedHeight]) differs from the one in [label] ("1080p", "720p 60fps")
+  /// the chip says what was saved: "360p · lower quality", or "1440p" for a
+  /// higher one. Anything else keeps [label].
+  static String? qualityLabelAfter(String? label, {int? savedHeight}) {
+    if (label == null || savedHeight == null || savedHeight <= 0) return label;
+    final m = RegExp(r'^(\d{3,4})p').firstMatch(label.trim());
+    if (m == null) return label;
+    final chosen = int.parse(m.group(1)!);
+    if (chosen == savedHeight) return label;
+    return savedHeight < chosen ? '${savedHeight}p · $lowerQualityNote' : '${savedHeight}p';
+  }
+
+  Future<void> _finalize(String id, String path, Directory downloadDir, {bool? hasVideo, int? height}) async {
     final row = await _row(id);
     if (row == null) return;
     final src = File(path);
@@ -409,7 +653,12 @@ class ExtractorDownloadRunner {
       }
       ext = DownloadEngine.extensionForMime(sniffed);
     }
-    final isVideo = row.kind != 'audio' && _videoExts.contains(ext);
+    final decision = MediaKindClassifier.classifyFile(src, kindHint: row.kind, fileName: '${row.displayName}.$ext');
+    final askedForSound = row.kind == 'audio' || (row.audioFormat ?? '').isNotEmpty;
+    final isVideo =
+        isVideoResult(ext: ext, kind: askedForSound ? 'audio' : row.kind, hasVideo: hasVideo, decision: decision);
+    final qualityLabel = isVideo ? qualityLabelAfter(row.qualityLabel, savedHeight: height) : row.qualityLabel;
+    final mimeType = decision != null && decision.isVideo == isVideo ? decision.mimeType : _mimeFor(ext, isVideo);
     final mediaType = isVideo ? MediaType.video : MediaType.audio;
 
     final baseName = p.basenameWithoutExtension(SafeFilename.sanitize('${row.displayName}.$ext'));
@@ -473,7 +722,8 @@ class ExtractorDownloadRunner {
           fileName: Value(finalName),
           finalPath: Value(dest.path),
           mediaId: Value(mediaId),
-          mimeType: Value(_mimeFor(ext, isVideo)),
+          mimeType: Value(mimeType),
+          qualityLabel: Value(qualityLabel),
           receivedBytes: Value(size),
           totalBytes: Value(size),
           errorCode: const Value(null),
@@ -501,7 +751,7 @@ class ExtractorDownloadRunner {
     _deleteWorkFilesIn(_workDirIn(downloadDir), id);
     DiagnosticsService.instance.logEvent('download_completed', {
       'host': row.host,
-      'mime': _mimeFor(ext, isVideo),
+      'mime': mimeType,
       'bytes': size,
     });
   }
@@ -511,6 +761,7 @@ class ExtractorDownloadRunner {
   /// Stops the yt-dlp process but keeps its partial files so [run] can continue.
   Future<void> pause(String id) async {
     _paused.add(id);
+    _signalChange();
     final row = await _row(id);
     if (row == null) return;
     if (row.state == DownloadTaskState.completed.name) return;
@@ -520,6 +771,7 @@ class ExtractorDownloadRunner {
 
   Future<void> cancel(String id) async {
     _cancelled.add(id);
+    _signalChange();
     await _backend.cancel(id);
     await deleteWorkFiles(id);
     await _setState(id, DownloadTaskState.cancelled);

@@ -23,6 +23,16 @@ class FakeExtractorBackend implements ExtractorBackend {
   /// Overrides the content of the returned file (default: 2048 x 0x01).
   List<int>? outputBytes;
 
+  /// What the phone "found" in the returned file (null: could not tell).
+  bool? outputHasVideo;
+
+  /// The video height the phone "read" from the returned file (null: none).
+  int? outputHeight;
+
+  /// Scripted answers for the next [download] calls, in order: an error to
+  /// throw, or null for a normal download. Used before [simulateError].
+  final List<ExtractorException?> downloadErrors = [];
+
   final List<String> cancelled = [];
   final List<Map<String, Object?>> downloadCalls = [];
 
@@ -35,11 +45,21 @@ class FakeExtractorBackend implements ExtractorBackend {
   @override
   Future<String> getVersion() async => currentVersion;
 
+  /// How often [update] ran.
+  int updateCalls = 0;
+
   @override
   Future<String> update() async {
+    updateCalls++;
     currentVersion = '2026.11.02';
     return 'DONE';
   }
+
+  /// What [isMeteredNetwork] answers.
+  bool? metered;
+
+  @override
+  Future<bool?> isMeteredNetwork() async => metered;
 
   /// Request ids passed to [cancelInfo], in order.
   final List<String> cancelledInfo = [];
@@ -126,11 +146,12 @@ class FakeExtractorBackend implements ExtractorBackend {
   }
 
   @override
-  Future<String> download({
+  Future<ExtractorDownloadResult> download({
     required String taskId,
     required String url,
     required String outDir,
     String? formatSelector,
+    String? formatSort,
     String? extractorArgs,
     String? audioFormat,
     void Function(double progress, int eta)? onProgress,
@@ -140,10 +161,14 @@ class FakeExtractorBackend implements ExtractorBackend {
       'taskId': taskId,
       'url': url,
       'formatSelector': formatSelector,
+      'formatSort': formatSort,
       'extractorArgs': extractorArgs,
       'audioFormat': audioFormat,
     });
-    if (simulateError) {
+    if (downloadErrors.isNotEmpty) {
+      final scripted = downloadErrors.removeAt(0);
+      if (scripted != null) throw scripted;
+    } else if (simulateError) {
       throw ExtractorException(errorCode, 'simulated failure', details: errorDetail);
     }
     onLine?.call('[download]  50.0% of ~ 10.00MiB at 1.00MiB/s ETA 00:05');
@@ -155,11 +180,13 @@ class FakeExtractorBackend implements ExtractorBackend {
     onProgress?.call(100.0, 0);
     if (emitMergeLine) onLine?.call('[Merger] Merging formats into "x.mp4"');
 
-    final ext = outputExtension ?? audioFormat ?? ((formatSelector ?? '').startsWith('bestaudio') ? 'm4a' : 'mp4');
+    final selector = formatSelector ?? '';
+    final audioSelector = selector.startsWith('bestaudio') || selector.startsWith('ba');
+    final ext = outputExtension ?? audioFormat ?? (audioSelector ? 'm4a' : 'mp4');
     final file = File('$outDir/$taskId.$ext');
     await file.create(recursive: true);
     await file.writeAsBytes(outputBytes ?? List<int>.filled(2048, 1));
-    return file.path;
+    return ExtractorDownloadResult(filePath: file.path, hasVideo: outputHasVideo, height: outputHeight);
   }
 
   @override

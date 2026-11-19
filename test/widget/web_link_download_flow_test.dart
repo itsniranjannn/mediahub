@@ -5,11 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/platform_info.dart';
+import 'package:mediahub/core/storage/settings_store.dart';
 import 'package:mediahub/data/downloads/extractor_download_runner.dart';
 import 'package:mediahub/features/downloads/download_providers.dart';
 import 'package:mediahub/features/downloads/downloads_notifier.dart';
 import 'package:mediahub/features/downloads/web_link_download_flow.dart';
+import 'package:mediahub/personal/extractor_auto_updater.dart';
 import 'package:mediahub/personal/extractor_backend.dart';
+import 'package:mediahub/personal/extractor_errors.dart';
 import 'package:mediahub/personal/format_options.dart';
 import 'package:mediahub/personal/format_selection_sheet.dart';
 import 'package:mediahub/personal/personal_tools_notifier.dart';
@@ -96,7 +99,9 @@ void main() {
     GlobalKey<NavigatorState>? navigatorKey,
     bool noticeAgreed = false,
     Future<void> Function()? onEngineUnavailable,
+    Future<void> Function()? onOtherSite,
     Uri? uri,
+    ExtractorAutoUpdater? updater,
   }) async {
     usePhone(tester);
     final caller = Consumer(
@@ -109,6 +114,7 @@ void main() {
               uri ?? _videoUri,
               onQueued: () => queuedCallbacks++,
               onEngineUnavailable: onEngineUnavailable,
+              onOtherSite: onOtherSite,
             ).then((_) => flowDone = true),
           ),
           child: const Text('Download'),
@@ -122,6 +128,7 @@ void main() {
           extractorDownloadRunnerProvider.overrideWithValue(runner),
           downloadQueueCoordinatorProvider.overrideWith(() => coordinator),
           if (noticeAgreed) downloadNoticeAgreedProvider.overrideWithBuild((ref, notifier) => true),
+          if (updater != null) extractorAutoUpdaterProvider.overrideWithValue(updater),
         ],
         child: MaterialApp(
           navigatorKey: navigatorKey,
@@ -441,4 +448,144 @@ void main() {
       expect(find.text(message), findsNothing);
     });
   });
+
+  group('a site yt-dlp may not read (any other https link)', () {
+    final file = Uri.parse('https://cdn.example.com/media/song.mp3');
+
+    testWidgets('goes to the direct-link check instead, without a lookup', (tester) async {
+      var others = 0;
+      await pumpHost(tester, uri: file, onOtherSite: () async => others++);
+      await tapDownload(tester);
+      expect(others, 1);
+      expect(backend.infoCalls, isEmpty);
+      expect(find.text(_dialogText), findsNothing);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(flowDone, isTrue);
+    });
+
+    testWidgets('without that, says the site is not supported (still no lookup)', (tester) async {
+      await pumpHost(tester, uri: file);
+      await tapDownload(tester);
+      expect(backend.infoCalls, isEmpty);
+      expect(find.text(ExtractorErrors.hostNotAllowed), findsOneWidget);
+    });
+
+    testWidgets('the native side refusing the host also goes to the direct-link check', (tester) async {
+      backend.onGetInfo = (_) async => throw const ExtractorException('HOST_NOT_ALLOWED', 'not allowed');
+      var others = 0;
+      await pumpHost(tester, onOtherSite: () async => others++);
+      await tapDownload(tester);
+      expect(others, 1);
+      expect(find.byType(SnackBar), findsNothing);
+    });
+  });
+
+  group('yt-dlp out of date (Android)', () {
+    setUp(() => PlatformInfo.debugIsAndroid = true);
+
+    testWidgets('a lookup that fails because the site changed updates yt-dlp and reads the link again',
+        (tester) async {
+      var calls = 0;
+      backend.onGetInfo = (_) async {
+        calls++;
+        if (calls == 1) throw const ExtractorException('EXTRACTION_FAILED', 'Unable to extract');
+        return FakeExtractorBackend.sampleMetadata();
+      };
+      final updater = ExtractorAutoUpdater(backend: backend, store: SettingsStore.forTesting());
+      addTearDown(updater.dispose);
+      await pumpHost(tester, updater: updater);
+      await tapDownload(tester);
+      await animate(tester);
+
+      expect(backend.updateCalls, 1);
+      expect(backend.infoCalls, hasLength(2));
+      expect(find.byType(FormatSelectionSheet), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+    });
+  });
+
+  group('WebLinkDownloadFlow.lookupWithUpdate', () {
+    late ExtractorAutoUpdater updater;
+
+    setUp(() {
+      updater = ExtractorAutoUpdater(backend: backend, store: SettingsStore.forTesting(), enabled: () => true);
+    });
+    tearDown(() => updater.dispose());
+
+    Future<ExtractorMetadata> lookup({bool abandoned = false, bool downloadsRunning = false}) =>
+        WebLinkDownloadFlow.lookupWithUpdate(
+          backend: backend,
+          updater: updater,
+          uri: _videoUri,
+          requestId: 'info1',
+          abandoned: () => abandoned,
+          downloadsRunning: downloadsRunning,
+        );
+
+    void failFirst(String code) {
+      var calls = 0;
+      backend.onGetInfo = (_) async {
+        calls++;
+        if (calls == 1) throw ExtractorException(code, 'native');
+        return FakeExtractorBackend.sampleMetadata();
+      };
+    }
+
+    test('no update needed: one read', () async {
+      expect((await lookup()).title, 'Sample Test Video');
+      expect(backend.updateCalls, 0);
+      expect(backend.infoCalls, hasLength(1));
+    });
+
+    for (final code in ['EXTRACTION_FAILED', 'FORMAT_UNAVAILABLE', 'BOT_CHECK']) {
+      test('$code: update, then a second read', () async {
+        failFirst(code);
+        expect((await lookup()).title, 'Sample Test Video');
+        expect(backend.updateCalls, 1);
+        expect(backend.infoCalls, hasLength(2));
+      });
+    }
+
+    for (final code in ['PRIVATE_CONTENT', 'AGE_RESTRICTED', 'UNAVAILABLE', 'NETWORK_ERROR', 'INIT_FAILED']) {
+      test('$code: no update, the error stands', () async {
+        failFirst(code);
+        await expectLater(lookup(), throwsA(isA<ExtractorException>().having((e) => e.code, 'code', code)));
+        expect(backend.updateCalls, 0);
+      });
+    }
+
+    test('yt-dlp already the newest: the first error stands (no second read)', () async {
+      final b = _UpToDateBackend();
+      final u = ExtractorAutoUpdater(backend: b, store: SettingsStore.forTesting(), enabled: () => true);
+      addTearDown(u.dispose);
+      b.onGetInfo = (_) async => throw const ExtractorException('EXTRACTION_FAILED', 'x');
+      await expectLater(
+        WebLinkDownloadFlow.lookupWithUpdate(
+          backend: b,
+          updater: u,
+          uri: _videoUri,
+          requestId: 'info1',
+          abandoned: () => false,
+        ),
+        throwsA(isA<ExtractorException>()),
+      );
+      expect(b.infoCalls, hasLength(1));
+    });
+
+    test('closed by the user or downloads running: no update', () async {
+      failFirst('EXTRACTION_FAILED');
+      await expectLater(lookup(abandoned: true), throwsA(isA<ExtractorException>()));
+      failFirst('EXTRACTION_FAILED');
+      await expectLater(lookup(downloadsRunning: true), throwsA(isA<ExtractorException>()));
+      expect(backend.updateCalls, 0);
+    });
+  });
+}
+
+class _UpToDateBackend extends _ScriptedBackend {
+  @override
+  Future<String> update() async {
+    updateCalls++;
+    return 'ALREADY_UP_TO_DATE';
+  }
 }

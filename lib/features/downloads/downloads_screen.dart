@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
+import '../../core/downloads/ios_playable_formats.dart';
 import '../../core/downloads/known_platform_checker.dart';
 import '../../core/platform_info.dart';
 import '../../core/security/safe_filename.dart';
@@ -15,6 +16,7 @@ import '../../core/security/url_policy.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/database/app_database.dart';
+import '../../data/downloads/download_engine.dart' show DownloadEngine;
 import '../../data/downloads/youtube_link.dart';
 import '../../domain/models/download_state.dart';
 import '../../domain/models/media_item.dart';
@@ -24,6 +26,8 @@ import '../../shared/widgets/ui_kit.dart';
 import '../library/media_context_menu.dart' show isPathInside;
 import '../music_player/playback_notifier.dart';
 import '../../personal/extractor_backend.dart';
+import '../../personal/extractor_errors.dart';
+import '../../personal/extractor_hosts.dart';
 import '../../personal/personal_tools_notifier.dart';
 import 'download_link_inbox.dart';
 import 'download_providers.dart';
@@ -163,6 +167,8 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           onEngineUnavailable: youtube == null
               ? null
               : () => _startYoutubeDirect(youtube, titleHint: titleHint, onQueued: queued),
+          // A site yt-dlp does not read: the direct-file check instead.
+          onOtherSite: () async => ref.read(inspectionProvider.notifier).inspect(uri),
         );
       } else {
         await _startYoutubeDirect(youtube!, titleHint: titleHint, onQueued: queued);
@@ -215,8 +221,10 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final ytdlpSupported = PlatformInfo.supportsWebLinkDownloader && kPersonalToolsEnabled;
     final ytdlpOn = ytdlpSupported && ref.watch(personalToolsProvider).isEnabled;
     final youtube = YoutubeLink.parse(uri) != null;
+    // yt-dlp only reads its own list of sites: on any other page "Choose
+    // quality" could only end in "not supported".
     return [
-      if (ytdlpOn || youtube)
+      if (youtube || (ytdlpOn && ExtractorHosts.isAllowed(uri)))
         FilledButton.icon(
           icon: const Icon(Icons.video_library_rounded),
           label: const Text('Choose quality'),
@@ -408,6 +416,8 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     if (youtube.isCollection) {
       return "Playlists and channels can't be downloaded. Open a single video and copy its link.";
     }
+    // iPhone has no web link downloader (and no such setting): say what does work there.
+    if (PlatformInfo.isIOS) return iosPlatformNote(platform);
     return '$platform pages are not direct media files. Turn on "Enable web link downloader" in Settings to download public videos, or open the link in the $platform app.';
   }
 
@@ -450,6 +460,21 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
     final isDownloadable = info.isDownloadable && !isWebPage;
 
+    // Said up front: a file over the 2 GB limit would only fail later.
+    final tooBig = isDownloadable &&
+        info.contentLength != null &&
+        info.contentLength! > DownloadEngine.maxDownloadSizeBytes;
+
+    // iPhone cannot play some kinds of file (WebM, MKV, Ogg, Opus, AVI): such
+    // a link is refused here instead of saving a file that never plays.
+    final iosUnplayable = PlatformInfo.isIOS && isDownloadable
+        ? IosPlayableFormats.unplayableFormat(
+            mimeType: info.contentType,
+            fileName: info.suggestedFilename ??
+                (info.uri.pathSegments.isNotEmpty ? info.uri.pathSegments.last : null),
+          )
+        : null;
+
     if (_filenameController.text.isEmpty && info.suggestedFilename != null) {
       _filenameController.text = info.suggestedFilename!;
     }
@@ -457,8 +482,8 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     final contentType = info.contentType ?? '';
     final IconData headerIcon;
     final _Tone headerTone;
-    if (isWebPage) {
-      headerIcon = Icons.language_rounded;
+    if (isWebPage || iosUnplayable != null || tooBig) {
+      headerIcon = isWebPage ? Icons.language_rounded : Icons.block_rounded;
       headerTone = _Tone.warning;
     } else if (!isDownloadable) {
       headerIcon = Icons.link_off_rounded;
@@ -519,6 +544,18 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               tone: _Tone.error,
               text: info.humanReadableReason ??
                   'This link cannot be downloaded as it is not a direct media file.',
+            ),
+          ] else if (iosUnplayable != null) ...[
+            _Callout(
+              icon: Icons.warning_amber_rounded,
+              tone: _Tone.warning,
+              text: IosPlayableFormats.refusal(iosUnplayable),
+            ),
+          ] else if (tooBig) ...[
+            const _Callout(
+              icon: Icons.warning_amber_rounded,
+              tone: _Tone.warning,
+              text: tooBigToSaveText,
             ),
           ] else ...[
             TextField(
@@ -895,11 +932,12 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           .getSingleOrNull();
       item = row?.toDomain();
     }
-    final isVideoByMime = task.mimeType != null && task.mimeType!.startsWith('video');
+    // No library row: the row's kind decides (set from the file's own tracks
+    // when it finished), then its type, the same as the Videos / Music chips.
     item ??= MediaItem(
       id: task.mediaId ?? 'dl_${task.id}',
       uri: task.finalPath!,
-      mediaType: (task.kind == 'video' || isVideoByMime) ? MediaType.video : MediaType.audio,
+      mediaType: _kindOf(task) == 'video' ? MediaType.video : MediaType.audio,
       title: task.displayName,
       durationMs: 0,
       sizeBytes: file.lengthSync(),
@@ -1039,57 +1077,84 @@ String _formatStateText(String state, [DownloadEntry? task]) {
   }
 }
 
-/// Plain words for a failed download's [errorCode]. [host] is the server the
-/// file came from (YouTube's links to its files stop working after some hours).
+/// The link card's note for a file over the 2 GB limit (no Download button).
+@visibleForTesting
+const String tooBigToSaveText = 'This file is bigger than 2 GB, the most MediaHub can save.';
+
+/// The Platform Link card's note on iPhone for a site other than YouTube:
+/// there is no web link downloader there, so only two kinds of link work.
+@visibleForTesting
+String iosPlatformNote(String platform) =>
+    "$platform links can't be saved on iPhone. Only YouTube videos and direct links to audio or video "
+    'files can be saved here. You can still open the link in the $platform app.';
+
+/// Plain words for a failed download's [errorCode]: what happened, in one
+/// short sentence, and what to do (the row's Retry button, or another link).
+/// [host] is the server the file came from (YouTube's links to its files
+/// stop working after some hours).
 @visibleForTesting
 String formatPlainErrorMessage(String errorCode, {String host = ''}) {
   if ((errorCode == 'http_403' || errorCode == 'http_410') && YoutubeLink.isYoutubeMediaHost(host)) {
+    // iPhone looks the link up again by itself on a resume or retry, so it
+    // only lands here when that failed too (offline, or the video is gone).
+    if (PlatformInfo.isIOS) {
+      return "YouTube's link to this file has expired and a new one could not be found. "
+          'Tap Retry, or paste the video link again.';
+    }
     return "YouTube's link to this file has expired. Paste the video link again to download it.";
   }
+  // The web link downloader's own failures: its words (they know every
+  // code it reports, and that it already updated itself and tried again).
+  if (errorCode.startsWith('x_')) return ExtractorErrors.downloadMessage(errorCode);
+  const retryLater = "Couldn't reach the website. Check your connection, then tap Retry.";
+  const tooBig = tooBigToSaveText;
   switch (errorCode) {
     case 'insufficient_disk_space':
-      return 'Not enough free storage space available. Your other files are safe.';
+      // A real "disk full" while writing (the iPhone has no space check up front).
+      if (PlatformInfo.isIOS) {
+        return 'Your iPhone is full. Free up some space, then tap Retry. Your other files are safe.';
+      }
+      return 'Your phone is out of space. Free up some space, then tap Retry.';
+    case IosPlayableFormats.errorCode:
+      return IosPlayableFormats.refusedAfterDownload;
     case 'write_failed':
-      return 'Could not save file to disk. Your other files are safe.';
+      return "Couldn't save the file on your phone. Tap Retry.";
     case 'incomplete_download':
-      return 'Connection ended before download was complete. Your other files are safe.';
+      return 'The connection dropped before the end. Tap Retry to carry on.';
     case 'not_media':
-      return 'The downloaded file was not recognized as media. Your other files are safe.';
+      return "This link isn't a music or video file. Check the link.";
     case 'max_size_exceeded':
-      return 'Download exceeded the 2GB size limit.';
+    case 'max_body_size_exceeded':
+      return tooBig;
     case 'content_range_mismatch':
-      return 'Server sent invalid partial content.';
     case 'size_mismatch':
-      return 'The downloaded file size did not match the server. Please retry.';
-    case 'x_login_required':
-      return 'This video needs a login. Only public videos can be downloaded.';
-    case 'x_private_content':
-      return 'This video is private and cannot be downloaded.';
-    case 'x_drm_protected':
-      return 'This content is DRM protected and cannot be downloaded.';
-    case 'x_not_found':
-      return 'The video was not found. It may have been removed.';
-    case 'x_file_too_large':
-      return 'The video is larger than the 2 GB limit.';
-    case 'x_network_error':
-      return 'Network problem while downloading. Check your connection and retry.';
-    case 'x_no_output':
-      return 'The downloader finished but produced no file. Please retry.';
-    case 'x_host_not_allowed':
-      return 'This website is not supported by the web link downloader.';
-    case 'x_init_failed':
-    case 'x_init_error':
-      return 'The downloader engine could not start. Please retry.';
-    case 'x_extraction_failed':
-      return 'Could not fetch this video. The site may have changed: update the downloader engine in Settings, then retry.';
+      return "The file didn't arrive complete. Tap Retry.";
+    case 'connection_error':
+    case 'dns_resolution_failed':
+    case 'dns_no_addresses':
+      return retryLater;
+    case 'blocked_ip':
+    case 'blockedIpLiteral':
+      return "This link points to a private network, which MediaHub doesn't allow.";
+    case 'too_many_redirects':
+    case 'missing_redirect_location':
+    case 'invalid_redirect_uri':
+      return 'This link keeps sending MediaHub somewhere else. Check the link.';
+    case 'http_401':
+      return "This needs a login, so it can't be saved. Only public files can.";
+    case 'http_403':
+      return 'The website refused the download. Check the link, then tap Retry.';
+    case 'http_404':
+    case 'http_410':
+      return "The file isn't at this link any more. It may have been removed.";
+    case 'http_429':
+      return 'The website is busy. Wait a minute, then tap Retry.';
     default:
-      if (errorCode.startsWith('x_')) {
-        return 'Web link download failed. Update the downloader engine in Settings and retry.';
-      }
+      if (errorCode.startsWith('http_5')) return 'The website had a problem. Tap Retry later.';
       if (errorCode.startsWith('http_')) {
-        return 'Server returned error (${errorCode.replaceFirst('http_', 'HTTP ')}).';
+        return 'The website answered with error ${errorCode.replaceFirst('http_', '')}. Tap Retry.';
       }
-      return 'Download failed. Please check your connection and try again.';
+      return "This download didn't work. Check your connection, then tap Retry.";
   }
 }
 
@@ -1449,17 +1514,21 @@ class _StorageStats extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final usedMb = (info.usedBytes / (1024 * 1024)).toStringAsFixed(1);
-    final freeGb = (info.freeBytes / (1024 * 1024 * 1024)).toStringAsFixed(1);
+    // No free figure when the phone cannot tell (iOS).
+    final free = info.freeBytes;
+    final freeGb = free == null ? null : (free / (1024 * 1024 * 1024)).toStringAsFixed(1);
     return Semantics(
       container: true,
-      label: 'Space used by downloads: $usedMb MB. Free space: $freeGb GB',
+      label: freeGb == null
+          ? 'Space used by downloads: $usedMb MB'
+          : 'Space used by downloads: $usedMb MB. Free space: $freeGb GB',
       child: ExcludeSemantics(
         child: Wrap(
           spacing: AppSpacing.lg16,
           runSpacing: AppSpacing.xs4,
           children: [
             _Stat(icon: Icons.download_done_rounded, value: '$usedMb MB', label: 'used'),
-            _Stat(icon: Icons.sd_storage_outlined, value: '$freeGb GB', label: 'free'),
+            if (freeGb != null) _Stat(icon: Icons.sd_storage_outlined, value: '$freeGb GB', label: 'free'),
           ],
         ),
       ),
@@ -2038,14 +2107,9 @@ class _DownloadCard extends ConsumerWidget {
               formatPlainErrorMessage(task.errorCode!, host: task.host),
               style: type.metadata,
             ),
-            if (task.errorDetail != null && task.errorDetail!.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: AppSpacing.xs4),
-                child: Text(
-                  'Reason: ${task.errorDetail}',
-                  style: type.caption,
-                ),
-              ),
+            // The downloader's own reason ("[youtube] ...: Requested format is
+            // not available") stays in the row and the diagnostics log: the
+            // card says what happened in plain words only.
           ],
         ],
       ),

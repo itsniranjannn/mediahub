@@ -1,12 +1,16 @@
 import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
+import '../../core/platform_info.dart';
 import '../../core/security/safe_http_client.dart';
 import '../../core/services/download_service_controller.dart';
 import '../../data/downloads/download_engine.dart';
 import '../../data/downloads/extractor_download_runner.dart';
+import '../../data/storage/download_folder.dart';
 import '../../personal/personal_tools_notifier.dart';
 import '../music_player/playback_notifier.dart';
+import 'extractor_youtube_fallback.dart';
+import 'youtube_direct_resolver.dart';
+import 'youtube_link_refresher.dart';
 
 final downloadServiceControllerProvider = Provider<DownloadServiceController>((ref) {
   final controller = AndroidDownloadServiceController();
@@ -17,8 +21,8 @@ final downloadServiceControllerProvider = Provider<DownloadServiceController>((r
 });
 
 final downloadDirectoryProvider = FutureProvider<Directory>((ref) async {
-  final appDir = await getApplicationDocumentsDirectory();
-  final dir = Directory('${appDir.path}/downloads');
+  // The same folder the database heals saved paths against when it opens.
+  final dir = await appDownloadsFolder();
   if (!dir.existsSync()) {
     dir.createSync(recursive: true);
   }
@@ -36,6 +40,8 @@ final downloadDirectoryProvider = FutureProvider<Directory>((ref) async {
 /// Free bytes where downloads are saved (overridden in tests). The engine
 /// checks it before every download; the YouTube flow also checks it before
 /// queueing, so a too-large file is refused at once instead of failing later.
+/// It gives null on iOS (the phone cannot tell here), and both checks are
+/// skipped.
 final downloadFreeSpaceProvider = Provider<FreeSpaceProvider>((ref) => DownloadEngine.defaultFreeSpaceProvider);
 
 final downloadEngineProvider = Provider<DownloadEngine>((ref) {
@@ -47,6 +53,13 @@ final downloadEngineProvider = Provider<DownloadEngine>((ref) {
     httpClient: client,
     downloadDir: ref.watch(downloadDirectoryProvider.future),
     freeSpaceProvider: ref.watch(downloadFreeSpaceProvider),
+    // iPhone YouTube downloads keep YouTube's link to the file, which expires
+    // after some hours: a resume or retry looks it up again. The resolver is
+    // read only then, so the engine never rebuilds because of it. Android
+    // keeps its yt-dlp path and its old behaviour (no lookups).
+    streamLinkRefresher: PlatformInfo.isIOS
+        ? YoutubeLinkRefresher(resolver: () => ref.read(youtubeDirectResolverProvider))
+        : null,
   );
 
   ref.onDispose(() {
@@ -86,5 +99,12 @@ final extractorDownloadRunnerProvider = Provider<ExtractorDownloadRunner>((ref) 
     downloadDir: ref.watch(downloadDirectoryProvider.future),
     publish: engine.publishProgress,
     onRunningChanged: running.set,
+    // yt-dlp out of date: it updates itself and tries again (see ExtractorAutoUpdater).
+    autoUpdater: ref.watch(extractorAutoUpdaterProvider),
+    // Last resort for YouTube: the file YouTube serves directly, at a lower quality.
+    fallback: ExtractorYoutubeFallback(
+      engine: engine,
+      resolver: () => ref.read(youtubeDirectResolverProvider),
+    ).call,
   );
 });

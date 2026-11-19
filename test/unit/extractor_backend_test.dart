@@ -85,8 +85,9 @@ void main() {
       expect(presets.length, equals(3));
       expect(presets.any((p) => p.isAudio), isTrue);
       expect(presets.any((p) => !p.isAudio), isTrue);
-      expect(presets.first.selector, contains('bestvideo+bestaudio'));
-      expect(presets.last.selector, contains('bestaudio'));
+      // yt-dlp's own default: the best video with sound, whatever there is.
+      expect(presets.first.selector, 'bv*+ba/b');
+      expect(presets.last.selector, 'ba/b');
       expect(presets.last.audioFormat, equals('mp3'));
     });
 
@@ -100,7 +101,8 @@ void main() {
       expect(labels, containsAll(['1080p', '720p', '360p']));
 
       final p1080 = video.firstWhere((c) => c.id == 'v1080');
-      expect(p1080.selector, equals('bestvideo[height<=1080]+bestaudio/best[height<=1080]'));
+      // Ends in the catch-all: never "Requested format is not available".
+      expect(p1080.selector, equals('bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b'));
       // video-only 1080p (15 MB) + best audio (3 MB) are downloaded and merged
       expect(p1080.estimatedBytes, equals(18000000));
       expect(p1080.streamSizes, equals([15000000, 3000000]));
@@ -196,10 +198,8 @@ void main() {
       expect(forCode('DRM_PROTECTED'), 'This content is DRM protected and cannot be downloaded.');
       expect(forCode('NOT_FOUND'), 'The video was not found. Check the link.');
       expect(forCode('NETWORK_ERROR'), 'Network problem. Check your connection and try again.');
-      expect(
-        forCode('EXTRACTION_FAILED'),
-        'Could not read this link. If it keeps failing, update the downloader engine in Settings.',
-      );
+      // MediaHub updates yt-dlp by itself now: no "update the engine" advice.
+      expect(forCode('EXTRACTION_FAILED'), 'Could not read this link. Please try again later.');
       expect(
         WebLinkDownloadFlow.friendlyError(UnsupportedError('x')),
         'The web link downloader is only available on Android.',

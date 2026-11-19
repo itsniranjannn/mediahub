@@ -9,7 +9,10 @@ import '../../core/downloads/known_platform_checker.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/platform_info.dart';
+import '../../personal/extractor_auto_updater.dart';
 import '../../personal/extractor_backend.dart';
+import '../../personal/extractor_errors.dart';
+import '../../personal/extractor_hosts.dart';
 import '../../personal/format_options.dart';
 import '../../personal/format_selection_sheet.dart';
 import '../../personal/personal_tools_notifier.dart';
@@ -84,34 +87,13 @@ class WebLinkDownloadFlow {
   /// Shown when a quality lookup is too slow: either the native side gave up
   /// (`INFO_TIMEOUT`, after about 85 s) or our own [infoTimeout] fired first.
   /// One constant so the two paths can never drift apart.
-  static const String _tooSlowMessage = 'This link is taking too long. Try again later.';
+  static const String _tooSlowMessage = ExtractorErrors.tooSlow;
 
+  /// Plain words for anything a lookup can end with. yt-dlp's own text is
+  /// never shown here (MediaHub updates yt-dlp by itself, so there is no
+  /// "update the downloader" advice either).
   static String friendlyError(Object? e) {
-    if (e is ExtractorException) {
-      switch (e.code) {
-        case 'HOST_NOT_ALLOWED':
-          return 'This website is not supported by the web link downloader.';
-        case 'LOGIN_REQUIRED':
-          return 'This video needs a login. Only public videos are supported.';
-        case 'PRIVATE_CONTENT':
-          return 'This video is private and cannot be downloaded.';
-        case 'DRM_PROTECTED':
-          return 'This content is DRM protected and cannot be downloaded.';
-        case 'NOT_FOUND':
-          return 'The video was not found. Check the link.';
-        case 'NETWORK_ERROR':
-          return 'Network problem. Check your connection and try again.';
-        case 'PLAYLIST_NOT_SUPPORTED':
-          return "Playlists and channels can't be downloaded. Open a single video link instead.";
-        case 'LIVE_NOT_SUPPORTED':
-          return "Live streams can't be downloaded.";
-        case 'INFO_TIMEOUT':
-          // Native watchdog stopped a slow or stuck yt-dlp lookup.
-          return _tooSlowMessage;
-        default:
-          return 'Could not read this link. If it keeps failing, update the downloader engine in Settings.';
-      }
-    }
+    if (e is ExtractorException) return ExtractorErrors.lookupMessage(e.code);
     // The quality lookup gave up after [infoTimeout].
     if (e is TimeoutException) return _tooSlowMessage;
     if (e is UnsupportedError) return 'The web link downloader is only available on Android.';
@@ -124,10 +106,43 @@ class WebLinkDownloadFlow {
   /// the downloader that needs no yt-dlp.
   static bool isEngineUnavailable(Object? e) {
     if (e is UnsupportedError || e is MissingPluginException) return true;
-    if (e is ExtractorException) {
-      return const {'INIT_FAILED', 'FEATURE_DISABLED', 'EXTRACTION_FAILED', 'EMPTY_METADATA'}.contains(e.code);
-    }
+    if (e is ExtractorException) return ExtractorErrors.youtubeFallbackMayHelp.contains(e.code);
     return false;
+  }
+
+  /// Reads the qualities of [uri]. When that fails in a way a newer yt-dlp
+  /// may fix, yt-dlp is updated (at most every 12 hours, never while a web
+  /// link download runs) and the link read once more. Each read gives up
+  /// after [infoTimeout]. [abandoned] turns true once the user closed the
+  /// dialog: nothing more is started then. [onGaveUp] runs when a read timed
+  /// out, so yt-dlp can be told to stop.
+  @visibleForTesting
+  static Future<ExtractorMetadata> lookupWithUpdate({
+    required ExtractorBackend backend,
+    required ExtractorAutoUpdater updater,
+    required Uri uri,
+    required String requestId,
+    required bool Function() abandoned,
+    bool downloadsRunning = false,
+    VoidCallback? onGaveUp,
+  }) async {
+    Future<ExtractorMetadata> read() async {
+      try {
+        return await backend.getInfo(uri.toString(), requestId: requestId).timeout(infoTimeout);
+      } on TimeoutException {
+        onGaveUp?.call();
+        rethrow;
+      }
+    }
+
+    try {
+      return await read();
+    } on ExtractorException catch (e) {
+      if (!ExtractorErrors.updateMayHelp.contains(e.code) || abandoned()) rethrow;
+      final outcome = await updater.updateAfterFailure(otherDownloadsRunning: downloadsRunning);
+      if (outcome != ExtractorUpdateOutcome.updated || abandoned()) rethrow;
+      return read();
+    }
   }
 
   /// Looks up the available qualities, lets the user pick one and queues it.
@@ -142,6 +157,11 @@ class WebLinkDownloadFlow {
   /// When the lookup fails because yt-dlp cannot run ([isEngineUnavailable])
   /// and [onEngineUnavailable] is given, that is called instead of showing
   /// the error (the Downloads screen then uses the YouTube path without yt-dlp).
+  ///
+  /// A link to a site yt-dlp may not read ([ExtractorHosts]) never reaches
+  /// it: [onOtherSite] is called instead (the Downloads screen then checks
+  /// whether the link is a direct audio or video file), or, without it, the
+  /// user is told the site is not supported.
   static Future<void> start(
     BuildContext context,
     WidgetRef ref,
@@ -149,6 +169,7 @@ class WebLinkDownloadFlow {
     VoidCallback? onQueued,
     VoidCallback? onNotificationDenied,
     Future<void> Function()? onEngineUnavailable,
+    Future<void> Function()? onOtherSite,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
 
@@ -163,28 +184,62 @@ class WebLinkDownloadFlow {
       return;
     }
 
+    // Any other site: the direct-link engine, which saves a link that points
+    // straight at an audio or video file.
+    if (!ExtractorHosts.isAllowed(uri)) {
+      if (onOtherSite != null) {
+        await onOtherSite();
+      } else {
+        messenger.showSnackBar(const SnackBar(content: Text(ExtractorErrors.hostNotAllowed)));
+      }
+      return;
+    }
+
     final backend = ref.read(extractorBackendProvider);
+    // Read now: `ref` must not be used once the calling screen is gone.
+    final updater = ref.read(extractorAutoUpdaterProvider);
+    final downloadsRunning = ref.read(extractorRunningDownloadsProvider) > 0;
 
     final requestId = 'info${DateTime.now().microsecondsSinceEpoch}';
+    var stopped = false;
     // Abandoned lookups must not keep yt-dlp working in the background.
-    void stopLookup() => unawaited(backend.cancelInfo(requestId).catchError((_) {}));
+    void stopLookup() {
+      if (stopped) return;
+      stopped = true;
+      unawaited(backend.cancelInfo(requestId).catchError((_) {}));
+    }
 
     final outcome = await lookupWithDialog<ExtractorMetadata>(
       context,
       uri: uri,
-      timeout: infoTimeout,
-      lookup: () => backend.getInfo(uri.toString(), requestId: requestId),
+      // Each read has its own [infoTimeout]; this covers two reads and a
+      // yt-dlp update in between.
+      timeout: infoTimeout * 2 + updater.updateTimeout,
+      lookup: () => lookupWithUpdate(
+        backend: backend,
+        updater: updater,
+        uri: uri,
+        requestId: requestId,
+        abandoned: () => stopped,
+        downloadsRunning: downloadsRunning,
+        onGaveUp: stopLookup,
+      ),
       onAbandoned: stopLookup,
     );
     if (outcome == null || !context.mounted) return;
 
     final info = outcome.value;
     if (info == null) {
-      if (onEngineUnavailable != null && isEngineUnavailable(outcome.error)) {
+      final error = outcome.error;
+      if (error is ExtractorException && error.code == 'HOST_NOT_ALLOWED' && onOtherSite != null) {
+        await onOtherSite();
+        return;
+      }
+      if (onEngineUnavailable != null && isEngineUnavailable(error)) {
         await onEngineUnavailable();
         return;
       }
-      messenger.showSnackBar(SnackBar(content: Text(friendlyError(outcome.error))));
+      messenger.showSnackBar(SnackBar(content: Text(friendlyError(error))));
       return;
     }
 

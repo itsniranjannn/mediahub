@@ -1202,4 +1202,20 @@ void main() {
       expect(SafeFilename.hasReservedExtension('part'), isFalse);
     });
   });
+
+  group('DownloadEngine.libraryTitleFor', () {
+    test('drops a media extension from a direct link file name', () {
+      expect(DownloadEngine.libraryTitleFor('SoundHelix-Song-1.mp3'), 'SoundHelix-Song-1');
+      expect(DownloadEngine.libraryTitleFor('Clip.MP4'), 'Clip');
+      expect(DownloadEngine.libraryTitleFor('गीत.m4a'), 'गीत');
+    });
+
+    test('keeps every other name as it is', () {
+      expect(DownloadEngine.libraryTitleFor('Test Song'), 'Test Song');
+      expect(DownloadEngine.libraryTitleFor('Report v1.2'), 'Report v1.2');
+      expect(DownloadEngine.libraryTitleFor('notes.txt'), 'notes.txt');
+      expect(DownloadEngine.libraryTitleFor('.mp3'), '.mp3');
+      expect(DownloadEngine.libraryTitleFor('song.'), 'song.');
+    });
+  });
 }
