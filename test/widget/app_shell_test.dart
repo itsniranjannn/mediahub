@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:mediahub/core/logging/diagnostics_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,7 +16,9 @@ import 'package:mediahub/core/app_config.dart';
 import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/data/database/app_database.dart';
 import 'package:mediahub/domain/models/download_state.dart';
+import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/domain/models/playback_state.dart' as domain;
+import 'package:mediahub/shared/widgets/ink_dock.dart';
 import 'package:mediahub/features/downloads/downloads_notifier.dart';
 import 'package:mediahub/domain/repositories/playback_repository.dart';
 import 'package:mediahub/data/repositories/library_repository_impl.dart' show databaseProvider;
@@ -207,11 +211,15 @@ void main() {
           engine: 'http',
         );
 
-    Future<void> pumpShell(
+    Future<GoRouter> pumpShell(
       WidgetTester tester, {
       List<DownloadEntry> downloads = const [],
       double width = 360,
       double textScale = 1,
+      MediaItem? playing,
+      ExternalMediaSnapshot? external,
+      bool reduceMotion = false,
+      MusicAudioHandler? handler,
     }) async {
       tester.view.physicalSize = Size(width * 3, 800 * 3);
       tester.view.devicePixelRatio = 3;
@@ -240,16 +248,60 @@ void main() {
           overrides: [
             playbackNotifierProvider.overrideWith(_NothingPlaying.new),
             downloadsStreamProvider.overrideWith((ref) => Stream.value(downloads)),
+            if (playing != null) ...[
+              currentMediaItemProvider.overrideWith((ref) => playing),
+              isPlayingProvider.overrideWith((ref) => true),
+              throttledPositionStreamProvider.overrideWith((ref) => Stream.value(const Duration(seconds: 15))),
+            ],
+            if (external != null) externalMediaProvider.overrideWith(() => _FixedExternal(external)),
+            if (handler != null) audioHandlerProvider.overrideWithValue(handler),
           ],
           // The phone is in light mode: the dock stays ink.
-          child: MaterialApp.router(theme: AppTheme.lightTheme, routerConfig: router),
+          child: MaterialApp.router(
+            theme: AppTheme.lightTheme,
+            routerConfig: router,
+            builder: reduceMotion
+                ? (context, child) => MediaQuery(
+                      data: MediaQuery.of(context).copyWith(disableAnimations: true),
+                      child: child!,
+                    )
+                : null,
+          ),
         ),
       );
       await tester.pump();
       await tester.pump();
+      return router;
     }
 
     Rect indicator(WidgetTester tester) => tester.getRect(find.byKey(const ValueKey('nav_indicator')));
+
+    testWidgets("the music player's own messages show as a snackbar, each time", (tester) async {
+      final player = MockAudioPlayer();
+      when(() => player.playbackEventStream).thenAnswer((_) => const Stream.empty());
+      when(() => player.playerStateStream).thenAnswer((_) => const Stream.empty());
+      when(() => player.currentIndexStream).thenAnswer((_) => const Stream.empty());
+      when(() => player.positionStream).thenAnswer((_) => const Stream.empty());
+      when(() => player.durationStream).thenAnswer((_) => const Stream.empty());
+      when(() => player.dispose()).thenAnswer((_) async {});
+      final handler = _MessagesHandler(player);
+      addTearDown(handler.dispose);
+      await pumpShell(tester, handler: handler);
+
+      handler.messages.add('''Can't play "Song 2"''');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('''Can't play "Song 2"'''), findsOneWidget);
+
+      // The same message again (the same song failing later) shows again.
+      ScaffoldMessenger.of(tester.element(find.text('page home'))).removeCurrentSnackBar();
+      await tester.pumpAndSettle();
+      expect(find.text('''Can't play "Song 2"'''), findsNothing);
+      handler.messages.add('''Can't play "Song 2"''');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('''Can't play "Song 2"'''), findsOneWidget);
+    });
 
     testWidgets('a 56x32 Volt pill under the filled icon slides to the tapped tab', (tester) async {
       await pumpShell(tester);
@@ -316,10 +368,154 @@ void main() {
         }
       });
     }
+
+    // The owner: "don't keep that playing menu on the Online section and
+    // Videos section". The mini player folds away there and comes back on
+    // the other tabs; the music itself is not touched.
+    group('the mini player steps aside on Videos and Online', () {
+      final song = MediaItem(
+        id: 'song_1',
+        uri: 'file:///song.mp3',
+        mediaType: MediaType.audio,
+        title: 'Bohemian Rhapsody',
+        artist: 'Queen',
+        durationMs: 354000,
+        sizeBytes: 8000000,
+        dateAdded: DateTime(2026),
+      );
+
+      double slot(WidgetTester tester) => tester.getSize(find.byKey(const ValueKey('mini_player_fold'))).height;
+      double page(WidgetTester tester, String name) =>
+          tester.getSize(find.ancestor(of: find.text('page $name'), matching: find.byType(Center)).first).height;
+      bool miniPlayerHittable(WidgetTester tester) =>
+          find.text('Bohemian Rhapsody').hitTestable().evaluate().isNotEmpty;
+
+      Future<void> tapTab(WidgetTester tester, String label) async {
+        await tester.tap(find.text(label));
+        await tester.pump();
+      }
+
+      testWidgets('hidden on Videos and Online, back on the other tabs', (tester) async {
+        await pumpShell(tester, playing: song);
+        // The row is at least 64 dp (it grows with the text).
+        final full = slot(tester);
+        expect(full, greaterThanOrEqualTo(InkDock.miniPlayerHeight));
+        expect(miniPlayerHittable(tester), isTrue);
+        final homeHeight = page(tester, 'home');
+
+        for (final (tab, hidden) in [
+          ('Videos', true),
+          ('Music', false),
+          ('Online', true),
+          ('Videos', true),
+          ('Downloads', false),
+          ('Online', true),
+          ('Home', false),
+        ]) {
+          await tapTab(tester, tab);
+          await tester.pumpAndSettle();
+          expect(slot(tester), hidden ? 0 : full, reason: tab);
+          expect(miniPlayerHittable(tester), !hidden, reason: tab);
+          // The page gets the room the mini player gave up.
+          final name = tab.toLowerCase();
+          expect(page(tester, name), hidden ? homeHeight + full : homeHeight, reason: tab);
+        }
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('it folds and unfolds smoothly: the dock never jumps', (tester) async {
+        await pumpShell(tester, playing: song);
+        final full = slot(tester);
+        await tapTab(tester, 'Online');
+        final heights = <double>[];
+        for (var i = 0; i < 8; i++) {
+          await tester.pump(const Duration(milliseconds: 30));
+          heights.add(slot(tester));
+        }
+        await tester.pumpAndSettle();
+        expect(heights.where((h) => h > 0 && h < full), isNotEmpty, reason: 'in between: $heights');
+        for (var i = 1; i < heights.length; i++) {
+          expect(heights[i], lessThanOrEqualTo(heights[i - 1]), reason: 'it only shrinks: $heights');
+        }
+        expect(slot(tester), 0);
+
+        await tapTab(tester, 'Music');
+        await tester.pump(const Duration(milliseconds: 80));
+        final midway = slot(tester);
+        expect(midway, inExclusiveRange(0, full));
+        await tester.pumpAndSettle();
+        expect(slot(tester), full);
+      });
+
+      testWidgets('with reduced motion it simply goes and comes back', (tester) async {
+        await pumpShell(tester, playing: song, reduceMotion: true);
+        final full = slot(tester);
+        await tapTab(tester, 'Videos');
+        await tester.pump();
+        expect(slot(tester), 0);
+        await tapTab(tester, 'Home');
+        await tester.pump();
+        expect(slot(tester), full);
+      });
+
+      testWidgets('while folded it is not read out and takes no taps', (tester) async {
+        final handle = tester.ensureSemantics();
+        await pumpShell(tester, playing: song);
+        expect(find.semantics.byLabel('Mini player: Bohemian Rhapsody by Queen'), findsOne);
+        await tapTab(tester, 'Online');
+        await tester.pumpAndSettle();
+        expect(find.semantics.byLabel('Mini player: Bohemian Rhapsody by Queen'), findsNothing);
+        expect(find.text('Bohemian Rhapsody').hitTestable(), findsNothing);
+        await tapTab(tester, 'Home');
+        await tester.pumpAndSettle();
+        expect(find.semantics.byLabel('Mini player: Bohemian Rhapsody by Queen'), findsOne);
+        handle.dispose();
+      });
+
+      testWidgets('a YouTube card in the mini player is hidden on Online and Videos too', (tester) async {
+        const yt = ExternalMediaSnapshot(
+          id: 'online:dQw4w9WgXcQ',
+          title: 'Never Gonna Give You Up',
+          artist: 'Rick Astley',
+          playing: true,
+          canSkipNext: true,
+        );
+        await pumpShell(tester, external: yt);
+        await tester.pumpAndSettle();
+        expect(find.text('Never Gonna Give You Up').hitTestable(), findsOneWidget);
+        for (final tab in ['Online', 'Videos']) {
+          await tapTab(tester, tab);
+          await tester.pumpAndSettle();
+          expect(slot(tester), 0, reason: tab);
+          expect(find.text('Never Gonna Give You Up').hitTestable(), findsNothing, reason: tab);
+        }
+        await tapTab(tester, 'Music');
+        await tester.pumpAndSettle();
+        expect(find.text('Never Gonna Give You Up').hitTestable(), findsOneWidget);
+      });
+    });
   });
 }
 
+class _FixedExternal extends ExternalMediaNotifier {
+  _FixedExternal(this.value);
+  final ExternalMediaSnapshot? value;
+
+  @override
+  ExternalMediaSnapshot? build() => value;
+}
+
 /// No local track: the mini player row is hidden.
+/// A music player whose messages a test sends ([messages]).
+class _MessagesHandler extends MusicAudioHandler {
+  _MessagesHandler(AudioPlayer player) : super(player: player);
+
+  final messages = StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get errorEvents => messages.stream;
+}
+
 class _NothingPlaying extends PlaybackNotifier {
   @override
   domain.PlaybackState build() => domain.PlaybackState(updatedAt: DateTime(2026));

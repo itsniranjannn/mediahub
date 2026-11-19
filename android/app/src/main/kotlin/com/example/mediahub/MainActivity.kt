@@ -50,6 +50,7 @@ class MainActivity : AudioServiceActivity() {
         var extractor: ExtractorChannel? = null
         var deviceControls: DeviceControlsChannel? = null
         var share: ShareChannel? = null
+        var otherAudio: OtherAudioChannel? = null
 
         fun bind(activity: MainActivity, flutterEngine: FlutterEngine) {
             if (engine?.get() !== flutterEngine) {
@@ -61,6 +62,7 @@ class MainActivity : AudioServiceActivity() {
                 downloadService = DownloadServiceChannel(app, messenger)
                 deviceControls = DeviceControlsChannel(app, messenger)
                 share = ShareChannel(app, messenger)
+                otherAudio = OtherAudioChannel(app, messenger)
                 if (ExtractorChannel.PERSONAL_TOOLS) extractor = ExtractorChannel(app, messenger)
                 engine = WeakReference(flutterEngine)
             }
@@ -74,11 +76,13 @@ class MainActivity : AudioServiceActivity() {
             runCatching { extractor?.cleanup() }
             runCatching { deviceControls?.cleanup() }
             runCatching { share?.cleanup() }
+            runCatching { otherAudio?.cleanup() }
             mediaStore = null
             downloadService = null
             extractor = null
             deviceControls = null
             share = null
+            otherAudio = null
         }
     }
 

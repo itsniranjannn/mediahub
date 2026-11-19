@@ -6,6 +6,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import '../../core/logging/diagnostics_service.dart';
+import '../../core/platform/other_audio_watcher.dart';
 import '../../core/platform_info.dart';
 import '../../core/utils/play_count_tracker.dart';
 import '../../domain/models/media_item.dart' as domain;
@@ -270,6 +271,67 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   bool _resumeOnFocusGain = false;
   double _volumeBeforeDuck = 1.0;
 
+  /// iOS: the external source (a video on screen) that was playing when a
+  /// call, Siri or an alarm interrupted it, to be resumed when that ends.
+  ExternalPlaybackDelegate? _interruptedExternal;
+
+  /// When the external source last went from playing to paused. iOS may
+  /// report the video's own pause just before the interruption itself.
+  DateTime? _externalStoppedAt;
+  static const _interruptionPauseGrace = Duration(seconds: 1);
+
+  /// Audio interruptions (calls, Siri, alarms, other apps): audio_session's
+  /// own stream, or the one a test drives.
+  final Stream<AudioInterruptionEvent>? _interruptionEvents;
+
+  // --- resume after other apps (Android) -------------------------------------
+
+  /// Watches other apps' playback while the music waits for one to stop
+  /// (Android; null elsewhere, and where a test gives none).
+  final OtherAudioWatcher? _otherAudio;
+
+  /// Settings → "Resume after other apps", read each time it matters.
+  final bool Function() _resumeAfterOtherApps;
+
+  /// Music that another app's sound paused for good (Android never gives the
+  /// sound back by itself then) plays again when that app stops, but only
+  /// within this time.
+  static const Duration otherAppResumeWindow = Duration(minutes: 30);
+
+  /// When the music started waiting for another app to stop (null: no wait).
+  DateTime? _otherAppWaitSince;
+
+  /// The other app has been heard playing since the wait began. Until then a
+  /// quiet phone means it is still getting ready, not that it stopped.
+  bool _otherAppSeenPlaying = false;
+  int _otherAppWaitId = 0;
+  StreamSubscription<OtherAudioState>? _otherAudioSub;
+  Timer? _otherAppWaitTimer;
+
+  /// How long after the music's own pause other apps' playback starts being
+  /// watched. The phone lists every app's playing players without saying
+  /// whose they are, and the music's own player only stops a moment after
+  /// the pause call returns: watched at once, it would count as "another app
+  /// playing", and the next quiet moment would start the music again.
+  final Duration _otherAppWatchDelay;
+  static const Duration defaultOtherAppWatchDelay = Duration(milliseconds: 600);
+
+  /// The music played again by itself, and another app took the sound back
+  /// within this time (YouTube's next video, a buffering pause): it then
+  /// stays paused, so the two apps never go back and forth.
+  static const Duration otherAppRetakeWindow = Duration(minutes: 1);
+
+  /// When the music last played again by itself after another app stopped
+  /// (null once the user played since).
+  DateTime? _otherAppResumedAt;
+
+  /// The play() caller of that resume.
+  static const String _otherAppResumeCaller = 'other_app_stopped';
+
+  /// The music waits for another app to stop playing.
+  @visibleForTesting
+  bool get waitingForOtherApp => _otherAppWaitSince != null;
+
   // Single intent flag for playing
   bool _wantPlaying = false;
   bool get wantPlaying => _wantPlaying;
@@ -335,7 +397,19 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   void _anchor(int index) {
     _anchorIndex = index;
     _lastRequestedIndex = index;
+    _moveEpoch++;
   }
+
+  /// Bumped whenever the handler moves the player (a load, a skip, a
+  /// restore, a stop) and when it deals with a failed song. A failure
+  /// report taken before the bump is stale: the player moved on since, or
+  /// the same failure reached the handler twice (a load that failed reports
+  /// it on the error stream and by throwing).
+  int _moveEpoch = 0;
+
+  /// The failure dealt with last: the move epoch right after it, and the
+  /// queue position. Pressing play clears it (a new try).
+  (int, int)? _handledFailure;
 
   /// Completes when the pending presses have been applied (or dropped).
   Completer<void>? _batch;
@@ -448,6 +522,19 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   final _errorController = StreamController<String>.broadcast();
   Stream<String> get errorEvents => _errorController.stream;
 
+  /// The id of every song that failed to play, once per failure, after the
+  /// handler dealt with it (also while paused, when nothing else happens).
+  final _failureController = StreamController<String>.broadcast();
+  Stream<String> get trackFailures => _failureController.stream;
+
+  /// just_audio's "Connection aborted": a newer load stopped an older one.
+  /// Not a failure of any song.
+  static const int abortedErrorCode = 10000000;
+
+  void _emitError(String message) {
+    if (!_errorController.isClosed) _errorController.add(message);
+  }
+
   final _domainStateController = StreamController<domain.PlaybackState>.broadcast();
   Stream<domain.PlaybackState> get domainStateStream => _domainStateController.stream;
 
@@ -507,7 +594,18 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     Duration? sleepFade,
     NowPlayingArt? art,
     DateTime Function()? clock,
+    // Tests drive interruptions here; the app leaves it null and gets
+    // audio_session's own stream.
+    Stream<AudioInterruptionEvent>? interruptionEvents,
+    // Android: other apps' playback, for "Resume after other apps".
+    OtherAudioWatcher? otherAudio,
+    bool Function()? resumeAfterOtherApps,
+    Duration? otherAppWatchDelay,
   })  : _player = player ?? AudioPlayer(handleInterruptions: false),
+        _interruptionEvents = interruptionEvents, // ignore: prefer_initializing_formals
+        _otherAudio = otherAudio, // ignore: prefer_initializing_formals
+        _resumeAfterOtherApps = resumeAfterOtherApps ?? _always,
+        _otherAppWatchDelay = otherAppWatchDelay ?? defaultOtherAppWatchDelay,
         mediaButtonMultiClickWindow = mediaButtonMultiClickWindow ??
             (PlatformInfo.isAndroid ? const Duration(milliseconds: 300) : Duration.zero),
         pausedIdleTimeout = pausedIdleTimeout ?? defaultPausedIdleTimeout,
@@ -524,105 +622,37 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _init();
   }
 
+  static bool _always() => true;
+
   AudioPlayer get player => _player;
   List<domain.MediaItem> get domainQueue => List.unmodifiable(_domainQueue);
   int get currentIndex => _player.currentIndex ?? -1;
   domain.PlaybackRepeatMode get repeatMode => _repeatMode;
 
   Future<void> _init() async {
-    // 1. Configure audio_session
-    try {
-      final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration.music());
+    final injectedInterruptions = _interruptionEvents;
+    injectedInterruptions?.listen(_onInterruption);
 
-      session.interruptionEventStream.listen((event) {
-        DiagnosticsService.instance.logEvent('audio_focus_change', {
-          'begin': event.begin,
-          'type': event.type.toString(),
-          if (_external != null) 'ignored': 'external_source',
-        });
-        // The WebView asks for (and reacts to) audio focus on its own. Its own
-        // request is what takes focus away from this session when a YouTube
-        // video starts, so routing these events to the page would pause the
-        // video it just started. Local music is already paused in this mode.
-        if (_external != null) {
-          _resumeOnFocusGain = false;
-          return;
-        }
-
-        if (event.begin) {
-          switch (event.type) {
-            case AudioInterruptionType.duck:
-              _volumeBeforeDuck = _player.volume;
-              _player.setVolume((_volumeBeforeDuck * 0.5).clamp(0.0, 1.0));
-              break;
-            case AudioInterruptionType.pause:
-              _resumeOnFocusGain = _resumeOnFocusGain || _player.playing;
-              pause(reason: 'focus_loss_transient');
-              break;
-            case AudioInterruptionType.unknown:
-              _resumeOnFocusGain = false;
-              pause(reason: 'focus_loss_permanent');
-              break;
-          }
-        } else {
-          switch (event.type) {
-            case AudioInterruptionType.duck:
-              _player.setVolume(_volumeBeforeDuck);
-              break;
-            case AudioInterruptionType.pause:
-              if (_resumeOnFocusGain) {
-                _resumeOnFocusGain = false;
-                play(caller: 'audio_focus_resume');
-              }
-              break;
-            case AudioInterruptionType.unknown:
-              _resumeOnFocusGain = false;
-              break;
-          }
-        }
-      });
-
-      session.becomingNoisyEventStream.listen((_) {
-        DiagnosticsService.instance.logEvent('becoming_noisy');
-        _lastNoisyPauseTimestamp = DateTime.now();
-        _userInteractedSinceNoisy = false;
-        pause(reason: 'becoming_noisy');
-      });
-
-      session.devicesChangedEventStream.listen((event) {
-        DiagnosticsService.instance.logEvent('device_changed', {
-          'devicesAdded': event.devicesAdded.length,
-          'devicesRemoved': event.devicesRemoved.length,
-        });
-
-        // Local music only: a YouTube page is resumed from the page or the notification.
-        if (_external == null && _resumeOnHeadphonesReconnect && event.devicesAdded.any(_isPersonalAudioOutput)) {
-          final now = DateTime.now();
-          if (_lastNoisyPauseTimestamp != null && !_userInteractedSinceNoisy) {
-            final diff = now.difference(_lastNoisyPauseTimestamp!);
-            if (diff.inMinutes < 10) {
-              DiagnosticsService.instance.logEvent('headphones_reconnected_autoresume');
-              play(caller: 'headphones_reconnect');
-            }
-          }
-        }
-      });
-    } catch (e) {
-      DiagnosticsService.instance.logEvent('audio_session_config_error');
-      debugPrint('Error configuring AudioSession: $e');
-    }
-
-    // 2. Listen to player events and broadcast AudioService PlaybackState on EVERY change
+    // 1. Listen to player events and broadcast AudioService PlaybackState on EVERY change
     _player.playbackEventStream.listen(
       (_) {
         if (_player.processingState != ProcessingState.loading) _releaseLoadingWaiters();
         _broadcastAudioServiceState();
       },
       onError: (Object e, StackTrace st) {
-        handlePlaybackError(e);
+        handlePlaybackError(e, source: 'playback_event');
       },
     );
+
+    // just_audio 0.10.6 reports a song that cannot play (a missing or moved
+    // file, one it cannot decode, a refused stream) here only: it is a field
+    // of the playback events, never an error on playbackEventStream.
+    try {
+      _player.errorStream.listen((e) => handlePlaybackError(e), onError: (Object _) {});
+    } catch (e) {
+      DiagnosticsService.instance.logEvent('player_error_stream_missing');
+      debugPrint('[MusicAudioHandler] no player error stream: $e');
+    }
 
     _player.playerStateStream.listen((state) {
       // Only log real changes: this stream re-emits often and would push the
@@ -711,6 +741,293 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       _broadcastAudioServiceState();
       _notifyDomainState();
     });
+
+    // 2. The audio session, after the player's own streams: a song that
+    // fails while the session is still being set up (the restore at
+    // launch) must not go unseen.
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration.music());
+
+      if (injectedInterruptions == null) session.interruptionEventStream.listen(_onInterruption);
+
+      session.becomingNoisyEventStream.listen((_) {
+        DiagnosticsService.instance.logEvent('becoming_noisy');
+        _lastNoisyPauseTimestamp = DateTime.now();
+        _userInteractedSinceNoisy = false;
+        pause(reason: 'becoming_noisy');
+      });
+
+      session.devicesChangedEventStream.listen((event) {
+        DiagnosticsService.instance.logEvent('device_changed', {
+          'devicesAdded': event.devicesAdded.length,
+          'devicesRemoved': event.devicesRemoved.length,
+        });
+
+        // Local music only: a YouTube page is resumed from the page or the notification.
+        if (_external == null && _resumeOnHeadphonesReconnect && event.devicesAdded.any(_isPersonalAudioOutput)) {
+          final now = DateTime.now();
+          if (_lastNoisyPauseTimestamp != null && !_userInteractedSinceNoisy) {
+            final diff = now.difference(_lastNoisyPauseTimestamp!);
+            if (diff.inMinutes < 10) {
+              DiagnosticsService.instance.logEvent('headphones_reconnected_autoresume');
+              play(caller: 'headphones_reconnect');
+            }
+          }
+        }
+      });
+    } catch (e) {
+      DiagnosticsService.instance.logEvent('audio_session_config_error');
+      debugPrint('Error configuring AudioSession: $e');
+    }
+  }
+
+  // --- audio interruptions (calls, Siri, alarms, other apps) ----------------------
+
+  void _onInterruption(AudioInterruptionEvent event) {
+    if (PlatformInfo.isIOS) {
+      _onIosInterruption(event);
+      return;
+    }
+    DiagnosticsService.instance.logEvent('audio_focus_change', {
+      'begin': event.begin,
+      'type': event.type.toString(),
+      if (_external != null) 'ignored': 'external_source',
+    });
+    // The WebView asks for (and reacts to) audio focus on its own. Its own
+    // request is what takes focus away from this session when a YouTube
+    // video starts, so routing these events to the page would pause the
+    // video it just started. Local music is already paused in this mode.
+    if (_external != null) {
+      _resumeOnFocusGain = false;
+      return;
+    }
+
+    if (event.begin) {
+      switch (event.type) {
+        case AudioInterruptionType.duck:
+          _volumeBeforeDuck = _player.volume;
+          _player.setVolume((_volumeBeforeDuck * 0.5).clamp(0.0, 1.0));
+          break;
+        case AudioInterruptionType.pause:
+          _resumeOnFocusGain = _resumeOnFocusGain || _player.playing;
+          pause(reason: _transientLossPauseReason);
+          break;
+        case AudioInterruptionType.unknown:
+          // Another app took the sound for good (it plays music or a video):
+          // Android never gives it back by itself, so the music waits for
+          // that app to stop instead (Resume after other apps).
+          final wasPlaying = _player.playing || _resumeOnFocusGain;
+          _resumeOnFocusGain = false;
+          final paused = pause(reason: _permanentLossPauseReason);
+          if (wasPlaying) _waitForOtherApp(paused);
+          break;
+      }
+    } else {
+      switch (event.type) {
+        case AudioInterruptionType.duck:
+          _player.setVolume(_volumeBeforeDuck);
+          break;
+        case AudioInterruptionType.pause:
+          if (_resumeOnFocusGain) {
+            _resumeOnFocusGain = false;
+            play(caller: 'audio_focus_resume');
+          }
+          break;
+        case AudioInterruptionType.unknown:
+          _resumeOnFocusGain = false;
+          break;
+      }
+    }
+  }
+
+  /// The pause a permanent focus loss makes (it starts the wait, so it must
+  /// not end it the way any other pause does).
+  static const _permanentLossPauseReason = 'focus_loss_permanent';
+
+  /// The pause a short focus loss makes (it keeps the resume flag).
+  static const _transientLossPauseReason = 'focus_loss_transient';
+
+  /// Android: another app took the sound for good while the music played.
+  /// Its playback is watched; once it has played and then stopped, the
+  /// music plays again (asking for the sound back), within
+  /// [otherAppResumeWindow]. A press of play, pause, stop or a skip, a new
+  /// queue, a video or the Online tab taking over, a call, or the setting
+  /// being off all keep it paused. So does another app taking the sound
+  /// again within [otherAppRetakeWindow] of such a resume.
+  ///
+  /// Watching starts only once the music's own pause ([paused]) is through,
+  /// plus [_otherAppWatchDelay]: until then the phone may still list the
+  /// music's own player as playing.
+  void _waitForOtherApp(Future<void> paused) {
+    final watcher = _otherAudio;
+    if (watcher == null || !_resumeAfterOtherApps()) return;
+    _endOtherAppWait(null); // a fresh wait
+    final resumedAt = _otherAppResumedAt;
+    final now = _clock();
+    if (resumedAt != null && !now.isBefore(resumedAt) && now.difference(resumedAt) < otherAppRetakeWindow) {
+      // The other app took the sound back right after the music resumed by
+      // itself: it is that app's turn now, and the music stays paused.
+      _otherAppResumedAt = null;
+      DiagnosticsService.instance.logEvent('other_app_wait_skipped', {'reason': 'taken_again'});
+      return;
+    }
+    final id = ++_otherAppWaitId;
+    _otherAppWaitSince = now;
+    _otherAppSeenPlaying = false;
+    _otherAppWaitTimer = Timer(otherAppResumeWindow, () => _endOtherAppWait('expired'));
+    DiagnosticsService.instance.logEvent('other_app_wait_start');
+    unawaited(_startWatching(watcher, id, paused));
+  }
+
+  Future<void> _startWatching(OtherAudioWatcher watcher, int id, Future<void> paused) async {
+    try {
+      await paused;
+    } catch (_) {
+      // The pause itself failed: the watch still starts after the delay.
+    }
+    if (_otherAppWatchDelay > Duration.zero) await Future<void>.delayed(_otherAppWatchDelay);
+    // Ended meanwhile (a press, a new wait, a video taking over).
+    if (id != _otherAppWaitId || _otherAppWaitSince == null) return;
+    _otherAudioSub = watcher.events.listen(_onOtherAudio, onError: (Object _) {});
+    try {
+      await watcher.start();
+    } catch (e) {
+      // No watcher on this phone: the music stays paused, as it always did.
+      debugPrint('[MusicAudioHandler] other-app watcher failed: $e');
+      if (id == _otherAppWaitId) _endOtherAppWait('unavailable');
+    }
+  }
+
+  void _onOtherAudio(OtherAudioState s) {
+    final since = _otherAppWaitSince;
+    if (since == null) return;
+    if (s.otherPlaying) {
+      if (!_otherAppSeenPlaying) DiagnosticsService.instance.logEvent('other_app_playing');
+      _otherAppSeenPlaying = true;
+      return;
+    }
+    // Quiet, but the other app has not played yet: it is still starting.
+    if (!_otherAppSeenPlaying) return;
+    // A call: the music waits for it to end (the next report says so).
+    if (s.inCall) return;
+    if (_clock().difference(since) > otherAppResumeWindow) {
+      _endOtherAppWait('expired');
+      return;
+    }
+    if (!_resumeAfterOtherApps()) {
+      _endOtherAppWait('setting_off');
+      return;
+    }
+    if (_external != null || _player.playing || _playOrderQueue.isEmpty) {
+      _endOtherAppWait('taken_over');
+      return;
+    }
+    _endOtherAppWait('resumed');
+    _otherAppResumedAt = _clock();
+    play(caller: _otherAppResumeCaller);
+  }
+
+  /// Ends the wait for another app (if any); [reason] goes to the log.
+  void _endOtherAppWait(String? reason) {
+    if (_otherAppWaitSince == null) return;
+    _otherAppWaitSince = null;
+    _otherAppSeenPlaying = false;
+    _otherAppWaitTimer?.cancel();
+    _otherAppWaitTimer = null;
+    _otherAudioSub?.cancel();
+    _otherAudioSub = null;
+    final watcher = _otherAudio;
+    if (watcher != null) {
+      Future<void>.sync(watcher.stop).catchError((Object _) {});
+    }
+    if (reason != null) DiagnosticsService.instance.logEvent('other_app_wait_end', {'reason': reason});
+  }
+
+  /// The reason the iOS interruption's own pause gives (it keeps the resume flag).
+  static const _interruptionPauseReason = 'interruption';
+
+  /// iOS sends every interruption start (a call, Siri, an alarm) as type
+  /// `unknown`, and its end as `pause` when iOS says the app may resume
+  /// (shouldResume), else as `unknown` (audio_session's mapping). So the
+  /// start never tells a short interruption from a long one: what was
+  /// playing is remembered at every start and resumed at an end that may
+  /// resume. A play or pause by the user in between clears that.
+  ///
+  /// Local music (and the Online tab's background hand-off, which plays in
+  /// this player) and a video on screen follow this rule. The Online tab's
+  /// page is left to WebKit, which handles the page's own interruptions.
+  void _onIosInterruption(AudioInterruptionEvent event) {
+    final ext = _external;
+    final extResumes = ext != null && _resumesAfterInterruption(_externalMedia);
+    DiagnosticsService.instance.logEvent('audio_focus_change', {
+      'begin': event.begin,
+      'type': event.type.toString(),
+      if (ext != null && !extResumes) 'ignored': 'external_source',
+      if (extResumes) 'target': 'external',
+    });
+
+    if (event.type == AudioInterruptionType.duck) {
+      // iOS lowers the volume itself and sends no duck; kept for completeness.
+      if (ext != null) return;
+      if (event.begin) {
+        _volumeBeforeDuck = _player.volume;
+        _player.setVolume((_volumeBeforeDuck * 0.5).clamp(0.0, 1.0));
+      } else {
+        _player.setVolume(_volumeBeforeDuck);
+      }
+      return;
+    }
+
+    if (event.begin) {
+      if (ext != null) {
+        _resumeOnFocusGain = false;
+        if (!extResumes) return;
+        final media = _externalMedia;
+        final stoppedAt = _externalStoppedAt;
+        final wasPlaying = (media?.playing ?? false) ||
+            (stoppedAt != null && _clock().difference(stoppedAt) <= _interruptionPauseGrace);
+        if (wasPlaying) {
+          _interruptedExternal = ext;
+          _safeDelegateCall(ext.externalPause);
+        }
+        return;
+      }
+      _interruptedExternal = null;
+      // A second start (Siri during a call) keeps what the first one saw.
+      _resumeOnFocusGain = _resumeOnFocusGain || _player.playing;
+      _pauseLocalImpl(reason: _interruptionPauseReason);
+      return;
+    }
+
+    // The end: `pause` when iOS says the app may resume.
+    final mayResume = event.type == AudioInterruptionType.pause;
+    final interruptedExt = _interruptedExternal;
+    final resumeLocal = _resumeOnFocusGain;
+    _interruptedExternal = null;
+    _resumeOnFocusGain = false;
+    if (!mayResume) return;
+    if (interruptedExt != null) {
+      if (identical(_external, interruptedExt) && !(_externalMedia?.playing ?? false)) {
+        DiagnosticsService.instance.logEvent('play', {'caller': 'audio_focus_resume', 'target': 'external'});
+        _safeDelegateCall(interruptedExt.externalPlay);
+      }
+      return;
+    }
+    if (resumeLocal && _external == null) play(caller: 'audio_focus_resume');
+  }
+
+  /// A video on screen is resumed after an interruption; the Online tab's
+  /// page (ids `online:...`) is left to WebKit.
+  static bool _resumesAfterInterruption(ExternalMediaSnapshot? media) =>
+      media != null && !media.id.startsWith('online:');
+
+  /// iOS: the user played or paused, so nothing resumes by itself when an
+  /// interruption ends.
+  void _clearInterruptionResume() {
+    if (!PlatformInfo.isIOS) return;
+    _resumeOnFocusGain = false;
+    _interruptedExternal = null;
   }
 
   void _reportLearnedDuration(Duration? dur) {
@@ -731,22 +1048,71 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     }
   }
 
-  void handlePlaybackError(Object error) {
-    DiagnosticsService.instance.logEvent('player_error', {'source': 'playbackEventStream'});
-    final currIdx = _player.currentIndex ?? -1;
-    String trackName = 'Unknown';
-    if (currIdx >= 0 && currIdx < _domainQueue.length) {
-      trackName = _domainQueue[currIdx].title;
+  /// The player could not play the song it is on: [error] comes from the
+  /// player's error stream, or from a load or skip that failed. The work
+  /// runs in the serialized chain, after whatever is running now, and is
+  /// dropped when something moved the player in between (a load, a press,
+  /// or an earlier report of the same failure).
+  void handlePlaybackError(Object error, {String source = 'error_stream'}) {
+    if (error is PlayerInterruptedException) return; // a newer load took over
+    if (error is PlayerException && error.code == abortedErrorCode) return;
+    DiagnosticsService.instance.logEvent('player_error', {
+      'source': source,
+      if (error is PlayerException) 'code': error.code,
+    });
+    if (error is PlayerException) {
+      // A report about a song the player is no longer on (it arrived after
+      // the handler moved on from it): that song was dealt with already.
+      final failedAt = error.index;
+      final at = _anchorIndex ?? _player.currentIndex;
+      if (failedAt != null && at != null && failedAt != at) {
+        DiagnosticsService.instance.logEvent('player_error_stale', {'queuePosition': failedAt});
+        return;
+      }
     }
-    _errorController.add('Playback error on "$trackName"');
+    final epoch = _moveEpoch;
+    _synchronized(() => _onTrackFailed(epoch), 'track_failed').catchError((Object e) {
+      debugPrint('[MusicAudioHandler] failure handling failed: $e');
+    });
+  }
+
+  /// One failure, dealt with once: while playing, one message for a run of
+  /// failures, then the next playable song; when nothing in the queue
+  /// plays, it stops (paused) instead of trying for ever. While paused (a
+  /// restore at launch, a queue loaded without playing) only the failure is
+  /// noted: pressing play tries the song again.
+  Future<void> _onTrackFailed(int epoch) async {
+    if (epoch != _moveEpoch) return; // moved on since, or already dealt with
+    // A new queue or a press is on its way: it decides what plays.
+    if (_pendingReplaces > 0 || _skipTarget != null) return;
+    final q = _domainQueue;
+    final idx = _player.currentIndex ?? -1;
+    // The same failure reported once more (a load that failed reports it on
+    // the error stream and by throwing, in either order) after it stopped
+    // the queue: nothing moved since, so there is nothing new to do.
+    if (_handledFailure == (epoch, idx)) return;
+    _moveEpoch++;
+    _handledFailure = (_moveEpoch, idx);
+    final item = (idx >= 0 && idx < q.length) ? q[idx] : null;
+    DiagnosticsService.instance.logEvent('track_failed', {
+      'queuePosition': idx,
+      'queueLength': q.length,
+      'playing': _wantPlaying,
+    });
+    if (item != null && !_failureController.isClosed) _failureController.add(item.id);
+    if (!_wantPlaying || _external != null) return;
+
     _consecutiveErrorSkips++;
-    if (_consecutiveErrorSkips < _domainQueue.length && _domainQueue.length > 1) {
-      _scheduleAutoNext('error_skip');
-    } else {
-      _consecutiveErrorSkips = 0;
-      _pauseLocalImpl(reason: 'error_loop_guard');
-      _errorController.add('Playback stopped: consecutive playback errors reached queue limit');
+    if (_consecutiveErrorSkips == 1) _emitError('Can\'t play "${item?.title ?? 'this song'}"');
+    if (q.length > 1 && _consecutiveErrorSkips < q.length) {
+      await _autoNext('error_skip');
+      return;
     }
+    // Every song in the queue failed (or it holds only this one).
+    if (_consecutiveErrorSkips > 1) _emitError('Can\'t play any song in the queue');
+    _consecutiveErrorSkips = 0;
+    await _pauseLocalImpl(reason: 'error_loop_guard');
+    _notifyDomainState();
   }
 
   // --- the media session ---------------------------------------------------------
@@ -1047,6 +1413,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   Future<void> restoreSession(domain.PlaybackState restored, {bool replace = false}) {
     _pendingLoads++;
     if (replace) {
+      _endOtherAppWait('new_queue');
       _skipGeneration++;
       _pendingReplaces++;
       _releaseLoadingWaiters();
@@ -1065,6 +1432,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       _wantPlaying = false;
       if (_player.playing) await _player.pause();
     }
+    _consecutiveErrorSkips = 0;
     _originalQueue = List.from(restored.originalQueue.isNotEmpty ? restored.originalQueue : restored.queue);
     _playOrderQueue = List.from(restored.queue);
     _shuffleEnabled = restored.shuffle;
@@ -1117,6 +1485,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     bool shuffle = false,
   }) {
     _userInteractedSinceNoisy = true;
+    _endOtherAppWait('new_queue');
     // Presses made before this load meant the old queue: drop them now, so
     // none of them seeks the old source first.
     _skipGeneration++;
@@ -1169,14 +1538,17 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     }
     final initialIndex = shuffle ? 0 : safeStart;
 
+    _consecutiveErrorSkips = 0; // a new queue: a new run of failures
     _anchor(initialIndex);
     _syncAudioServiceQueue();
     _syncCurrentAudioServiceMediaItem();
+    Object? loadError;
     try {
       await _loadSource(index: initialIndex);
       _applyLoopMode();
     } catch (e) {
-      DiagnosticsService.instance.logEvent('player_error', {'source': 'load_queue'});
+      // A newer load stopping this one is not the song's fault.
+      if (e is! PlayerInterruptedException) loadError = e;
       debugPrint('Error setting queue source: $e');
     } finally {
       _anchorIndex = null;
@@ -1188,8 +1560,16 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
     if (autoPlay) {
       _wantPlaying = true;
-      _safeStartPlayerPlay('load_queue');
+      // A song that failed to load is not started again here: the failure
+      // moves on to the next playable song.
+      if (loadError == null) _safeStartPlayerPlay('load_queue');
       _broadcastAudioServiceState();
+    }
+    if (loadError != null) {
+      _applyLoopMode();
+      // Usually on the error stream too: the same failure reported twice is
+      // dealt with once.
+      handlePlaybackError(loadError, source: 'load_queue');
     }
   }
 
@@ -1205,6 +1585,13 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     if (previous != null && !identical(previous, delegate)) {
       _safeDelegateCall(previous.onExternalSourceReleased);
     }
+    if (!identical(previous, delegate)) {
+      _externalStoppedAt = null;
+      _interruptedExternal = null;
+    }
+    // A video or the Online tab took over: the music no longer waits for
+    // another app.
+    _endOtherAppWait('taken_over');
     _external = delegate;
     if (previous == null) {
       DiagnosticsService.instance.logEvent('external_source_start');
@@ -1250,6 +1637,8 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _external = null;
     _externalMedia = null;
     _externalItem = null;
+    _externalStoppedAt = null;
+    _interruptedExternal = null;
     _externalController.add(null);
     DiagnosticsService.instance.logEvent('external_source_end');
     // Back to the local queue (paused), or to nothing (idle: the service stops).
@@ -1273,6 +1662,9 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   void _applyExternal(ExternalMediaSnapshot s, {bool force = false}) {
     final previous = _externalMedia;
     _externalMedia = s;
+    if (previous != null && previous.id == s.id && previous.playing && !s.playing) _externalStoppedAt = _clock();
+    // Started again during an interruption (by the user): not ours to resume.
+    if (s.playing && previous != null && !previous.playing) _interruptedExternal = null;
 
     final item = MediaItem(
       id: s.id,
@@ -1518,6 +1910,17 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// In-app "pause" for the local queue.
   Future<void> pauseLocal() => _pauseLocalImpl();
 
+  /// Gives up on a song that is still loading (a stream that never
+  /// answers): the player stops loading, so it cannot start later on its
+  /// own. Local music stays paused and the media session is left alone.
+  Future<void> cancelLoading() async {
+    if (_player.processingState != ProcessingState.loading) return;
+    DiagnosticsService.instance.logEvent('loading_cancelled');
+    _wantPlaying = false;
+    _moveEpoch++;
+    await _player.stop();
+  }
+
   /// In-app seek in the local track.
   Future<void> seekLocal(Duration position) => _seekLocalImpl(position);
 
@@ -1575,6 +1978,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     final ext = _external;
     if (ext != null) {
       DiagnosticsService.instance.logEvent('play', {'caller': caller ?? 'system', 'target': 'external'});
+      _clearInterruptionResume();
       return ext.externalPlay();
     }
     // Media resumption: the system's player after the app was closed.
@@ -1624,6 +2028,15 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   Future<void> _playLocalImpl({String? caller}) async {
     _userInteractedSinceNoisy = true;
+    _handledFailure = null; // a failure from here on is a new one
+    _clearInterruptionResume();
+    if (caller != _otherAppResumeCaller && caller != 'audio_focus_resume') {
+      // A play of the user's own: the next app taking the sound starts a
+      // fresh wait, and a short interruption under way no longer resumes.
+      _otherAppResumedAt = null;
+      if (!PlatformInfo.isIOS) _resumeOnFocusGain = false;
+    }
+    _endOtherAppWait('play');
     _wantPlaying = true;
     if (_fadeTimer != null) cancelSleepTimer(); // pressing play during the fade keeps the music
     final callSource = caller ?? _formatCaller();
@@ -1644,12 +2057,19 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     final ext = _external;
     if (ext != null) {
       DiagnosticsService.instance.logEvent('pause', {'reason': reason ?? 'user', 'target': 'external'});
+      _clearInterruptionResume();
       return ext.externalPause();
     }
     return _pauseLocalImpl(reason: reason);
   }
 
   Future<void> _pauseLocalImpl({String? reason}) async {
+    if (reason != _interruptionPauseReason) _clearInterruptionResume();
+    // Android: a pause of any other kind (the user, the sleep timer, unplugged
+    // headphones) during a short interruption keeps the music paused when
+    // that interruption ends.
+    if (!PlatformInfo.isIOS && reason != _transientLossPauseReason) _resumeOnFocusGain = false;
+    if (reason != _permanentLossPauseReason) _endOtherAppWait('pause');
     _wantPlaying = false;
     if (reason != 'sleep' && _fadeTimer != null) cancelSleepTimer();
     final stopReason = reason ?? 'user';
@@ -1674,6 +2094,8 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   Future<void> _stopLocalImpl({String? reason}) async {
     _wantPlaying = false;
+    _endOtherAppWait('stop');
+    _moveEpoch++; // a failure reported before the stop is over with it
     _idleStopTimer?.cancel();
     _idleStopTimer = null;
     _sessionPlaying = false;
@@ -2001,6 +2423,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// the newest target. Skipping starts playing (Spotify).
   Future<void> _requestSkip(int target, {List<domain.MediaItem>? order, required String action}) {
     _wantPlaying = true;
+    _endOtherAppWait('skip');
     final firstPress = _skipTarget == null;
     if (firstPress) {
       DiagnosticsService.instance.logEvent('skip_start', {
@@ -2055,10 +2478,11 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _batch = null;
     _batchPresses = 0;
     _anchor(target);
+    _consecutiveErrorSkips = 0; // the user moved on: a new run of failures
     // A newer press or a queue load from here on takes over: this one stops
     // waiting and leaves the seek (and the play) to it.
     final generation = _skipGeneration;
-    var failed = false;
+    Object? failure;
     try {
       if (order != null) {
         _playOrderQueue = order;
@@ -2080,8 +2504,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
         await _seekToIndex(target, generation);
       }
     } catch (e) {
-      failed = true;
-      DiagnosticsService.instance.logEvent('player_error', {'source': 'skip'});
+      failure = e;
       debugPrint('Error while skipping: $e');
     } finally {
       _anchorIndex = null;
@@ -2098,9 +2521,10 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _broadcastAudioServiceState();
     _notifyDomainState();
 
-    if (failed && target >= 0 && target < _domainQueue.length) {
-      _errorController.add('Unable to play "${_domainQueue[target].title}": file missing or unsupported');
-      _scheduleAutoNext('skip_failed');
+    if (failure != null) {
+      // Dealt with like any failed song (once, even when the error stream
+      // reported it too): the message, then the next playable song.
+      handlePlaybackError(failure, source: 'skip');
     } else if (_skipTarget == null && _wantPlaying && !_superseded()) {
       // Only once the presses have settled (a newer one plays when it lands).
       _safeStartPlayerPlay('skip');
@@ -2108,15 +2532,9 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     if (batch != null && !batch.isCompleted) batch.complete();
   }
 
-  /// Moves on by itself (an unplayable track, a failed skip).
-  void _scheduleAutoNext(String reason) {
-    _synchronized(() => _autoNext(reason), reason).catchError((Object e) {
-      debugPrint('[MusicAudioHandler] $reason failed: $e');
-    });
-  }
-
-  /// Next without a press: the queue stops paused at its start after the last
-  /// track with repeat off. A press waiting in the meantime wins.
+  /// Next without a press (a song that could not play): the queue stops
+  /// paused at its start after the last track with repeat off. A press
+  /// waiting in the meantime wins. Runs inside the chain.
   Future<void> _autoNext(String reason) async {
     if (_skipTarget != null) {
       await _applyPendingSkip();
@@ -2126,6 +2544,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     if (q.isEmpty) return;
     final idx = _player.currentIndex ?? -1;
     final last = q.length - 1;
+    Object? failure;
     try {
       if (idx >= 0 && idx < last) {
         _wantPlaying = true;
@@ -2144,6 +2563,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       } else {
         // Repeat off -> stop at last track and show paused state at start of queue
         _wantPlaying = false;
+        _consecutiveErrorSkips = 0;
         DiagnosticsService.instance.logEvent('queue_ended', {'action': 'paused_at_start', 'reason': reason});
         _lastRequestedIndex = 0;
         await _player.pause();
@@ -2151,7 +2571,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
         await _player.seek(Duration.zero, index: 0);
       }
     } catch (e) {
-      DiagnosticsService.instance.logEvent('player_error', {'source': reason});
+      failure = e;
       debugPrint('Error in $reason: $e');
     } finally {
       _anchorIndex = null;
@@ -2159,7 +2579,11 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _syncCurrentAudioServiceMediaItem();
     _broadcastAudioServiceState();
     _notifyDomainState();
-    if (_wantPlaying) _safeStartPlayerPlay(reason);
+    if (failure != null) {
+      handlePlaybackError(failure, source: reason); // the song it moved to failed too
+    } else if (_wantPlaying) {
+      _safeStartPlayerPlay(reason);
+    }
   }
 
   Future<void> _handlePlaybackCompleted() async {
@@ -2403,6 +2827,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   Future<void> dispose() async {
     DiagnosticsService.instance.logEvent('service_stop');
     _external = null;
+    _endOtherAppWait(null);
     _mediaButtonTimer?.cancel();
     _idleStopTimer?.cancel();
     _sleepTimer?.cancel();
@@ -2413,6 +2838,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     if (batch != null && !batch.isCompleted) batch.complete();
     await _player.dispose();
     await _errorController.close();
+    await _failureController.close();
     await _domainStateController.close();
     await _externalController.close();
     await _sleepController.close();

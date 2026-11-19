@@ -39,8 +39,9 @@ const double _kDisabledAlpha = 0.38;
 class MiniPlayer extends ConsumerStatefulWidget {
   const MiniPlayer({super.key, this.hideExternal = false});
 
-  /// True on the Online tab: the YouTube page is on screen, so the card for
-  /// it (and the paused local track under it) is not shown.
+  /// Hides the YouTube card (and the paused local track under it). The app
+  /// shell no longer sets it: on the Videos and Online tabs it folds the
+  /// whole mini player away instead (AppShell.hidesMiniPlayer).
   final bool hideExternal;
 
   @visibleForTesting

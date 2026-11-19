@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +9,7 @@ import '../core/platform_info.dart';
 import '../domain/models/download_state.dart';
 import '../features/downloads/downloads_notifier.dart';
 import '../features/music_player/mini_player.dart';
+import '../features/music_player/playback_notifier.dart';
 import '../shared/widgets/shared_label_scale.dart';
 import '../shared/widgets/ui_kit.dart';
 import 'theme/app_palette.dart';
@@ -22,8 +25,18 @@ class AppShell extends StatelessWidget {
     required this.navigationShell,
   });
 
+  /// Branch index of the Videos tab.
+  static const int videosBranchIndex = 2;
+
   /// Branch index of the Online (YouTube) tab.
   static const int onlineBranchIndex = 3;
+
+  /// The tabs that show video themselves (Videos and Online): the mini
+  /// player steps aside there, so the whole screen is theirs. The music
+  /// keeps playing and stays in the notification; the mini player comes
+  /// back on the other tabs.
+  static bool hidesMiniPlayer(int branchIndex) =>
+      branchIndex == videosBranchIndex || branchIndex == onlineBranchIndex;
 
   void _onTap(int index) {
     if (index != navigationShell.currentIndex) HapticFeedback.selectionClick();
@@ -38,41 +51,120 @@ class AppShell extends StatelessWidget {
     // Predictive back / Back navigation handling
     // If not on Home (index 0), back button goes to Home
     // If already on Home, back exits app
-    return PopScope(
-      canPop: navigationShell.currentIndex == 0,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && navigationShell.currentIndex != 0) {
-          _onTap(0);
-        }
-      },
-      // In picture-in-picture the small window shows only the page's video:
-      // no mini player and no navigation bar (they come back on exit).
-      child: ValueListenableBuilder<bool>(
-        valueListenable: DeviceControls.inPip,
-        builder: (context, inPip, body) => Scaffold(
-          body: body,
-          // The Ink Dock (DESIGN.md 7.7): the mini player and the nav on one
-          // ink slab in both themes. InkDock wraps them in the dark theme and
-          // keeps the Android navigation bar's icons light over it. The body
-          // ends above the dock (no extendBody), so no screen has to pad its
-          // last row clear of it.
-          bottomNavigationBar: inPip
-              ? null
-              : InkDock(
-                  // Persistent mini-player above the bottom nav. On the Online
-                  // tab a playing YouTube video is right there, so it is not
-                  // repeated in the mini player.
-                  miniPlayer: MiniPlayer(
-                    key: const ValueKey('mini_player_slot'),
-                    hideExternal: navigationShell.currentIndex == onlineBranchIndex,
+    return _PlaybackMessages(
+      child: PopScope(
+        canPop: navigationShell.currentIndex == 0,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop && navigationShell.currentIndex != 0) {
+            _onTap(0);
+          }
+        },
+        // In picture-in-picture the small window shows only the page's video:
+        // no mini player and no navigation bar (they come back on exit).
+        child: ValueListenableBuilder<bool>(
+          valueListenable: DeviceControls.inPip,
+          builder: (context, inPip, body) => Scaffold(
+            body: body,
+            // The Ink Dock (DESIGN.md 7.7): the mini player and the nav on one
+            // ink slab in both themes. InkDock wraps them in the dark theme and
+            // keeps the Android navigation bar's icons light over it. The body
+            // ends above the dock (no extendBody), so no screen has to pad its
+            // last row clear of it.
+            bottomNavigationBar: inPip
+                ? null
+                : InkDock(
+                    // Persistent mini-player above the bottom nav, except on
+                    // the Videos and Online tabs (see [hidesMiniPlayer]).
+                    miniPlayer: _MiniPlayerSlot(
+                      hidden: hidesMiniPlayer(navigationShell.currentIndex),
+                      child: const MiniPlayer(key: ValueKey('mini_player_slot')),
+                    ),
+                    navigation: _InkNavBar(
+                      currentIndex: navigationShell.currentIndex,
+                      onTap: _onTap,
+                    ),
                   ),
-                  navigation: _InkNavBar(
-                    currentIndex: navigationShell.currentIndex,
-                    onTap: _onTap,
-                  ),
-                ),
+          ),
+          child: navigationShell,
         ),
-        child: navigationShell,
+      ),
+    );
+  }
+}
+
+/// Shows the music player's own messages ("Can't play \"Song\"", when a song
+/// is missing or broken and the player moves on) as a snackbar.
+///
+/// It listens to the handler's stream itself rather than to
+/// playbackErrorStreamProvider: Riverpod drops a value equal to the last
+/// one, so the same song failing twice would show only once.
+class _PlaybackMessages extends ConsumerStatefulWidget {
+  const _PlaybackMessages({required this.child});
+
+  final Widget child;
+
+  @override
+  ConsumerState<_PlaybackMessages> createState() => _PlaybackMessagesState();
+}
+
+class _PlaybackMessagesState extends ConsumerState<_PlaybackMessages> {
+  StreamSubscription<String>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    try {
+      _sub = ref.read(audioHandlerProvider).errorEvents.listen(_show);
+    } catch (_) {
+      // No music player (widget tests that leave it out): nothing to show.
+    }
+  }
+
+  void _show(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+/// The mini-player row of the dock, folded away on the Videos and Online
+/// tabs. It slides down behind the navigation (and back up) in 240 ms
+/// (instant with reduced motion), so the dock and the page above it change
+/// height smoothly instead of jumping. While folded it takes no taps, is
+/// not read by screen readers and runs no animations; the mini player stays
+/// built, so it comes back at once with whatever is playing.
+class _MiniPlayerSlot extends StatelessWidget {
+  const _MiniPlayerSlot({required this.hidden, required this.child});
+
+  final bool hidden;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      key: const ValueKey('mini_player_fold'),
+      child: AnimatedAlign(
+        duration: MotionTokens.duration(context, MotionTokens.page),
+        curve: MotionTokens.emphasized,
+        alignment: Alignment.topCenter,
+        heightFactor: hidden ? 0 : 1,
+        child: IgnorePointer(
+          ignoring: hidden,
+          child: ExcludeSemantics(
+            excluding: hidden,
+            child: TickerMode(enabled: !hidden, child: child),
+          ),
+        ),
       ),
     );
   }

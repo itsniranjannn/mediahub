@@ -9,9 +9,13 @@ class ResumeOnHeadphonesReconnectNotifier extends Notifier<bool> {
 
   static const String _prefKey = 'resume_on_headphones_reconnect';
 
+  /// The saved choice (on until the user turns it off). main.dart hands it
+  /// to the music handler at launch, so it holds before Settings is opened.
+  static bool isOn() => SettingsStore.instance.getBool(_prefKey, defaultValue: true);
+
   @override
   bool build() {
-    final saved = SettingsStore.instance.getBool(_prefKey, defaultValue: true);
+    final saved = isOn();
     if (saved != _handler.resumeOnHeadphonesReconnect) {
       _handler.setResumeOnHeadphonesReconnect(saved);
     }

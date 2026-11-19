@@ -41,12 +41,16 @@ void main() {
     final item3 = _createTestItem('3', 'Song 3');
     int fakeCurrentIndex = 0;
     late StreamController<PlaybackEvent> playbackEventController;
+    // just_audio 0.10.6 reports a song that cannot play here only.
+    late StreamController<PlayerException> errorController;
 
     setUp(() {
       fakeCurrentIndex = 0;
       mockPlayer = MockAudioPlayer();
       playbackEventController = StreamController<PlaybackEvent>.broadcast();
+      errorController = StreamController<PlayerException>.broadcast();
       when(() => mockPlayer.playbackEventStream).thenAnswer((_) => playbackEventController.stream);
+      when(() => mockPlayer.errorStream).thenAnswer((_) => errorController.stream);
       when(() => mockPlayer.playerStateStream).thenAnswer((_) => const Stream.empty());
       when(() => mockPlayer.currentIndexStream).thenAnswer((_) => const Stream.empty());
       when(() => mockPlayer.positionStream).thenAnswer((_) => const Stream.empty());
@@ -152,13 +156,17 @@ void main() {
     });
 
     test('a track that cannot play on the last item still stops the queue at its start', () async {
-      await handler.loadQueue([item1, item2, item3], startIndex: 2, autoPlay: false);
+      final messages = <String>[];
+      handler.errorEvents.listen(messages.add);
+      await handler.loadQueue([item1, item2, item3], startIndex: 2, autoPlay: true);
 
-      handler.handlePlaybackError(Exception('Last file unplayable'));
+      errorController.add(PlayerException(1, 'Last file unplayable', 2));
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       verify(() => mockPlayer.pause()).called(1);
       verify(() => mockPlayer.seek(Duration.zero, index: 0)).called(1);
+      expect(messages, ['Can\'t play "Song 3"']);
+      expect(handler.wantPlaying, isFalse);
     });
 
     test('skipToNext at queue end with repeat all loops to index 0 and plays', () async {
@@ -198,27 +206,24 @@ void main() {
     test('queue of 3 unplayable files with repeat all stops paused instead of looping', () async {
       final items = [item1, item2, item3];
       when(() => mockPlayer.hasNext).thenReturn(true);
-      await handler.loadQueue(items, startIndex: 0, autoPlay: false);
+      await handler.loadQueue(items, startIndex: 0, autoPlay: true);
       await handler.setRepeatMode(AudioServiceRepeatMode.all);
 
-      final stopCompleter = Completer<bool>();
-      handler.errorEvents.listen((event) {
-        if (event.contains('Playback stopped: consecutive playback errors reached queue limit')) {
-          if (!stopCompleter.isCompleted) stopCompleter.complete(true);
-        }
-      });
+      final messages = <String>[];
+      handler.errorEvents.listen(messages.add);
 
-      // Directly trigger 3 playback errors on the handler
-      handler.handlePlaybackError(Exception('File 1 unplayable'));
-      handler.handlePlaybackError(Exception('File 2 unplayable'));
-      handler.handlePlaybackError(Exception('File 3 unplayable'));
+      // Each song fails once the handler has moved on to it, as the player
+      // reports it: on its error stream.
+      for (var i = 0; i < 3; i++) {
+        expect(fakeCurrentIndex, i, reason: 'the handler moved on to song ${i + 1}');
+        errorController.add(PlayerException(1, 'File ${i + 1} unplayable', i));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
 
-      final stopEmitted = await stopCompleter.future.timeout(
-        const Duration(seconds: 1),
-        onTimeout: () => false,
-      );
-
-      expect(stopEmitted, isTrue);
+      // One message for the run, one when it gives up; no fourth try.
+      expect(messages, ['Can\'t play "Song 1"', 'Can\'t play any song in the queue']);
+      expect(fakeCurrentIndex, 2);
+      expect(handler.wantPlaying, isFalse);
       verify(() => mockPlayer.pause()).called(greaterThanOrEqualTo(1));
     });
 
