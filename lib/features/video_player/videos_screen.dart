@@ -10,6 +10,7 @@ import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/app_config.dart';
 import '../../core/permissions/media_permission_service.dart';
+import '../../core/platform_info.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../domain/models/media_item.dart';
@@ -170,7 +171,14 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
             // A plain sentence: the raw error text is not for the screen.
             message: 'Something went wrong while reading your videos. Your files are safe.',
             action: FilledButton.tonalIcon(
-              onPressed: () => notifier.scanDevice(),
+              // iPhone: no scan to run again; reopen the list.
+              onPressed: () {
+                if (PlatformInfo.isIOS) {
+                  notifier.retry();
+                } else {
+                  notifier.scanDevice();
+                }
+              },
               icon: const Icon(Icons.refresh_rounded, size: 20),
               label: const Text('Try again'),
             ),
@@ -220,16 +228,28 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           child: EmptyStateWidget(
             icon: Icons.videocam_off_outlined,
             title: state.searchQuery.isNotEmpty ? 'No matching videos' : 'No videos yet',
+            // On iPhone there is no shared video folder to scan: videos come
+            // from MediaHub's own downloads.
             message: state.searchQuery.isNotEmpty
                 ? 'No videos matching "${state.searchQuery}".'
-                : 'Find the videos saved on this phone.',
+                : PlatformInfo.isIOS
+                    ? 'Videos you download in MediaHub show up here.'
+                    : 'Find the videos saved on this phone.',
             action: state.searchQuery.isNotEmpty
                 ? null
-                : FilledButton.icon(
-                    onPressed: state.isScanning ? null : () => notifier.scanDevice(),
-                    icon: const Icon(Icons.refresh_rounded, size: 20),
-                    label: const Text('Scan device'),
-                  ),
+                : PlatformInfo.isIOS
+                    ? (PlatformInfo.supportsDownloads
+                        ? FilledButton.icon(
+                            onPressed: () => GoRouter.maybeOf(context)?.go('/downloads'),
+                            icon: const Icon(Icons.file_download_rounded, size: 20),
+                            label: const Text('Open Downloads'),
+                          )
+                        : null)
+                    : FilledButton.icon(
+                        onPressed: state.isScanning ? null : () => notifier.scanDevice(),
+                        icon: const Icon(Icons.refresh_rounded, size: 20),
+                        label: const Text('Scan device'),
+                      ),
           ),
         )
       else ...[
@@ -276,6 +296,11 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           controller: _searchController,
           onChanged: (val) => notifier.setSearchQuery(val),
           textInputAction: TextInputAction.search,
+          // What is typed is what is searched (no curly quotes, long dashes
+          // or autocorrected words from the keyboard).
+          autocorrect: false,
+          smartQuotesType: SmartQuotesType.disabled,
+          smartDashesType: SmartDashesType.disabled,
           style: context.typography.body,
           decoration: InputDecoration(
             hintText: 'Search your videos',
@@ -349,20 +374,23 @@ class _VideosHeader extends StatelessWidget {
             ),
           ),
           if (granted) ...[
-            IconButton(
-              icon: state.isScanning
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: palette.primary,
-                      ),
-                    )
-                  : const Icon(Icons.refresh_rounded),
-              tooltip: 'Scan device media',
-              onPressed: state.isScanning ? null : () => notifier.scanDevice(),
-            ),
+            // iPhone: nothing on the phone to scan (downloads show up by
+            // themselves), so no refresh.
+            if (!PlatformInfo.isIOS)
+              IconButton(
+                icon: state.isScanning
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: palette.primary,
+                        ),
+                      )
+                    : const Icon(Icons.refresh_rounded),
+                tooltip: 'Scan device media',
+                onPressed: state.isScanning ? null : () => notifier.scanDevice(),
+              ),
             PopupMenuButton<MediaSortOption>(
               icon: const Icon(Icons.sort_rounded),
               tooltip: 'Sort video library',

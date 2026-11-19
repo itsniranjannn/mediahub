@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/permissions/media_permission_service.dart';
+import '../../core/platform_info.dart';
 import '../../core/services/artwork_service.dart';
 import '../../core/storage/settings_store.dart';
 import '../../data/repositories/library_repository_impl.dart';
@@ -362,8 +363,13 @@ abstract class BaseLibraryNotifier extends Notifier<LibraryState> with WidgetsBi
 
   /// Back in the app: rescan when the last scan is over a minute old, unless
   /// the phone says nothing changed (Android 11+).
+  ///
+  /// Never on iPhone: there is no phone library to read, so the scan would
+  /// find nothing (and forget which songs have no cover, asking again for
+  /// each one). MediaHub's own downloads show up by themselves.
   @visibleForTesting
   Future<void> rescanIfStale({DateTime? now}) async {
+    if (PlatformInfo.isIOS) return;
     if (!_hasAccess) return;
     final LibraryRepository repo;
     try {

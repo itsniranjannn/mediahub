@@ -13,7 +13,10 @@
 ///   "सांझ" are the same word), and Devanagari digits become ASCII digits
 ///   ("गीत २" and "गीत 2");
 /// - zero-width joiners and spaces are dropped and whitespace runs become one
-///   space.
+///   space;
+/// - curly and other typographic quotes become the plain ' and " (the
+///   iPhone keyboard types ’ for an apostrophe, so "don’t" and "don't" are
+///   the same), and typographic dashes become a plain - ("A – B" and "A - B").
 ///
 /// Romanised search: "resham" finds "रेशम फिरिरी", as Nepali is very often
 /// typed in Latin letters. Devanagari fields are transliterated and both
@@ -36,8 +39,9 @@ const String searchKeyFieldSeparator = '\n';
 /// Ends every stored key made by the current [foldForSearch] rules (a
 /// private-use character, which [foldForSearch] drops from what is typed, so
 /// no search term can match it). Bump it when the folding changes: keys
-/// without it are rebuilt before the next search or scan.
-const String searchKeyVersionTag = '';
+/// without it are rebuilt before the next search or scan. U+E004 since
+/// typographic quotes and dashes fold to plain ones.
+const String searchKeyVersionTag = '';
 
 /// Whether [key] was made by the current folding rules.
 bool isCurrentSearchKey(String? key) => key != null && key.endsWith(searchKeyVersionTag);
@@ -68,6 +72,11 @@ String foldForSearch(String text) {
     }
     if (rune >= 0x0966 && rune <= 0x096F) {
       out.writeCharCode(0x30 + rune - 0x0966); // Devanagari digit as ASCII
+      continue;
+    }
+    final punctuation = _plainPunctuation[rune];
+    if (punctuation != null) {
+      out.writeCharCode(punctuation);
       continue;
     }
     final base = _latinBase[rune];
@@ -242,6 +251,44 @@ bool _isZeroWidth(int r) => r == 0x200B || r == 0x200C || r == 0x200D || r == 0x
 
 bool _isSpace(int r) =>
     r == 0x20 || r == 0x09 || r == 0x0A || r == 0x0D || r == 0xA0 || r == 0x3000 || (r >= 0x2000 && r <= 0x200A);
+
+/// Typographic quotes and dashes and the plain ASCII character they stand
+/// for. Phone keyboards type the curly ones ("smart punctuation" on iPhone),
+/// titles from the web often have them, and people type either.
+const Map<int, int> _plainPunctuation = {
+  // Apostrophes and single quotes as '.
+  0x2018: 0x27, // ‘ left single quote
+  0x2019: 0x27, // ’ right single quote (the iPhone apostrophe)
+  0x201A: 0x27, // ‚ single low-9 quote
+  0x201B: 0x27, // ‛ single high-reversed-9 quote
+  0x2032: 0x27, // ′ prime
+  0x2039: 0x27, // ‹ single angle quote
+  0x203A: 0x27, // › single angle quote
+  0x02BC: 0x27, // ʼ modifier letter apostrophe
+  0x0060: 0x27, // ` grave accent, typed for an apostrophe
+  0x00B4: 0x27, // ´ acute accent, typed for an apostrophe
+  0xFF07: 0x27, // ＇ fullwidth apostrophe
+  // Double quotes as ".
+  0x201C: 0x22, // “ left double quote
+  0x201D: 0x22, // ” right double quote
+  0x201E: 0x22, // „ double low-9 quote
+  0x201F: 0x22, // ‟ double high-reversed-9 quote
+  0x2033: 0x22, // ″ double prime
+  0x00AB: 0x22, // « left guillemet
+  0x00BB: 0x22, // » right guillemet
+  0xFF02: 0x22, // ＂ fullwidth quote
+  // Dashes as -.
+  0x2010: 0x2D, // ‐ hyphen
+  0x2011: 0x2D, // ‑ non-breaking hyphen
+  0x2012: 0x2D, // ‒ figure dash
+  0x2013: 0x2D, // – en dash
+  0x2014: 0x2D, // — em dash (the iPhone's "smart dash")
+  0x2015: 0x2D, // ― horizontal bar
+  0x2212: 0x2D, // − minus sign
+  0xFE58: 0x2D, // ﹘ small em dash
+  0xFE63: 0x2D, // ﹣ small hyphen-minus
+  0xFF0D: 0x2D, // － fullwidth hyphen-minus
+};
 
 /// Precomposed Devanagari nukta letters and their base (NFD splits them).
 const Map<int, int> _devanagariNukta = {

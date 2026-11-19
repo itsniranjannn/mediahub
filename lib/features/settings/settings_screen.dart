@@ -12,6 +12,7 @@ import '../../personal/personal_tools_notifier.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../downloads/download_providers.dart' show extractorRunningDownloadsProvider;
 import '../library/library_notifier.dart';
+import '../music_player/resume_after_other_apps.dart';
 import '../online/online_screen.dart' show confirmClearYouTubeData;
 import '../online/online_settings.dart';
 import '../online/online_web_view.dart' show onlineDataClearerProvider;
@@ -224,13 +225,18 @@ class _PlaybackCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final resumeOnReconnect = ref.watch(resumeOnHeadphonesReconnectProvider);
     final resumeNotifier = ref.read(resumeOnHeadphonesReconnectProvider.notifier);
+    // Android only: on an iPhone the system itself says when music may come back.
+    final showOtherApps = PlatformInfo.isAndroid;
+    final resumeAfterOtherApps = showOtherApps && ref.watch(resumeAfterOtherAppsProvider);
 
     return _SettingsCard(
       children: [
-        const _CardHeading(
+        _CardHeading(
           icon: Icons.headphones_rounded,
           title: 'Audio & headset',
-          subtitle: 'How playback reacts to your headphones.',
+          subtitle: showOtherApps
+              ? 'How playback reacts to your headphones and other apps.'
+              : 'How playback reacts to your headphones.',
         ),
         const _CardDivider.underHeading(),
         _SwitchRow(
@@ -240,6 +246,16 @@ class _PlaybackCard extends ConsumerWidget {
           value: resumeOnReconnect,
           onChanged: (_) => resumeNotifier.toggle(),
         ),
+        if (showOtherApps) ...[
+          const _CardDivider.betweenRows(),
+          _SwitchRow(
+            icon: Icons.music_note_rounded,
+            title: 'Resume after other apps',
+            subtitle: 'Plays your music again when another app stops playing, within 30 minutes.',
+            value: resumeAfterOtherApps,
+            onChanged: (v) => ref.read(resumeAfterOtherAppsProvider.notifier).set(v),
+          ),
+        ],
       ],
     );
   }
@@ -289,19 +305,19 @@ class _OnlineCard extends ConsumerWidget {
           onChanged: (v) => ref.read(onlineAutoPipProvider.notifier).set(v),
         ),
         const _CardDivider.betweenRows(),
-        // Google refuses sign-in inside apps' web views, so there is no
-        // account here: said plainly instead of offering a sign-in that fails.
+        // Signing in happens in the Online tab (More options, then Sign in to
+        // YouTube); Google may still refuse an app's web view for some
+        // accounts, and the row says so.
         const _InfoRow(
-          icon: Icons.no_accounts_outlined,
-          title: 'YouTube sign-in',
-          body: "Not supported. Google doesn't allow signing in inside other apps, "
-              'so the Online tab works without an account.',
+          icon: Icons.account_circle_outlined,
+          title: youTubeSignInSettingsTitle,
+          body: youTubeSignInSettingsBody,
         ),
         const _CardDivider.betweenRows(),
         _NavRow(
           icon: Icons.delete_sweep_outlined,
           title: 'Clear YouTube data',
-          subtitle: "Forgets YouTube's cookies, cache and site settings on this phone.",
+          subtitle: clearYouTubeDataSettingsSubtitle(),
           trailingIcon: Icons.chevron_right_rounded,
           onTap: () => _clearData(context, ref),
         ),
@@ -360,9 +376,10 @@ class _PersonalToolsCard extends ConsumerWidget {
                       subtitle: Padding(
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
-                          personalState.ytDlpVersion.isEmpty ? 'Loading...' : personalState.ytDlpVersion,
+                          // "2026.11.10 · Updated today": MediaHub updates yt-dlp by itself.
+                          personalState.versionLine(),
                           style: type.tabularFigures,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -440,6 +457,7 @@ class _PrivacyCard extends ConsumerWidget {
     // (AndroidManifest + data_extraction_rules.xml). iOS has no such opt-out
     // in this app, so the iPhone's own iCloud backup may include app files.
     final isAndroid = PlatformInfo.isAndroid;
+    final isIOS = PlatformInfo.isIOS;
 
     return _SettingsCard(
       children: [
@@ -449,10 +467,14 @@ class _PrivacyCard extends ConsumerWidget {
           subtitle: 'What MediaHub uses, in plain words.',
         ),
         const _CardDivider.underHeading(),
-        const _InfoRow(
+        // The iPhone app reads nothing else on the phone: its library is
+        // what you download in MediaHub.
+        _InfoRow(
           icon: Icons.library_music_outlined,
           title: 'Your music and videos',
-          body: 'To find and play them. MediaHub never uploads them.',
+          body: isIOS
+              ? 'Only the ones you download in MediaHub. MediaHub never uploads them.'
+              : 'To find and play them. MediaHub never uploads them.',
         ),
         const _InfoRow(
           icon: Icons.public_rounded,
@@ -470,8 +492,9 @@ class _PrivacyCard extends ConsumerWidget {
         if (isAndroid)
           const _PromiseNote(
             title: 'No accounts, no tracking, no cloud backup',
-            body: 'There is nothing to sign in to and nothing to sync. A phone-to-phone '
-                'transfer to your next phone brings your library and downloads along.',
+            body: 'MediaHub has no account of its own and syncs nothing. A YouTube sign-in '
+                'in the Online tab stays on this phone. A phone-to-phone transfer to your '
+                'next phone brings your library and downloads along.',
           )
         else
           const _PromiseNote(
@@ -482,7 +505,9 @@ class _PrivacyCard extends ConsumerWidget {
         _NavRow(
           icon: Icons.app_settings_alt_outlined,
           title: 'App permissions',
-          subtitle: 'See or change what MediaHub may use, in your phone\'s settings.',
+          subtitle: isIOS
+              ? 'See or change what MediaHub may use, in iPhone Settings.'
+              : 'See or change what MediaHub may use, in your phone\'s settings.',
           trailingIcon: Icons.open_in_new_rounded,
           onTap: () => _openAppPermissions(context, ref),
         ),
@@ -503,7 +528,11 @@ class _PrivacyCard extends ConsumerWidget {
       messenger
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(content: Text('Could not open your phone\'s settings.')),
+          SnackBar(
+            content: Text(
+              PlatformInfo.isIOS ? 'Could not open iPhone Settings.' : 'Could not open your phone\'s settings.',
+            ),
+          ),
         );
     }
   }

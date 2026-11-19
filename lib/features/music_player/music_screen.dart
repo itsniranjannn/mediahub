@@ -96,21 +96,25 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
 
     final permission = state.permissionState;
     final hasLibrary = permission == MediaPermissionState.granted || permission == MediaPermissionState.limited;
+    // On iPhone there is nothing on the phone to scan (the library is
+    // MediaHub's own downloads, which show up by themselves): no refresh.
+    final canScan = !PlatformInfo.isIOS;
 
     final header = _MusicHeader(
       actions: [
         if (permission == MediaPermissionState.granted) ...[
-          IconButton(
-            icon: state.isScanning
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: palette.primary),
-                  )
-                : const Icon(Icons.refresh_rounded),
-            tooltip: 'Scan device media',
-            onPressed: state.isScanning ? null : () => notifier.scanDevice(),
-          ),
+          if (canScan)
+            IconButton(
+              icon: state.isScanning
+                  ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: palette.primary),
+                    )
+                  : const Icon(Icons.refresh_rounded),
+              tooltip: 'Scan device media',
+              onPressed: state.isScanning ? null : () => notifier.scanDevice(),
+            ),
           PopupMenuButton<SongSortOption>(
             icon: const Icon(Icons.sort_rounded),
             tooltip: 'Sort songs',
@@ -149,7 +153,13 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                       ),
                     SliverToBoxAdapter(child: _searchField(context, notifier)),
                     if (error != null && state.items.isNotEmpty)
-                      SliverToBoxAdapter(child: _ErrorBanner(message: error, onRetry: () => notifier.scanDevice())),
+                      SliverToBoxAdapter(
+                        child: _ErrorBanner(
+                          message: error,
+                          // iPhone: no scan to run again; reopen the list.
+                          onRetry: canScan ? () => notifier.scanDevice() : () => notifier.retry(),
+                        ),
+                      ),
                     SliverOverlapAbsorber(
                       handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
                       sliver: SliverPersistentHeader(
@@ -240,6 +250,12 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           setState(() {});
         },
         textInputAction: TextInputAction.search,
+        // What is typed is what is searched: no curly quotes or long dashes
+        // from the iPhone keyboard, and no word swapped for another (a
+        // romanised Nepali title is not a typo).
+        autocorrect: false,
+        smartQuotesType: SmartQuotesType.disabled,
+        smartDashesType: SmartDashesType.disabled,
         style: context.typography.body,
         decoration: InputDecoration(
           // Short enough to stay whole at 320 dp and at large text.
@@ -336,13 +352,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
               action: searching
                   ? null
                   : ios
-                      ? (PlatformInfo.supportsDownloads
-                          ? FilledButton.icon(
-                              onPressed: () => GoRouter.maybeOf(context)?.go('/downloads'),
-                              icon: const Icon(Icons.file_download_rounded, size: 20),
-                              label: const Text('Open Downloads'),
-                            )
-                          : null)
+                      ? _openDownloadsButton()
                       : FilledButton.icon(
                           onPressed: state.isScanning ? null : () => notifier.scanDevice(),
                           icon: const Icon(Icons.refresh_rounded, size: 20),
@@ -393,6 +403,16 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     );
   }
 
+  /// iPhone: the button under an empty list, to go and download something.
+  Widget? _openDownloadsButton() {
+    if (!PlatformInfo.supportsDownloads) return null;
+    return FilledButton.icon(
+      onPressed: () => GoRouter.maybeOf(context)?.go('/downloads'),
+      icon: const Icon(Icons.file_download_rounded, size: 20),
+      label: const Text('Open Downloads'),
+    );
+  }
+
   /// "Couldn't load your albums" with a Retry, for the grid tabs.
   Widget _gridError(String storageKey, String what) {
     return _TabScrollView(
@@ -422,12 +442,16 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
             slivers: [
               SliverFillRemaining(
                 hasScrollBody: false,
+                // iPhone: no scan; albums come from MediaHub's downloads.
                 child: EmptyHint(
                   icon: Icons.album_rounded,
                   title: 'No albums found',
                   message: query.isNotEmpty
                       ? 'No albums matching "$query".'
-                      : 'Albums appear here once your songs are scanned.',
+                      : PlatformInfo.isIOS
+                          ? 'Albums from your downloads show up here.'
+                          : 'Albums appear here once your songs are scanned.',
+                  action: query.isEmpty && PlatformInfo.isIOS ? _openDownloadsButton() : null,
                 ),
               ),
             ],
@@ -466,12 +490,16 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
             slivers: [
               SliverFillRemaining(
                 hasScrollBody: false,
+                // iPhone: no scan; artists come from MediaHub's downloads.
                 child: EmptyHint(
                   icon: Icons.person_rounded,
                   title: 'No artists found',
                   message: query.isNotEmpty
                       ? 'No artists matching "$query".'
-                      : 'Artists appear here once your songs are scanned.',
+                      : PlatformInfo.isIOS
+                          ? 'Artists from your downloads show up here.'
+                          : 'Artists appear here once your songs are scanned.',
+                  action: query.isEmpty && PlatformInfo.isIOS ? _openDownloadsButton() : null,
                 ),
               ),
             ],

@@ -111,11 +111,39 @@ void main() {
     expect(find.text('YouTube data cleared'), findsOneWidget);
   });
 
-  testWidgets('Settings → Online says plainly that YouTube sign-in is not supported', (tester) async {
+  // Sign-in now works in the Online tab (as far as Google allows it there).
+  testWidgets('Settings → Online says where to sign in, that Google may refuse, and that Clear signs out',
+      (tester) async {
     await pump(tester, onClear: () {});
     expect(find.text('YouTube sign-in'), findsOneWidget);
-    expect(find.textContaining('Not supported'), findsOneWidget);
-    expect(find.textContaining('Signs you out'), findsNothing, reason: 'there is no sign-in to undo');
+    expect(find.text(youTubeSignInSettingsBody), findsOneWidget);
+    expect(find.textContaining('Not supported'), findsNothing);
+    expect(find.text("Signs you out and forgets YouTube's cookies, cache and site settings on this phone."),
+        findsOneWidget);
+  });
+
+  test('the sign-in and Clear texts: short, plain and honest on both phones', () {
+    expect(youTubeSignInSettingsTitle, 'YouTube sign-in');
+    expect(youTubeSignInSettingsBody, contains('Sign in to YouTube'), reason: 'the menu row it points to');
+    expect(youTubeSignInSettingsBody, contains('Google may refuse'));
+    expect(youTubeSignInSettingsBody, isNot(contains('⋮')), reason: 'words, not a glyph the font may lack');
+    expect(clearYouTubeDataSettingsSubtitle(), startsWith('Signs you out'));
+    PlatformInfo.debugIsIOS = true;
+    expect(clearYouTubeDataSettingsSubtitle(),
+        "Signs you out and forgets YouTube's cookies, cache and saved site data on this iPhone.");
+  });
+
+  testWidgets('Clear YouTube data says it signs you out', (tester) async {
+    await pump(tester, onClear: () {});
+    await tester.tap(find.text('Clear YouTube data'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text("Signs you out and forgets YouTube's cookies, cache and site settings on this phone. "
+          'Your downloads and library stay.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
   });
 
   group('Personal tools: yt-dlp Update and Reset (SEC-10)', () {

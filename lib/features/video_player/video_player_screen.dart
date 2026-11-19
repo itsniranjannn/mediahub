@@ -722,13 +722,17 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                     ),
                   ),
                   const SizedBox(height: AppSpacing.xxl24),
-                  FilledButton.icon(
-                    // The notifier ignores taps while a retry is running.
-                    onPressed: () => unawaited(notifier.retry()),
-                    icon: const Icon(Icons.refresh_rounded),
-                    label: const Text('Try again'),
-                  ),
-                  const SizedBox(height: AppSpacing.sm8),
+                  // A format the phone cannot read never plays on a retry
+                  // (iOS only), so there is no Try again for it.
+                  if (kind != VideoErrorKind.unsupportedFormat) ...[
+                    FilledButton.icon(
+                      // The notifier ignores taps while a retry is running.
+                      onPressed: () => unawaited(notifier.retry()),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Try again'),
+                    ),
+                    const SizedBox(height: AppSpacing.sm8),
+                  ],
                   OutlinedButton.icon(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.arrow_back_rounded),

@@ -101,11 +101,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const SettingsScreen(),
       ),
       // Video player route on ROOT navigator
-      GoRoute(
-        parentNavigatorKey: _rootNavigatorKey,
-        path: '/video_player',
-        builder: videoPlayerRouteBuilder,
-      ),
+      videoPlayerRoute(parentNavigatorKey: _rootNavigatorKey),
       // Diagnostics route on ROOT navigator
       GoRoute(
         parentNavigatorKey: _rootNavigatorKey,
@@ -125,6 +121,41 @@ final routerProvider = Provider<GoRouter>((ref) {
   }
   return router;
 });
+
+/// The '/video_player' route.
+///
+/// iOS: always a page with no transition, which has no back-swipe. A normal
+/// iOS page (a MaterialPage under the theme's Cupertino transition) lays a
+/// back-swipe strip along the left edge (20 pt, or the safe-area inset in
+/// landscape) over the page, and its drag beats the player's own horizontal
+/// seek swipe: a seek that started near the left edge would close the video.
+/// go_router 18 happens to build a no-transition page for every `builder`
+/// route today (it looks for material_ui's MaterialApp, which this app does
+/// not use), so the strip is not there now. This pins it, so a go_router
+/// update or a move to material_ui cannot bring it to the player. The
+/// player's back arrow closes it, as before.
+///
+/// Android keeps the `builder`, so its page stays exactly what go_router
+/// builds for every other screen.
+GoRoute videoPlayerRoute({GlobalKey<NavigatorState>? parentNavigatorKey}) {
+  final ios = PlatformInfo.isIOS;
+  return GoRoute(
+    parentNavigatorKey: parentNavigatorKey,
+    path: '/video_player',
+    builder: ios ? null : videoPlayerRouteBuilder,
+    pageBuilder: ios ? videoPlayerIosPageBuilder : null,
+  );
+}
+
+/// The iOS page for '/video_player' (see [videoPlayerRoute]): the player from
+/// [videoPlayerRouteBuilder] on a page with no transition and no back-swipe.
+Page<void> videoPlayerIosPageBuilder(BuildContext context, GoRouterState state) => NoTransitionPage<void>(
+      key: state.pageKey,
+      name: state.name ?? state.path,
+      arguments: <String, String>{...state.pathParameters, ...state.uri.queryParameters},
+      restorationId: state.pageKey.value,
+      child: Builder(builder: (context) => videoPlayerRouteBuilder(context, state)),
+    );
 
 /// Builds '/video_player'. What to play travels in `extra`: a MediaItem
 /// (a queue of one) or a [VideoQueue] (the Videos tab's list, for Next and

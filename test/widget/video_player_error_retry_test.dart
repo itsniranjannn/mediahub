@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/logging/diagnostics_service.dart';
+import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/core/utils/formatters.dart';
 import 'package:mediahub/data/repositories/library_repository_impl.dart';
 import 'package:mediahub/domain/models/media_item.dart';
@@ -33,6 +34,18 @@ const _sourceFailure =
     '(No such file or directory), null)';
 
 const _otherFailure = 'PlatformException(VideoError, Player timed out, null, null)';
+
+/// What video_player_avfoundation sends for a file AVFoundation cannot read
+/// (FVPEventBridge: a FlutterError whose message joins "Failed to load
+/// video" with the error's description and failure reason).
+const _iosUnsupported =
+    'PlatformException(VideoError, Failed to load video: Cannot Open: This media format is not supported., null, null)';
+const _iosUnparsable =
+    'PlatformException(VideoError, Failed to load video: Cannot Open: This media may be damaged., null, null)';
+const _iosUnsupportedWithCode =
+    'PlatformException(VideoError, Failed to load video: The operation could not be completed: '
+    'The operation couldn’t be completed. (AVFoundationErrorDomain error -11828.), null, null)';
+const _friendlyUnsupported = "This iPhone can't play this video format.";
 
 const _friendlyDecoder = "This phone couldn't decode this video. Trying again often helps.";
 const _friendlySource = "The video file couldn't be opened. It may have been moved or deleted.";
@@ -255,6 +268,94 @@ void main() {
       expect(VideoErrorKind.decoder.message, _friendlyDecoder);
       expect(VideoErrorKind.source.message, _friendlySource);
       expect(VideoErrorKind.other.message, _friendlyOther);
+      expect(VideoErrorKind.unsupportedFormat.message, _friendlyUnsupported);
+    });
+
+    test("iOS: AVFoundation's 'this format cannot be read' is its own kind", () {
+      for (final raw in [_iosUnsupported, _iosUnparsable, _iosUnsupportedWithCode, 'Failed to load video: Cannot Open']) {
+        expect(classifyVideoError(raw, isIOS: true), VideoErrorKind.unsupportedFormat, reason: raw);
+      }
+      // AVFoundation's other wordings keep their kinds.
+      expect(classifyVideoError('Cannot Decode', isIOS: true), VideoErrorKind.decoder);
+      expect(classifyVideoError('The requested URL was not found on this server', isIOS: true), VideoErrorKind.source);
+      expect(classifyVideoError(_otherFailure, isIOS: true), VideoErrorKind.other);
+    });
+
+    test('Android is unchanged: the same words keep the ExoPlayer kinds', () {
+      expect(classifyVideoError(_iosUnsupported, isIOS: false), VideoErrorKind.decoder);
+      expect(classifyVideoError(_iosUnparsable, isIOS: false), VideoErrorKind.source);
+      expect(classifyVideoError(_decoderFailure, isIOS: false), VideoErrorKind.decoder);
+      expect(classifyVideoError(_sourceFailure, isIOS: false), VideoErrorKind.source);
+      expect(classifyVideoError('UnrecognizedInputFormatException: no extractor', isIOS: false), VideoErrorKind.decoder);
+    });
+  });
+
+  // iOS parity: video_player_avfoundation's error for a container AVFoundation
+  // cannot read (.mkv, .webm, .avi) used to be taken for a decoder hiccup (a
+  // wasted quiet retry, "Trying again often helps") and, through "Cannot
+  // Open", for a missing file.
+  group('iOS: a video format the iPhone cannot play', () {
+    const wakelock = 'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle';
+
+    setUp(() async {
+      PlatformInfo.debugIsIOS = true;
+      DiagnosticsService.enableDebounce = false;
+      await DiagnosticsService.instance.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMessageHandler(
+        wakelock,
+        (_) async => const StandardMessageCodec().encodeMessage(<Object?>[null]),
+      );
+    });
+
+    tearDown(() {
+      PlatformInfo.resetForTests();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMessageHandler(wakelock, null);
+    });
+
+    for (final raw in [_iosUnsupported, _iosUnparsable]) {
+      testWidgets('says so plainly, with no quiet retry, and never marks the file missing ($raw)', (tester) async {
+        final library = _LibraryRepo();
+        final factory = _EngineFactory([_ScriptedEngine(failWith: raw), _ScriptedEngine(failWith: raw)]);
+        await _pumpScreen(tester, factory, library: library);
+
+        expect(find.text('Unable to play video'), findsOneWidget);
+        expect(find.text(_friendlyUnsupported), findsOneWidget);
+        expect(find.text(_friendlyDecoder), findsNothing);
+        expect(factory.created, 1, reason: 'no quiet retry: it can never work');
+        expect(DiagnosticsService.instance.logs.where((l) => l.contains('video_player_auto_retry')), isEmpty);
+        expect(library.availability, isEmpty, reason: 'the file is still there');
+        final shown = _visibleTexts(tester).join('\n');
+        expect(shown, isNot(contains('Cannot Open')));
+        // Trying again can never help: only the way back is offered.
+        expect(find.text('Try again'), findsNothing);
+        expect(find.text('Back to Videos'), findsOneWidget);
+
+        await _unmount(tester);
+      });
+    }
+
+    testWidgets('during playback too: no retry, nothing marked missing', (tester) async {
+      final library = _LibraryRepo();
+      final first = _ScriptedEngine();
+      final factory = _EngineFactory([first, _ScriptedEngine()]);
+      await _pumpScreen(tester, factory, library: library);
+      first.emitError(_iosUnsupported);
+      await _settle(tester);
+      expect(find.text(_friendlyUnsupported), findsOneWidget);
+      expect(factory.created, 1);
+      expect(library.availability, isEmpty);
+      await _unmount(tester);
+    });
+
+    testWidgets('a missing file on iOS is still marked missing', (tester) async {
+      final library = _LibraryRepo();
+      const missing = 'PlatformException(VideoError, Failed to load video: The file “clip.mp4” couldn’t be '
+          'opened because there is no such file., null, null)';
+      final factory = _EngineFactory([_ScriptedEngine(failWith: missing)]);
+      await _pumpScreen(tester, factory, library: library);
+      expect(find.text(_friendlySource), findsOneWidget);
+      expect(library.availability, ['${_item.id}:missing']);
+      await _unmount(tester);
     });
   });
 

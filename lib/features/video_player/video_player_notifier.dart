@@ -75,6 +75,10 @@ enum VideoErrorKind {
   /// The file could not be opened: moved, deleted or no permission.
   source,
 
+  /// iOS: AVFoundation cannot read this kind of file at all (an .mkv, .webm
+  /// or .avi, say). Trying again never helps, and the file is still there.
+  unsupportedFormat,
+
   /// Anything else.
   other;
 
@@ -84,9 +88,19 @@ enum VideoErrorKind {
           "This phone couldn't decode this video. Trying again often helps.",
         VideoErrorKind.source =>
           "The video file couldn't be opened. It may have been moved or deleted.",
+        VideoErrorKind.unsupportedFormat => "This iPhone can't play this video format.",
         VideoErrorKind.other => 'Something went wrong while starting this video.',
       };
 }
+
+// iOS (video_player_avfoundation): "Failed to load video: Cannot Open: This
+// media format is not supported." (AVErrorFileFormatNotRecognized, -11828) or
+// "... Cannot Open: This media may be damaged." (AVErrorFailedToParse,
+// -11829); the codes appear when an underlying error is printed.
+final RegExp _iosUnsupportedFormat = RegExp(
+  r'format is not supported|media may be damaged|failed to load video: cannot open|-1182[89](?!\d)',
+  caseSensitive: false,
+);
 
 // "format" but not "information"; "decod" covers decode / decoder / decoding.
 final RegExp _decoderError = RegExp(
@@ -105,8 +119,13 @@ final RegExp _sourceError = RegExp(
 /// Sorts a raw player error ([VideoPlaybackState.errorMessage]) into a
 /// [VideoErrorKind]. Decoder words are checked first: a decoder failure may
 /// also mention the source or the file, so it would otherwise be mistaken
-/// for a missing file.
-VideoErrorKind classifyVideoError(String raw) {
+/// for a missing file. On iOS, AVFoundation's "this format cannot be read"
+/// wording comes before both (it says "format" and "Cannot Open").
+/// [isIOS] defaults to the platform the app runs on.
+VideoErrorKind classifyVideoError(String raw, {bool? isIOS}) {
+  if ((isIOS ?? PlatformInfo.isIOS) && _iosUnsupportedFormat.hasMatch(raw)) {
+    return VideoErrorKind.unsupportedFormat;
+  }
   if (_decoderError.hasMatch(raw)) return VideoErrorKind.decoder;
   if (_sourceError.hasMatch(raw)) return VideoErrorKind.source;
   return VideoErrorKind.other;
@@ -721,10 +740,14 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
     _cancelPlaybackListeners();
     _upNextTimer?.cancel();
     final lower = message.toLowerCase();
-    if (lower.contains('file') ||
-        lower.contains('not found') ||
-        lower.contains('missing') ||
-        lower.contains('cannot open')) {
+    // A format the phone cannot read is not a missing file, although iOS
+    // words it "Cannot Open".
+    final unreadable = classifyVideoError(message) == VideoErrorKind.unsupportedFormat;
+    if (!unreadable &&
+        (lower.contains('file') ||
+            lower.contains('not found') ||
+            lower.contains('missing') ||
+            lower.contains('cannot open'))) {
       _markedMissing = true;
       _libraryRepo
           .updateAvailability(state.item.id, MediaAvailability.missing)

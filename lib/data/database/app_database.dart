@@ -1,10 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import '../../core/logging/diagnostics_service.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/playback_state.dart';
 import '../../domain/models/video_progress.dart';
+import '../storage/download_folder.dart';
+import '../storage/stored_path_rebase.dart';
 import 'search_text.dart';
 
 part 'app_database.g.dart';
@@ -149,6 +153,10 @@ class PlaylistItemsTable extends Table {
       ];
 }
 
+/// Where downloads are saved now (an absolute folder path), or null when
+/// saved paths never need moving. See [AppDatabase.rebaseStoredPaths].
+typedef DownloadsFolderLookup = Future<String?> Function();
+
 @DriftDatabase(tables: [
   MediaItemsTable,
   PlaybackStatesTable,
@@ -158,7 +166,19 @@ class PlaylistItemsTable extends Table {
   DownloadsTable,
 ])
 class AppDatabase extends _$AppDatabase {
-  AppDatabase([QueryExecutor? e]) : super(e ?? _openConnection());
+  /// [downloadsFolder] tells the database, as it opens, where downloads live
+  /// now (tests pass a temp folder). By default that is the app's folder on
+  /// iOS and nothing elsewhere.
+  AppDatabase([QueryExecutor? e, DownloadsFolderLookup? downloadsFolder])
+      : _downloadsFolder = downloadsFolder ?? downloadsFolderToHealPaths,
+        super(e ?? _openConnection());
+
+  final DownloadsFolderLookup _downloadsFolder;
+
+  /// Longest the database waits, while opening, to learn where downloads
+  /// live. Past it the paths are left as they are (checked again next start).
+  @visibleForTesting
+  static Duration downloadsFolderTimeout = const Duration(seconds: 5);
 
   @override
   int get schemaVersion => 8;
@@ -225,7 +245,127 @@ class AppDatabase extends _$AppDatabase {
           await migrateLibraryToV8();
         }
       },
+      // Runs before any query of this session, so nothing ever reads a path
+      // into an old copy of the downloads folder (iOS).
+      beforeOpen: (details) async {
+        if (details.wasCreated) return;
+        await _healMovedDownloadPaths();
+      },
     );
+  }
+
+  /// [rebaseStoredPaths] against the current downloads folder. Never fails
+  /// the open: any problem leaves the paths as they are.
+  Future<void> _healMovedDownloadPaths() async {
+    try {
+      final folder = await _downloadsFolder().timeout(downloadsFolderTimeout);
+      if (folder == null || folder.isEmpty) return;
+      final rebaser = StoredPathRebaser(currentDownloadsDir: folder);
+      if (!rebaser.canRebase) return;
+      final moved = await rebaseStoredPaths(rebaser);
+      if (moved > 0) {
+        DiagnosticsService.instance.logEvent('stored_paths_rebased', {'rows': moved});
+      }
+    } catch (_) {
+      // Paths stay as they were; the next start tries again.
+    }
+  }
+
+  /// Points every saved path into an older copy of the downloads folder at
+  /// the current one ([StoredPathRebaser] says which paths qualify): the
+  /// library's file and cover (`uri`, `artwork_path`), the download rows'
+  /// file and cover (`final_path`, `thumbnail_path`), and a saved play queue
+  /// in the old format that kept whole items (the current format keeps only
+  /// ids, which follow the library rows). Returns how many rows changed;
+  /// running it again changes nothing.
+  ///
+  /// Raw SQL with explicit columns only, like [migrateLibraryToV8].
+  @visibleForTesting
+  Future<int> rebaseStoredPaths(StoredPathRebaser rebaser) async {
+    final marker = rebaser.marker;
+    if (marker == null) return 0;
+    var changed = 0;
+    final mark = Variable.withString(marker);
+    await transaction(() async {
+      final media = await customSelect(
+        'SELECT id, uri, artwork_path FROM media_items_table '
+        'WHERE instr(uri, ?) > 0 OR instr(artwork_path, ?) > 0',
+        variables: [mark, mark],
+      ).get();
+      for (final row in media) {
+        final uri = row.read<String>('uri');
+        final art = row.readNullable<String>('artwork_path');
+        final newUri = rebaser.rebase(uri);
+        final newArt = rebaser.rebase(art);
+        if (newUri == null && newArt == null) continue;
+        await customStatement(
+          'UPDATE media_items_table SET uri = ?, artwork_path = ? WHERE id = ?',
+          [newUri ?? uri, newArt ?? art, row.read<String>('id')],
+        );
+        changed++;
+      }
+
+      final downloads = await customSelect(
+        'SELECT id, final_path, thumbnail_path FROM downloads_table '
+        'WHERE instr(final_path, ?) > 0 OR instr(thumbnail_path, ?) > 0',
+        variables: [mark, mark],
+      ).get();
+      for (final row in downloads) {
+        final file = row.readNullable<String>('final_path');
+        final thumb = row.readNullable<String>('thumbnail_path');
+        final newFile = rebaser.rebase(file);
+        final newThumb = rebaser.rebase(thumb);
+        if (newFile == null && newThumb == null) continue;
+        await customStatement(
+          'UPDATE downloads_table SET final_path = ?, thumbnail_path = ? WHERE id = ?',
+          [newFile ?? file, newThumb ?? thumb, row.read<String>('id')],
+        );
+        changed++;
+      }
+
+      final sessions = await customSelect('SELECT id, queue_json FROM playback_states_table').get();
+      for (final row in sessions) {
+        final queue = _rebaseQueueJson(row.read<String>('queue_json'), rebaser);
+        if (queue == null) continue;
+        await customStatement(
+          'UPDATE playback_states_table SET queue_json = ? WHERE id = ?',
+          [queue, row.read<int>('id')],
+        );
+        changed++;
+      }
+    });
+    return changed;
+  }
+
+  /// A saved queue in the old format (a list of whole items) with its file
+  /// and cover paths moved, or null when nothing in it changes.
+  static String? _rebaseQueueJson(String json, StoredPathRebaser rebaser) {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(json);
+    } catch (_) {
+      return null;
+    }
+    if (decoded is! List) return null;
+    var any = false;
+    final out = <Object?>[];
+    for (final item in decoded) {
+      if (item is Map) {
+        final copy = Map<String, dynamic>.from(item);
+        for (final key in const ['uri', 'artworkPath']) {
+          final value = copy[key];
+          final moved = value is String ? rebaser.rebase(value) : null;
+          if (moved != null) {
+            copy[key] = moved;
+            any = true;
+          }
+        }
+        out.add(copy);
+      } else {
+        out.add(item);
+      }
+    }
+    return any ? jsonEncode(out) : null;
   }
 
   /// The data half of the v7 -> v8 step, so every list works on an existing

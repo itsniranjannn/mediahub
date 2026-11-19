@@ -5,6 +5,7 @@ import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
+import '../../core/platform_info.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/repositories/library_repository_impl.dart';
@@ -795,6 +796,11 @@ class _AddSongsSheetState extends ConsumerState<_AddSongsSheet> {
             child: TextField(
               controller: _search,
               textInputAction: TextInputAction.search,
+              // What is typed is what is searched (no curly quotes, long
+              // dashes or autocorrected words from the keyboard).
+              autocorrect: false,
+              smartQuotesType: SmartQuotesType.disabled,
+              smartDashesType: SmartDashesType.disabled,
               style: type.body,
               onChanged: (text) => setState(() => _songs = _query(text)),
               decoration: InputDecoration(
@@ -818,9 +824,12 @@ class _AddSongsSheetState extends ConsumerState<_AddSongsSheet> {
                       return EmptyHint(
                         icon: Icons.music_off_outlined,
                         title: _search.text.isEmpty ? 'No songs yet' : 'No matching songs',
-                        message: _search.text.isEmpty
-                            ? 'Songs on this phone show up here.'
-                            : 'No songs matching "${_search.text}".',
+                        message: _search.text.isNotEmpty
+                            ? 'No songs matching "${_search.text}".'
+                            // On iPhone the library is MediaHub's own downloads.
+                            : PlatformInfo.isIOS
+                                ? 'Songs you download in MediaHub show up here.'
+                                : 'Songs on this phone show up here.',
                       );
                     }
                     return Scrollbar(
