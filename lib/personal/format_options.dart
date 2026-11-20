@@ -60,6 +60,15 @@ class FormatOptions {
   /// Sound only (or, when a site has no such stream, the best file there is).
   static const String audioSelector = 'ba/b';
 
+  /// "Original audio" of the kind the quality sheet names (e.g. M4A), else
+  /// any sound, else the best file. yt-dlp's own pick for plain `ba` is often
+  /// WebM/Opus even when the sheet said M4A (seen on YouTube).
+  static String originalAudioSelector(String? ext) {
+    final e = (ext ?? '').toLowerCase();
+    if (!RegExp(r'^[a-z0-9]{2,5}$').hasMatch(e)) return audioSelector;
+    return 'ba[ext=$e]/$audioSelector';
+  }
+
   /// Best video at most [maxHeight] pixels high merged with the best sound,
   /// else the best file with both at most that high, else anything.
   /// Without [maxHeight]: the best there is.
@@ -229,7 +238,7 @@ class FormatOptions {
       label: audioLabel,
       subtitle: 'No conversion · ${_approx(audioSize)}',
       isAudio: true,
-      selector: audioSelector,
+      selector: originalAudioSelector(audio?.ext),
       qualityLabel: audio != null && audio.abr > 0
           ? 'Audio ${audio.abr.round()} kbps'
           : 'Audio',

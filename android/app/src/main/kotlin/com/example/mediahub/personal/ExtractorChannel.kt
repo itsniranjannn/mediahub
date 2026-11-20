@@ -15,9 +15,15 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import org.json.JSONObject
 import java.io.File
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
 class ExtractorChannel(
@@ -92,6 +98,10 @@ class ExtractorChannel(
         // At most this many YouTube clients at the chosen quality, then the catch-all once:
         // each try is a full yt-dlp run, and many runs in a row make YouTube limit the phone.
         private const val MAX_CLIENT_TRIES = 3
+
+        // Address-family probe before a yt-dlp run (see addressFamilyOption).
+        private const val FAMILY_PROBE_MS = 1500
+        private const val FAMILY_CACHE_MS = 5 * 60 * 1000L
 
         private val AUDIO_FORMATS = setOf("mp3", "m4a", "opus", "aac", "flac", "wav")
 
@@ -389,7 +399,91 @@ class ExtractorChannel(
      * Runs `yt-dlp --dump-json` once, optionally with a YouTube player-client override.
      * A watchdog kills the run after [timeoutMs] so a slow site can never hang the app.
      */
-    private fun fetchInfoJson(url: String, extractorArgs: String?, timeoutMs: Long, requestId: String?): JSONObject {
+    // yt-dlp (Python) connects to one address after the other, with a 20-30 s timeout each,
+    // and has no IPv4/IPv6 race ("Happy Eyeballs") the way a browser does. On a network where
+    // one family is advertised but broken (IPv6 on some Wi-Fi, or IPv4 towards some servers,
+    // as on the emulator), every request then waits out timeouts: a YouTube lookup there
+    // stalled for over four minutes, and took 8 s with the working family forced. So before a
+    // run, one TCP connection per family is tried at once (FAMILY_PROBE_MS at most). When only
+    // one family answers, yt-dlp is told to use it; both or neither: yt-dlp decides as before.
+    // Only allowlisted hosts are ever probed (callers check isHostAllowed first), and the
+    // answer is kept for a few minutes per host.
+    private val familyCache = ConcurrentHashMap<String, Pair<String?, Long>>()
+
+    /** The cache key: the phone's current network and the host (a new network probes again). */
+    private fun familyKey(url: String): String? {
+        val host = try {
+            URI(url).host?.lowercase()
+        } catch (e: Exception) {
+            null
+        } ?: return null
+        val network = runCatching {
+            (context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)
+                ?.activeNetwork?.networkHandle
+        }.getOrNull() ?: 0L
+        return "$network|$host"
+    }
+
+    /** "--force-ipv4", "--force-ipv6" or null for the host of [url]. */
+    private fun addressFamilyOption(url: String): String? {
+        val key = familyKey(url) ?: return null
+        val host = key.substringAfter('|')
+        val now = System.currentTimeMillis()
+        familyCache[key]?.let { (flag, at) -> if (now - at in 0 until FAMILY_CACHE_MS) return flag }
+        val (flag, conclusive) = probeFamily(host)
+        // Only a clear answer is kept: a failed lookup or two failed connects say nothing
+        // about the families and are asked again next time.
+        if (conclusive) familyCache[key] = Pair(flag, now) else familyCache.remove(key)
+        return flag
+    }
+
+    /** A run with a forced family failed as if offline: ask again next time, without it now. */
+    private fun forgetAddressFamily(url: String) {
+        familyKey(url)?.let { familyCache.remove(it) }
+    }
+
+    /** The family to force (or null), and whether that answer is worth keeping. */
+    private fun probeFamily(host: String): Pair<String?, Boolean> {
+        val addresses = try {
+            InetAddress.getAllByName(host).toList()
+        } catch (e: Exception) {
+            return Pair(null, false)
+        }
+        val v4 = addresses.firstOrNull { it is Inet4Address }
+        val v6 = addresses.firstOrNull { it is Inet6Address }
+        // One family only (the phone has no IPv6, or the site none): nothing to choose.
+        if (v4 == null || v6 == null) return Pair(null, true)
+        val f4 = executor.submit<Boolean> { canConnect(v4) }
+        val f6 = executor.submit<Boolean> { canConnect(v6) }
+        val wait = FAMILY_PROBE_MS + 500L
+        val ok4 = runCatching { f4.get(wait, TimeUnit.MILLISECONDS) }.getOrDefault(false)
+        val ok6 = runCatching { f6.get(wait, TimeUnit.MILLISECONDS) }.getOrDefault(false)
+        f4.cancel(true)
+        f6.cancel(true)
+        return when {
+            ok4 && !ok6 -> Pair("--force-ipv4", true)
+            ok6 && !ok4 -> Pair("--force-ipv6", true)
+            ok4 && ok6 -> Pair(null, true)
+            else -> Pair(null, false)
+        }
+    }
+
+    private fun canConnect(address: InetAddress): Boolean = try {
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(address, 443), FAMILY_PROBE_MS)
+            true
+        }
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun fetchInfoJson(
+        url: String,
+        extractorArgs: String?,
+        timeoutMs: Long,
+        requestId: String?,
+        family: String?
+    ): JSONObject {
         val request = YoutubeDLRequest(url).apply {
             addOption("--no-playlist")
             // Links to a collection on other sites (e.g. an Instagram carousel): first item only.
@@ -398,6 +492,7 @@ class ExtractorChannel(
             addOption("--dump-json")
             addOption("--no-warnings")
             addOption("--socket-timeout", "20")
+            family?.let { addOption(it) }
             if (extractorArgs != null) {
                 addOption("--extractor-args", extractorArgs)
             }
@@ -465,6 +560,8 @@ class ExtractorChannel(
 
                 val variants = if (isYoutubeHost(url)) YOUTUBE_CLIENT_VARIANTS else listOf(null)
                 for ((index, variant) in variants.withIndex()) {
+                    // Before the cancel check, so a cancel during the probe is still seen.
+                    val family = addressFamilyOption(url)
                     if (requestId != null && cancelledInfo.contains(requestId)) {
                         throw YoutubeDLException("Interrupted: lookup cancelled")
                     }
@@ -472,7 +569,7 @@ class ExtractorChannel(
                     // Out of time for another client: use what we have (or report the error).
                     if (index > 0 && left < INFO_MIN_RUN_MS) break
                     try {
-                        val json = fetchInfoJson(url, variant, maxOf(left, INFO_MIN_RUN_MS), requestId)
+                        val json = fetchInfoJson(url, variant, maxOf(left, INFO_MIN_RUN_MS), requestId, family)
                         val h = maxVideoHeight(json)
                         if (h > bestHeight) {
                             bestHeight = h
@@ -484,6 +581,12 @@ class ExtractorChannel(
                     } catch (e: Exception) {
                         lastError = e
                         if ((e.message ?: "").startsWith("INFO_TIMEOUT")) break
+                        // "Offline" with a forced family: the network changed under the answer
+                        // (say, to Wi-Fi without IPv6). Ask again and carry on.
+                        if (family != null && isOffline(e)) {
+                            forgetAddressFamily(url)
+                            continue
+                        }
                         // Private, age-restricted, removed, offline ...: no other client helps.
                         if (isOffline(e) || mapException(e).first !in RETRY_WITH_OTHER_CLIENT) break
                     }
@@ -703,6 +806,8 @@ class ExtractorChannel(
                 var lastError: Exception? = null
                 var done = false
                 for (attempt in attempts) {
+                    // Before the cancel check, so a cancel during the probe is still seen.
+                    val family = addressFamilyOption(url)
                     if (cancelledTasks.contains(taskId)) throw YoutubeDLException("Interrupted")
                     val request = YoutubeDLRequest(url).apply {
                         addOption("--no-playlist")
@@ -714,6 +819,7 @@ class ExtractorChannel(
                         addOption("--max-filesize", "2G")
                         addOption("--no-mtime")
                         addOption("--socket-timeout", "30")
+                        family?.let { addOption(it) }
                         addOption("--retries", "5")
                         addOption("--fragment-retries", "5")
                         addOption("--concurrent-fragments", "4")
@@ -769,6 +875,12 @@ class ExtractorChannel(
                     } catch (e: Exception) {
                         lastError = e
                         if (isCancelled(taskId, e)) throw e
+                        // "Offline" with a forced family: the network changed under the answer.
+                        // Ask again for the next attempt.
+                        if (family != null && isOffline(e)) {
+                            forgetAddressFamily(url)
+                            continue
+                        }
                         // Offline, private, age-restricted, removed, DRM, too large ...:
                         // another client or format cannot help.
                         if (isOffline(e)) throw e
@@ -899,6 +1011,11 @@ class ExtractorChannel(
                 Pair("LIVE_NOT_SUPPORTED", "Live streams can't be downloaded.")
             msg.startsWith("INFO_TIMEOUT") ->
                 Pair("INFO_TIMEOUT", "This link is taking too long. Try again later.")
+            // The network breaks the secure connection (a school, office or hotel Wi-Fi that
+            // inspects HTTPS, or a captive portal): no other client, update or retry can help.
+            has("CERTIFICATE_VERIFY_FAILED") || has("certificate verify failed") ||
+                has("SSLCertVerificationError") || has("unable to get local issuer certificate") ->
+                Pair("NETWORK_BLOCKED", "This network blocks a secure connection to the site")
             // "Video unavailable. This content isn't available, try again later." is YouTube
             // limiting this phone's address for a while, not a removed video. Checked before
             // UNAVAILABLE; no other client or update can help (more runs make it worse).

@@ -114,6 +114,10 @@ class ExtractorErrors {
         return 'This video has no version that can be saved right now. Try again later.';
       case 'NO_MEDIA':
         return 'This link has no video or audio to save.';
+      case 'NETWORK_BLOCKED':
+        // A Wi-Fi that inspects secure connections (school, office, hotel) or
+        // still wants a sign-in page: no retry or update helps there.
+        return 'This network is blocking a secure connection to the site. Try another Wi-Fi or mobile data.';
     }
     return null;
   }

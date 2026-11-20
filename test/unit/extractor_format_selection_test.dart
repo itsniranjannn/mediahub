@@ -97,6 +97,20 @@ void main() {
       expect(FormatOptions.maxHeightOf(v720.selector), 720, reason: 'the chosen height stays the cap');
     });
 
+    // On YouTube the sheet said "Original audio (M4A 129 kbps)" while plain
+    // `ba` saved WebM/Opus: the selector now asks for the kind the sheet names.
+    test('Original audio asks for the kind the sheet names, then any sound', () {
+      final choice = FormatOptions.build(_wide).firstWhere((c) => c.id == 'audio_best');
+      expect(choice.label, contains('M4A'));
+      expect(choice.selector, 'ba[ext=m4a]/ba/b');
+      expect(FormatOptions.isAudioSelector(choice.selector), isTrue);
+      expect(FormatOptions.formatSortFor(choice.selector), isNull);
+      expect(FormatOptions.originalAudioSelector(null), 'ba/b');
+      expect(FormatOptions.originalAudioSelector('m4a;rm'), 'ba/b', reason: 'only a plain extension');
+      final mp3 = FormatOptions.build(_wide).firstWhere((c) => c.id == 'audio_mp3');
+      expect(mp3.selector, 'ba/b', reason: 'MP3 is converted anyway');
+    });
+
     test('downloads queued by older versions get the catch-all on retry', () {
       expect(
         FormatOptions.withCatchAll(_legacySelectors[0], audio: false),

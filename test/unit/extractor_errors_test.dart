@@ -116,4 +116,14 @@ void main() {
     expect(m, isNot(contains('removed')));
     expect(ExtractorErrors.lookupMessage('RATE_LIMITED'), m);
   });
+
+  // Seen on a Wi-Fi that inspects HTTPS: every yt-dlp run failed with
+  // CERTIFICATE_VERIFY_FAILED and was told as "the site may have changed".
+  test('a network that breaks the secure connection says so, and nothing retries it', () {
+    const m = 'This network is blocking a secure connection to the site. Try another Wi-Fi or mobile data.';
+    expect(ExtractorErrors.lookupMessage('NETWORK_BLOCKED'), m);
+    expect(ExtractorErrors.downloadMessage('x_network_blocked'), m);
+    expect(ExtractorErrors.updateMayHelp, isNot(contains('NETWORK_BLOCKED')));
+    expect(ExtractorErrors.youtubeFallbackMayHelp, isNot(contains('NETWORK_BLOCKED')));
+  });
 }

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../app/theme/app_palette.dart';
 import '../../core/downloads/known_platform_checker.dart';
+import '../../core/logging/diagnostics_service.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/platform_info.dart';
@@ -126,11 +127,33 @@ class WebLinkDownloadFlow {
     bool downloadsRunning = false,
     VoidCallback? onGaveUp,
   }) async {
+    // Every lookup goes to Settings → Diagnostics (the host, how long it took
+    // and, when it failed, the code and yt-dlp's short reason), so a phone
+    // that cannot read links can be told apart from a site that changed.
+    final watch = Stopwatch()..start();
     Future<ExtractorMetadata> read() async {
       try {
-        return await backend.getInfo(uri.toString(), requestId: requestId).timeout(infoTimeout);
+        final meta = await backend.getInfo(uri.toString(), requestId: requestId).timeout(infoTimeout);
+        DiagnosticsService.instance.logEvent('extractor_lookup_ok', {
+          'host': uri.host,
+          'ms': watch.elapsedMilliseconds,
+        });
+        return meta;
       } on TimeoutException {
+        DiagnosticsService.instance.logEvent('extractor_lookup_failed', {
+          'host': uri.host,
+          'code': 'TIMEOUT',
+          'ms': watch.elapsedMilliseconds,
+        });
         onGaveUp?.call();
+        rethrow;
+      } on ExtractorException catch (e) {
+        DiagnosticsService.instance.logEvent('extractor_lookup_failed', {
+          'host': uri.host,
+          'code': e.code,
+          if (e.details != null) 'reason': e.details,
+          'ms': watch.elapsedMilliseconds,
+        });
         rethrow;
       }
     }
@@ -140,6 +163,7 @@ class WebLinkDownloadFlow {
     } on ExtractorException catch (e) {
       if (!ExtractorErrors.updateMayHelp.contains(e.code) || abandoned()) rethrow;
       final outcome = await updater.updateAfterFailure(otherDownloadsRunning: downloadsRunning);
+      DiagnosticsService.instance.logEvent('extractor_auto_update', {'outcome': outcome.name, 'after': 'lookup'});
       if (outcome != ExtractorUpdateOutcome.updated || abandoned()) rethrow;
       return read();
     }

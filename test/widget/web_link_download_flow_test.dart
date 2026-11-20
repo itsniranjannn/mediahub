@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
+import 'package:mediahub/core/logging/diagnostics_service.dart';
 import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/core/storage/settings_store.dart';
 import 'package:mediahub/data/downloads/extractor_download_runner.dart';
@@ -72,6 +73,8 @@ void main() {
   late int queuedCallbacks;
 
   setUp(() {
+    // Lookups are logged; no 3 s write timer may outlive a widget test.
+    DiagnosticsService.enableDebounce = false;
     // Not Android: the notification permission check is skipped.
     PlatformInfo.debugIsAndroid = false;
     PlatformInfo.debugIsIOS = false;

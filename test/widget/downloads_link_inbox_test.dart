@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mediahub/core/logging/diagnostics_service.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/data/database/app_database.dart';
@@ -136,6 +137,8 @@ void main() {
   late int? freeBytes;
 
   setUp(() {
+    // Lookups are logged; no 3 s write timer may outlive a widget test.
+    DiagnosticsService.enableDebounce = false;
     db = AppDatabase(NativeDatabase.memory());
     source = FakeOnlineSource();
     engine = _RecordingEngine();
