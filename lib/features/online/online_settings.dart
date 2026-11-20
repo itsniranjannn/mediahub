@@ -45,6 +45,33 @@ class OnlineAutoPipNotifier extends Notifier<bool> {
 
 final onlineAutoPipProvider = NotifierProvider<OnlineAutoPipNotifier, bool>(OnlineAutoPipNotifier.new);
 
+/// Blocks YouTube's ads in the Online tab (Settings → Online and the Online
+/// ⋮ menu). The page script and the WebView's request rules are fixed when
+/// the WebView starts, so the Online tab opens its page again on a change
+/// (`online_ad_block.dart`, `youtube_bridge.js` section g).
+class OnlineBlockAdsNotifier extends Notifier<bool> {
+  static const String prefKey = 'online_block_ads';
+
+  @override
+  bool build() => SettingsStore.instance.getBool(prefKey, defaultValue: true);
+
+  void set(bool value) {
+    if (value == state) return;
+    state = value;
+    SettingsStore.instance.setBool(prefKey, value);
+    DiagnosticsService.instance.logEvent('setting_online_block_ads_changed', {'enabled': value});
+  }
+
+  void toggle() => set(!state);
+}
+
+final onlineBlockAdsProvider = NotifierProvider<OnlineBlockAdsNotifier, bool>(OnlineBlockAdsNotifier.new);
+
+/// Settings → Online: the Block ads row.
+const String onlineBlockAdsTitle = 'Block ads';
+const String onlineBlockAdsSubtitle = 'Skips video ads and hides sponsored posts in the Online tab. '
+    "If a video won't play, turn this off.";
+
 /// Settings → Online: the sign-in row. Signing in happens in the Online tab
 /// (⋮ → Sign in to YouTube, or YouTube's own Sign in button); Google decides
 /// whether it lets an app's web view sign in, so the row says that too.

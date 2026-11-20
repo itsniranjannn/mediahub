@@ -129,6 +129,13 @@ class SettingsStore {
     await _save();
   }
 
+  /// Forgets [key]: its default applies again.
+  Future<void> remove(String key) async {
+    if (!_data.containsKey(key)) return;
+    _data.remove(key);
+    await _save();
+  }
+
   /// Queues a write of the current settings; completes once it is on disk
   /// (or has failed, which is never thrown: settings stay in memory).
   Future<void> _save() {

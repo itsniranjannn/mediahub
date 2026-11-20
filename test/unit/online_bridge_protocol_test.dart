@@ -231,5 +231,20 @@ void main() {
       expect(buildBridgeScript(src, token), "var TOKEN = '$token';");
       expect(() => buildBridgeScript(src, "x';alert(1);'"), throwsArgumentError);
     });
+
+    test('Block ads goes in as "on" or "off", next to the token, in the real asset', () {
+      final js = File('assets/web/youtube_bridge.js').readAsStringSync();
+      expect(js, contains("var BLOCK_ADS = '$onlineBridgeBlockAdsPlaceholder' !== 'off';"));
+      expect(onlineBridgeBlockAdsPlaceholder.allMatches(js), hasLength(1));
+      final on = buildBridgeScript(js, token);
+      expect(on, contains("var BLOCK_ADS = 'on' !== 'off';"), reason: 'on by default');
+      final off = buildBridgeScript(js, token, blockAds: false);
+      expect(off, contains("var BLOCK_ADS = 'off' !== 'off';"));
+      for (final built in [on, off]) {
+        expect(built, isNot(contains(onlineBridgeBlockAdsPlaceholder)));
+        expect(built, isNot(contains(onlineBridgeTokenPlaceholder)));
+        expect(built, contains("var TOKEN = '$token';"));
+      }
+    });
   });
 }

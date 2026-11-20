@@ -26,13 +26,19 @@ String newOnlineBridgeToken([math.Random? random]) {
   return sb.toString();
 }
 
-/// The bridge script with its token filled in. The token is hex only, so it
-/// can never break out of the JS string literal it replaces.
-String buildBridgeScript(String assetSource, String token) {
+/// Placeholder in the asset for Settings → Online → Block ads: 'on' or 'off'.
+const String onlineBridgeBlockAdsPlaceholder = '__MEDIAHUB_BLOCK_ADS__';
+
+/// The bridge script with its token and the Block ads choice filled in. The
+/// token is hex only and the choice is 'on' or 'off', so neither can break
+/// out of the JS string literal it replaces.
+String buildBridgeScript(String assetSource, String token, {bool blockAds = true}) {
   if (!RegExp(r'^[0-9a-f]{16,64}$').hasMatch(token)) {
     throw ArgumentError.value(token, 'token', 'must be lowercase hex');
   }
-  return assetSource.replaceAll(onlineBridgeTokenPlaceholder, token);
+  return assetSource
+      .replaceAll(onlineBridgeTokenPlaceholder, token)
+      .replaceAll(onlineBridgeBlockAdsPlaceholder, blockAds ? 'on' : 'off');
 }
 
 /// Playback status reported by the page.

@@ -138,7 +138,8 @@ class _FakeWebSurfaceState extends State<_FakeWebSurface> {
 
 /// The bridge source without touching the asset bundle.
 const OnlineAssets fakeOnlineAssets = OnlineAssets(
-  bridgeSource: "(function(){var TOKEN = '$onlineBridgeTokenPlaceholder';})();",
+  bridgeSource: "(function(){var TOKEN = '$onlineBridgeTokenPlaceholder';"
+      "var BLOCK_ADS = '$onlineBridgeBlockAdsPlaceholder' !== 'off';})();",
 );
 
 /// Stands in for the audio handler's external-source side.

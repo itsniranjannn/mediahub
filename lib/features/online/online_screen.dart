@@ -352,7 +352,19 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     if (!ok) _onFullscreen(false);
   }
 
-  void _onRendererGone() {
+  void _onRendererGone() => _startFreshWebView();
+
+  /// Settings → Online → Block ads changed. The page script and the
+  /// WebView's request rules are fixed when a WebView starts, so a fresh one
+  /// opens the same page with the new choice (like a reload).
+  void _onBlockAdsChanged() {
+    DiagnosticsService.instance.logEvent('online_block_ads_reload');
+    _startFreshWebView();
+  }
+
+  /// A new WebView on the page on screen (or where the tab started, when
+  /// that is not a YouTube page): the old one and its video go away.
+  void _startFreshWebView() {
     if (!mounted) return;
     _controller = null;
     _session.detachPage();
@@ -702,6 +714,9 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
       _session.send(BridgeCommand.setAutoPip(next));
       _updatePipEligibility();
     });
+    ref.listen<bool>(onlineBlockAdsProvider, (previous, next) {
+      if (previous != next) _onBlockAdsChanged();
+    });
 
     final assets = ref.watch(onlineAssetsProvider);
     ref.watch(androidSdkIntProvider); // warm: "Copy link" reads it synchronously
@@ -773,13 +788,23 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
                           color: p.background,
                           child: EmptyHint(
                             key: const ValueKey('online_error'),
-                            icon: _error!.offline ? Icons.wifi_off_rounded : Icons.cloud_off_rounded,
-                            title: _error!.offline ? "You're offline" : "Couldn't load YouTube",
-                            message: _error!.mobileDataOff
-                                ? 'Mobile data is off for MediaHub. Turn it on in Settings, or use Wi-Fi.'
+                            icon: _error!.secureConnectionBlocked
+                                ? Icons.gpp_bad_rounded
                                 : _error!.offline
-                                    ? 'Connect to the internet to browse YouTube.'
-                                    : 'Something went wrong while opening the page.',
+                                    ? Icons.wifi_off_rounded
+                                    : Icons.cloud_off_rounded,
+                            title: _error!.secureConnectionBlocked
+                                ? "Can't connect securely"
+                                : _error!.offline
+                                    ? "You're offline"
+                                    : "Couldn't load YouTube",
+                            message: _error!.secureConnectionBlocked
+                                ? onlineSecureConnectionBlockedMessage
+                                : _error!.mobileDataOff
+                                    ? 'Mobile data is off for MediaHub. Turn it on in Settings, or use Wi-Fi.'
+                                    : _error!.offline
+                                        ? 'Connect to the internet to browse YouTube.'
+                                        : 'Something went wrong while opening the page.',
                             action: FilledButton(onPressed: _retry, child: const Text('Retry')),
                           ),
                         ),
@@ -796,10 +821,12 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
 
   Widget _buildWebView(BuildContext context, OnlineAssets assets) {
     final builder = ref.read(onlineWebViewBuilderProvider);
+    final blockAds = ref.read(onlineBlockAdsProvider);
     final config = OnlineWebViewConfig(
-      bridgeScript: buildBridgeScript(assets.bridgeSource, _token),
+      bridgeScript: buildBridgeScript(assets.bridgeSource, _token, blockAds: blockAds),
       backgroundPlay: ref.read(onlineBackgroundPlayProvider),
       initialUrl: _initialUrl,
+      blockAds: blockAds,
       fixtureHtml: assets.fixtureHtml,
     );
     final events = OnlineWebEvents(
@@ -1098,7 +1125,7 @@ class _SearchSheetState extends State<_SearchSheet> {
 }
 
 /// The ⋮ sheet: Reload · YouTube Music · Sign in to YouTube · Open Downloads ·
-/// Background play · Auto PiP · Clear site data.
+/// Background play · Auto PiP · Block ads · Clear site data.
 class _OnlineMenuSheet extends ConsumerWidget {
   const _OnlineMenuSheet({
     required this.onReload,
@@ -1118,6 +1145,7 @@ class _OnlineMenuSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final background = ref.watch(onlineBackgroundPlayProvider);
     final autoPip = ref.watch(onlineAutoPipProvider);
+    final blockAds = ref.watch(onlineBlockAdsProvider);
     final p = context.palette;
     return SafeArea(
       top: false,
@@ -1161,6 +1189,14 @@ class _OnlineMenuSheet extends ConsumerWidget {
               title: const Text('Auto picture-in-picture'),
               value: autoPip,
               onChanged: (v) => ref.read(onlineAutoPipProvider.notifier).set(v),
+            ),
+            // A change opens the page again (the tab says so by reloading).
+            SwitchListTile(
+              key: const ValueKey('online_menu_block_ads'),
+              secondary: const Icon(Icons.block_rounded),
+              title: const Text(onlineBlockAdsTitle),
+              value: blockAds,
+              onChanged: (v) => ref.read(onlineBlockAdsProvider.notifier).set(v),
             ),
             const Divider(height: 1),
             ListTile(

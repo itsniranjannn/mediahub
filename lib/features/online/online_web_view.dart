@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/platform_info.dart';
+import 'online_ad_block.dart';
 import 'online_bridge_protocol.dart';
 import 'youtube_urls.dart';
 
@@ -31,7 +32,12 @@ abstract class OnlineWebController {
 
 /// A main-frame load failure, reduced to what the screen shows.
 class OnlineLoadError {
-  const OnlineLoadError({required this.offline, required this.description, this.mobileDataOff = false});
+  const OnlineLoadError({
+    required this.offline,
+    required this.description,
+    this.mobileDataOff = false,
+    this.secureConnectionBlocked = false,
+  });
 
   /// No connection, DNS failure, timeout or a host that cannot be reached.
   final bool offline;
@@ -39,7 +45,22 @@ class OnlineLoadError {
 
   /// iOS: mobile data is switched off for MediaHub in the phone's Settings.
   final bool mobileDataOff;
+
+  /// The network answered with a certificate the phone does not trust (a
+  /// Wi-Fi that inspects HTTPS, say). The page was refused, never let through.
+  final bool secureConnectionBlocked;
 }
+
+/// What the error screen says when the network breaks the secure connection.
+const String onlineSecureConnectionBlockedMessage =
+    'This network is blocking a secure connection to YouTube. Try another Wi-Fi or mobile data.';
+
+/// The page itself met a certificate the phone does not trust.
+const OnlineLoadError onlineSecureConnectionBlockedError = OnlineLoadError(
+  offline: false,
+  description: 'certificate not trusted',
+  secureConnectionBlocked: true,
+);
 
 /// Main-frame failures that mean "no usable connection".
 final List<WebResourceErrorType> _offlineErrors = [
@@ -64,6 +85,16 @@ final List<WebResourceErrorType> _iosOfflineErrors = [
   WebResourceErrorType.DATA_NOT_ALLOWED,
 ];
 
+/// iOS: WebKit refuses a certificate it does not trust by itself (the app
+/// never answers its server-trust challenges), and the main frame then fails
+/// with one of these.
+final List<WebResourceErrorType> _iosCertificateErrors = [
+  WebResourceErrorType.SERVER_CERTIFICATE_UNTRUSTED,
+  WebResourceErrorType.SERVER_CERTIFICATE_HAS_UNKNOWN_ROOT,
+  WebResourceErrorType.SERVER_CERTIFICATE_HAS_BAD_DATE,
+  WebResourceErrorType.SERVER_CERTIFICATE_NOT_YET_VALID,
+];
+
 /// WebKit's "Frame load interrupted" (WebKitErrorDomain 102): a load that was
 /// stopped on purpose (a link MediaHub opened in the browser instead, or the
 /// http to https swap). The iOS plugin reports it as type unknown (-1), with
@@ -75,6 +106,9 @@ final RegExp _webKitFrameLoadInterrupted = RegExp(r'domain=WebKitErrorDomain, co
 OnlineLoadError? onlineLoadErrorFor(WebResourceErrorType type, String description, {required bool isIOS}) {
   if (type == WebResourceErrorType.CANCELLED) return null;
   if (isIOS && _webKitFrameLoadInterrupted.hasMatch(description)) return null;
+  if (isIOS && _iosCertificateErrors.any((t) => t == type)) {
+    return OnlineLoadError(offline: false, description: description, secureConnectionBlocked: true);
+  }
   final offline = _offlineErrors.any((t) => t == type) || (isIOS && _iosOfflineErrors.any((t) => t == type));
   return OnlineLoadError(
     offline: offline,
@@ -127,13 +161,19 @@ class OnlineWebViewConfig {
     required this.bridgeScript,
     required this.backgroundPlay,
     required this.initialUrl,
+    this.blockAds = true,
     this.fixtureHtml,
   });
 
-  /// The media bridge with its token filled in.
+  /// The media bridge with its token (and the Block ads choice) filled in.
   final String bridgeScript;
   final bool backgroundPlay;
   final Uri initialUrl;
+
+  /// Settings → Online → Block ads: the WebView's ad request rules (iOS
+  /// only; Android has none, `online_ad_block.dart`). Fixed for the WebView's
+  /// life.
+  final bool blockAds;
 
   /// Debug fixture: this page is loaded with [initialUrl] as its base URL
   /// instead of fetching [initialUrl].
@@ -295,12 +335,19 @@ void resetOnlineUserAgentForTests() {
 /// the plugin's default, "recommended", gives an iPad desktop YouTube), and
 /// no link preview on a long press (WebKit's preview card can load and show
 /// an outside page inside the app). Android keeps the plugin defaults for both.
+///
+/// [blockAds] (Settings → Online → Block ads): iOS gets WebKit's content rule
+/// list for ad addresses. Android gets no native ad rule at all: the plugin
+/// has none that is cheap and works there, so the page script blocks alone
+/// (`online_ad_block.dart` says why).
 InAppWebViewSettings onlineWebViewSettings({
   required bool backgroundPlay,
   required bool isIOS,
   String? userAgent,
+  bool blockAds = true,
 }) =>
     InAppWebViewSettings(
+      contentBlockers: isIOS && blockAds ? onlineAdContentBlockers() : <ContentBlocker>[],
       userAgent: userAgent ?? '',
       requestedWithHeaderOriginAllowList: const <String>{},
       incognito: false,
@@ -364,10 +411,69 @@ Future<bool> handleOnlineNewWindow(
   return false;
 }
 
+/// Android: which hosts the page itself (the main frame's document) is on,
+/// so that a certificate the phone does not trust shows the error screen only
+/// when it is the page's own: on the host of the page on screen, on the host
+/// of a page the main frame is loading, or before any web page has loaded
+/// (nothing else can be loading then). One on a picture, a video segment or
+/// an ad never covers a page that works. Either way it is refused.
+class OnlineMainDocumentHosts {
+  OnlineMainDocumentHosts(Uri initialUrl) {
+    loading(initialUrl);
+  }
+
+  String? _shown;
+  String? _loading;
+
+  /// The main frame is about to load [url]: the first page, a link, a
+  /// redirect, or a load the app asked for.
+  void loading(Uri? url) {
+    final host = _webHost(url);
+    if (host != null) _loading = host;
+  }
+
+  /// A document arrived in the main frame (Android's onPageStarted). A page
+  /// that is not on the web (about:blank) counts as none.
+  void shown(Uri? url) {
+    _shown = _webHost(url);
+    _loading = null;
+  }
+
+  /// Whether a certificate refused for [host] was the page's own.
+  bool isMainDocument(String host) {
+    final h = host.toLowerCase();
+    return _shown == null || h == _shown || h == _loading;
+  }
+
+  static String? _webHost(Uri? url) {
+    if (url == null || (url.scheme != 'https' && url.scheme != 'http') || url.host.isEmpty) return null;
+    return url.host.toLowerCase();
+  }
+}
+
+/// Android: the network answered [challenge] with a certificate the phone
+/// does not trust (Android's WebView calls onReceivedSslError only then). It
+/// is always refused, whatever the page: a page is never let through a bad
+/// certificate. When it was the page's own ([OnlineMainDocumentHosts]), the
+/// screen says the network is blocking the secure connection; otherwise the
+/// page carries on without that one resource.
+Future<ServerTrustAuthResponse> refuseUntrustedCertificate(
+  URLAuthenticationChallenge challenge, {
+  required OnlineMainDocumentHosts mainDocument,
+  required void Function(OnlineLoadError error) onMainFrameError,
+}) async {
+  final main = mainDocument.isMainDocument(challenge.protectionSpace.host);
+  DiagnosticsService.instance.logEvent('online_certificate_refused', {'main': main});
+  if (main) onMainFrameError(onlineSecureConnectionBlockedError);
+  return ServerTrustAuthResponse(action: ServerTrustAuthResponseAction.CANCEL);
+}
+
 class _InAppOnlineWebViewState extends State<_InAppOnlineWebView> {
   // Built once, when the user agent is known: the WebView must not be
   // recreated by rebuilds of the screen.
   InAppWebViewSettings? _settings;
+
+  late final OnlineMainDocumentHosts _mainDocument = OnlineMainDocumentHosts(widget.config.initialUrl);
 
   @override
   void initState() {
@@ -389,6 +495,7 @@ class _InAppOnlineWebViewState extends State<_InAppOnlineWebView> {
         backgroundPlay: widget.config.backgroundPlay,
         isIOS: isIOS,
         userAgent: userAgent,
+        blockAds: widget.config.blockAds,
       );
 
   late final UnmodifiableListView<UserScript> _scripts = UnmodifiableListView([
@@ -427,7 +534,7 @@ class _InAppOnlineWebViewState extends State<_InAppOnlineWebView> {
             return null;
           },
         );
-        events.onCreated(_InAppController(controller));
+        events.onCreated(_InAppController(controller, onLoad: _mainDocument.loading));
       },
       shouldOverrideUrlLoading: (controller, action) async {
         final url = action.request.url;
@@ -435,6 +542,7 @@ class _InAppOnlineWebViewState extends State<_InAppOnlineWebView> {
         switch (decision.kind) {
           case OnlineNavigationKind.allow:
             final upgraded = decision.uri;
+            if (action.isForMainFrame) _mainDocument.loading(upgraded ?? url);
             if (upgraded != null && url != null && upgraded.toString() != url.toString()) {
               await controller.loadUrl(urlRequest: URLRequest(url: WebUri.uri(upgraded)));
               return NavigationActionPolicy.CANCEL;
@@ -457,7 +565,10 @@ class _InAppOnlineWebViewState extends State<_InAppOnlineWebView> {
             return NavigationActionPolicy.CANCEL;
         }
       },
-      onLoadStart: (controller, url) => events.onLoadStart(url),
+      onLoadStart: (controller, url) {
+        _mainDocument.shown(url);
+        events.onLoadStart(url);
+      },
       onLoadStop: (controller, url) => events.onLoadStop(url),
       onUpdateVisitedHistory: (controller, url, isReload) => events.onUrlChanged(url),
       onTitleChanged: (controller, title) => events.onTitleChanged(title),
@@ -474,6 +585,17 @@ class _InAppOnlineWebViewState extends State<_InAppOnlineWebView> {
         DiagnosticsService.instance.logEvent('online_load_error', {'type': error.type.toString()});
         events.onMainFrameError(shown);
       },
+      // Android only. iOS asks about https connections whether their
+      // certificate is trusted or not; without an answer from the app WebKit
+      // checks the certificate itself, and a page it refuses fails in
+      // onReceivedError (see onlineLoadErrorFor).
+      onReceivedServerTrustAuthRequest: PlatformInfo.isIOS
+          ? null
+          : (controller, challenge) => refuseUntrustedCertificate(
+                challenge,
+                mainDocument: _mainDocument,
+                onMainFrameError: events.onMainFrameError,
+              ),
       onEnterFullscreen: (controller) => events.onFullscreenChanged(true),
       onExitFullscreen: (controller) => events.onFullscreenChanged(false),
       onPermissionRequest: (controller, request) async =>
@@ -493,12 +615,18 @@ class _InAppOnlineWebViewState extends State<_InAppOnlineWebView> {
 }
 
 class _InAppController implements OnlineWebController {
-  _InAppController(this._c);
+  _InAppController(this._c, {required this.onLoad});
 
   final InAppWebViewController _c;
 
+  /// The main frame is about to load a page the app asked for.
+  final void Function(Uri url) onLoad;
+
   @override
-  Future<void> loadUrl(Uri url) => _c.loadUrl(urlRequest: URLRequest(url: WebUri.uri(url)));
+  Future<void> loadUrl(Uri url) {
+    onLoad(url);
+    return _c.loadUrl(urlRequest: URLRequest(url: WebUri.uri(url)));
+  }
 
   @override
   Future<void> goBack() => _c.goBack();

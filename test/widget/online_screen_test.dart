@@ -127,6 +127,7 @@ void main() {
     DeviceControls.resetPipForTests();
     await SettingsStore.instance.setBool(OnlineBackgroundPlayNotifier.prefKey, true);
     await SettingsStore.instance.setBool(OnlineAutoPipNotifier.prefKey, true);
+    await SettingsStore.instance.setBool(OnlineBlockAdsNotifier.prefKey, true);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
       SystemChannels.platform,
       (call) async {
@@ -437,6 +438,82 @@ void main() {
     expect(h.web.mounts, before + 1);
     expect(h.web.config!.initialUrl.toString(), watchUrl);
     expect(h.host.log.last, 'clear', reason: 'the dead page lets go of the notification');
+  });
+
+  testWidgets('Block ads: on by default, in the script and the WebView from the start', (tester) async {
+    // Nothing stored, as on a new install (setUp stores "on" for the other tests).
+    await SettingsStore.instance.remove(OnlineBlockAdsNotifier.prefKey);
+    final h = await _pumpOnline(tester);
+    expect(h.container.read(onlineBlockAdsProvider), isTrue);
+    expect(h.web.config!.blockAds, isTrue);
+    expect(h.web.config!.bridgeScript, contains("var BLOCK_ADS = 'on' !== 'off';"));
+    expect(h.web.config!.bridgeScript, isNot(contains('__MEDIAHUB_')));
+  });
+
+  testWidgets('a network that breaks the secure connection: says so, with Retry', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.events!.onMainFrameError(onlineSecureConnectionBlockedError);
+    await tester.pump();
+    expect(key('online_error'), findsOneWidget);
+    expect(find.text("Can't connect securely"), findsOneWidget);
+    expect(
+      find.text('This network is blocking a secure connection to YouTube. Try another Wi-Fi or mobile data.'),
+      findsOneWidget,
+    );
+    expect(find.text("You're offline"), findsNothing);
+    expect(find.byIcon(Icons.gpp_bad_rounded), findsOneWidget);
+    expect(key('online_load_line'), findsNothing, reason: 'no longer loading');
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+    expect(key('online_error'), findsNothing);
+    expect(h.web.controller.calls, contains('load https://m.youtube.com/'));
+  });
+
+  testWidgets('Block ads from the menu: the same page opens again in a fresh WebView with the new choice',
+      (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.postMedia();
+    expect(h.host.log, ['set']);
+    final before = h.web.mounts;
+
+    await tester.tap(key('online_menu'));
+    await tester.pumpAndSettle();
+    expect(find.text('Block ads'), findsOneWidget);
+    expect(tester.widget<SwitchListTile>(key('online_menu_block_ads')).value, isTrue);
+    await tester.tap(key('online_menu_block_ads'));
+    await tester.pump();
+    expect(h.container.read(onlineBlockAdsProvider), isFalse);
+    expect(h.web.mounts, before + 1, reason: 'a fresh WebView: the page script is fixed at its start');
+    expect(h.web.config!.blockAds, isFalse);
+    expect(h.web.config!.bridgeScript, contains("var BLOCK_ADS = 'off' !== 'off';"));
+    expect(h.web.config!.initialUrl.toString(), watchUrl, reason: 'the same page');
+    expect(h.host.log.last, 'clear', reason: 'the old page lets go of the notification');
+    expect(tester.widget<SwitchListTile>(key('online_menu_block_ads')).value, isFalse);
+
+    // And back on.
+    await tester.tap(key('online_menu_block_ads'));
+    await tester.pump();
+    expect(h.web.mounts, before + 2);
+    expect(h.web.config!.blockAds, isTrue);
+    expect(h.web.config!.bridgeScript, contains("var BLOCK_ADS = 'on' !== 'off';"));
+  });
+
+  testWidgets('Block ads changed in Settings while the tab is open: the page opens again', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate('https://m.youtube.com/results?search_query=lofi');
+    await tester.pumpAndSettle();
+    final before = h.web.mounts;
+    h.container.read(onlineBlockAdsProvider.notifier).set(false);
+    await tester.pump();
+    expect(h.web.mounts, before + 1);
+    expect(h.web.config!.initialUrl.toString(), 'https://m.youtube.com/results?search_query=lofi');
+    expect(SettingsStore.instance.getBool(OnlineBlockAdsNotifier.prefKey, defaultValue: true), isFalse);
+    // The same value again changes nothing.
+    h.container.read(onlineBlockAdsProvider.notifier).set(false);
+    await tester.pump();
+    expect(h.web.mounts, before + 1);
   });
 
   testWidgets('a new document ends the old video: the notification lets go', (tester) async {

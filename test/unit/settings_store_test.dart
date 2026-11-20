@@ -88,6 +88,19 @@ void main() {
       expect(second.getString('library.audio.sort'), 'mostPlayed');
     });
 
+    test('remove forgets a key, on disk too: its default applies again', () async {
+      final first = await loadedStore();
+      await first.setBool('flag', false);
+      await first.setBool('other', true);
+      await first.remove('flag');
+      expect(first.getBool('flag', defaultValue: true), isTrue);
+      expect(await readJson(), {'other': true});
+      await first.remove('never_set'); // nothing to forget: fine
+      final second = await loadedStore();
+      expect(second.getBool('flag', defaultValue: true), isTrue);
+      expect(second.getBool('other'), isTrue);
+    });
+
     test('wrongly typed values fall back to the defaults', () async {
       await settingsFile().writeAsString(jsonEncode({'flag': 'yes', 'history': 'not a list'}));
       final store = await loadedStore();

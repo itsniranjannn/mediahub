@@ -261,8 +261,8 @@ class _PlaybackCard extends ConsumerWidget {
   }
 }
 
-/// Settings → Online: the YouTube tab's background play, auto picture-in-picture
-/// and a way to forget its cookies and cache.
+/// Settings → Online: the YouTube tab's background play, auto picture-in-picture,
+/// ad blocking and a way to forget its cookies and cache.
 class _OnlineCard extends ConsumerWidget {
   const _OnlineCard();
 
@@ -280,6 +280,7 @@ class _OnlineCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final background = ref.watch(onlineBackgroundPlayProvider);
     final autoPip = ref.watch(onlineAutoPipProvider);
+    final blockAds = ref.watch(onlineBlockAdsProvider);
 
     return _SettingsCard(
       children: [
@@ -303,6 +304,15 @@ class _OnlineCard extends ConsumerWidget {
           subtitle: 'Shows the video in a small window when you leave the app while it plays.',
           value: autoPip,
           onChanged: (v) => ref.read(onlineAutoPipProvider.notifier).set(v),
+        ),
+        const _CardDivider.betweenRows(),
+        // On by default. A change opens the Online tab's page again.
+        _SwitchRow(
+          icon: Icons.block_rounded,
+          title: onlineBlockAdsTitle,
+          subtitle: onlineBlockAdsSubtitle,
+          value: blockAds,
+          onChanged: (v) => ref.read(onlineBlockAdsProvider.notifier).set(v),
         ),
         const _CardDivider.betweenRows(),
         // Signing in happens in the Online tab (More options, then Sign in to

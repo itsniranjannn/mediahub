@@ -104,6 +104,25 @@ void main() {
     expect(host.log, ['set', 'update']);
   });
 
+  // Block ads: while the bridge skips an ad it reports the video itself as
+  // loading (event 'ad', the video's own title and position); see
+  // test/js/youtube_bridge_test.js for the page side.
+  test('an ad being skipped keeps the notification on the video and never counts as a pause', () {
+    push(state(OnlineMediaStatus.playing, event: 'play', pos: 60, title: 'Song'));
+    push(state(OnlineMediaStatus.buffering, event: 'ad', pos: 60, title: 'Song'));
+    expect(host.last!.title, 'Song');
+    expect(host.last!.playing, isTrue, reason: 'loading, not stopped');
+    expect(host.last!.buffering, isTrue);
+    expect(host.last!.position, const Duration(seconds: 60));
+    // Even screen off, with an ad paused at its end: no automatic resume, no hand-back.
+    session.appLifecycleChanged(AppLifecycleState.paused);
+    push(state(OnlineMediaStatus.paused, event: 'ad', pos: 60, title: 'Song', byPage: true));
+    expect(sent, isEmpty);
+    push(state(OnlineMediaStatus.playing, event: 'adend', pos: 60, title: 'Song'));
+    expect(session.isActive, isTrue);
+    expect(host.log, ['set', 'update', 'update', 'update']);
+  });
+
   test('a paused page, or a moment of sound on another page, does not claim it', () {
     push(state(OnlineMediaStatus.paused));
     push(state(OnlineMediaStatus.playing, url: 'https://m.youtube.com/'));

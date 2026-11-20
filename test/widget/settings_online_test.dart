@@ -37,6 +37,7 @@ void main() {
   setUp(() async {
     await SettingsStore.instance.setBool(OnlineBackgroundPlayNotifier.prefKey, true);
     await SettingsStore.instance.setBool(OnlineAutoPipNotifier.prefKey, true);
+    await SettingsStore.instance.setBool(OnlineBlockAdsNotifier.prefKey, true);
   });
 
   tearDown(PlatformInfo.resetForTests);
@@ -84,6 +85,54 @@ void main() {
     expect(SettingsStore.instance.getBool(OnlineAutoPipNotifier.prefKey, defaultValue: true), isFalse);
   });
 
+  testWidgets('Settings → Online → Block ads: on by default, plain words, switches off and persists', (tester) async {
+    final c = await pump(tester, onClear: () {});
+    expect(find.text('Block ads'), findsOneWidget);
+    expect(find.text(onlineBlockAdsSubtitle), findsOneWidget);
+    expect(c.read(onlineBlockAdsProvider), isTrue);
+    SwitchListTile row() => tester
+        .widgetList<SwitchListTile>(find.byType(SwitchListTile))
+        .firstWhere((s) => (s.title as Text).data == 'Block ads');
+    expect(row().value, isTrue);
+
+    await tester.tap(find.text('Block ads'));
+    await tester.pump();
+    expect(c.read(onlineBlockAdsProvider), isFalse);
+    expect(row().value, isFalse);
+    expect(SettingsStore.instance.getBool(OnlineBlockAdsNotifier.prefKey, defaultValue: true), isFalse);
+
+    await tester.tap(find.text('Block ads'));
+    await tester.pump();
+    expect(c.read(onlineBlockAdsProvider), isTrue);
+    expect(SettingsStore.instance.getBool(OnlineBlockAdsNotifier.prefKey, defaultValue: false), isTrue);
+  });
+
+  testWidgets('Block ads: on with nothing stored (a new install)', (tester) async {
+    await SettingsStore.instance.remove(OnlineBlockAdsNotifier.prefKey);
+    expect(OnlineBlockAdsNotifier.prefKey, 'online_block_ads', reason: 'a renamed key would lose the saved choice');
+    final c = await pump(tester, onClear: () {});
+    expect(c.read(onlineBlockAdsProvider), isTrue);
+    final row = tester
+        .widgetList<SwitchListTile>(find.byType(SwitchListTile))
+        .firstWhere((s) => (s.title as Text).data == 'Block ads');
+    expect(row.value, isTrue);
+    expect(SettingsStore.instance.getBool(OnlineBlockAdsNotifier.prefKey, defaultValue: false), isFalse,
+        reason: 'still nothing stored: the default, not a saved value, said on');
+  });
+
+  testWidgets('Block ads: a saved "off" is read back', (tester) async {
+    await SettingsStore.instance.setBool(OnlineBlockAdsNotifier.prefKey, false);
+    final c = await pump(tester, onClear: () {});
+    expect(c.read(onlineBlockAdsProvider), isFalse);
+  });
+
+  test('the Block ads words: short, plain, and say what to do when a video will not play', () {
+    expect(onlineBlockAdsTitle, 'Block ads');
+    expect(onlineBlockAdsSubtitle, contains('video ads'));
+    expect(onlineBlockAdsSubtitle, contains("If a video won't play, turn this off."));
+    expect(onlineBlockAdsSubtitle.length, lessThan(120));
+  });
+
   testWidgets('a saved choice is read back', (tester) async {
     await SettingsStore.instance.setBool(OnlineBackgroundPlayNotifier.prefKey, false);
     final c = await pump(tester, onClear: () {});
@@ -93,17 +142,24 @@ void main() {
     expect(bg.value, isFalse);
   });
 
+  /// The Clear row sits below the Online switches: scrolled into view first.
+  Future<void> tapClear(WidgetTester tester) async {
+    await tester.ensureVisible(find.text('Clear YouTube data'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Clear YouTube data'));
+  }
+
   testWidgets('Clear YouTube data asks first; Cancel keeps everything', (tester) async {
     var cleared = 0;
     await pump(tester, onClear: () => cleared++);
-    await tester.tap(find.text('Clear YouTube data'));
+    await tapClear(tester);
     await tester.pumpAndSettle();
     expect(find.text('Clear YouTube data?'), findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(cleared, 0);
 
-    await tester.tap(find.text('Clear YouTube data'));
+    await tapClear(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Clear'));
     await tester.pumpAndSettle();
@@ -135,7 +191,7 @@ void main() {
 
   testWidgets('Clear YouTube data says it signs you out', (tester) async {
     await pump(tester, onClear: () {});
-    await tester.tap(find.text('Clear YouTube data'));
+    await tapClear(tester);
     await tester.pumpAndSettle();
     expect(
       find.text("Signs you out and forgets YouTube's cookies, cache and site settings on this phone. "

@@ -11,6 +11,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/core/logging/diagnostics_service.dart';
 import 'package:mediahub/core/platform_info.dart';
+import 'package:mediahub/features/online/online_ad_block.dart';
 import 'package:mediahub/features/online/online_web_view.dart';
 import 'package:mediahub/features/online/youtube_urls.dart';
 
@@ -143,7 +144,7 @@ CreateWindowAction _window(String url, NavigationType? type) => CreateWindowActi
 
 /// Pumps the real web view widget; it waits for the user agent before the
 /// platform view is made, so a frame or two pass before [_platform] has it.
-Future<_Events> _pumpWebView(WidgetTester tester) async {
+Future<_Events> _pumpWebView(WidgetTester tester, {bool blockAds = true}) async {
   final events = _Events();
   _platform.params = null;
   await tester.pumpWidget(MaterialApp(
@@ -154,6 +155,7 @@ Future<_Events> _pumpWebView(WidgetTester tester) async {
           bridgeScript: '/* bridge */',
           backgroundPlay: true,
           initialUrl: Uri.parse(youTubeHomeUrl),
+          blockAds: blockAds,
         ),
         events.events,
       ),
@@ -329,6 +331,121 @@ void main() {
       expect(events.errors.single.mobileDataOff, isTrue);
     });
 
+    group('a network that breaks the secure connection (a certificate the phone does not trust)', () {
+      ServerTrustChallenge challenge(String host) =>
+          ServerTrustChallenge(protectionSpace: URLProtectionSpace(host: host, protocol: 'https', port: 443));
+
+      Future<ServerTrustAuthResponseAction?> refused(String host) async =>
+          (await _platform.params!.onReceivedServerTrustAuthRequest!(_controller(), challenge(host)))?.action;
+
+      NavigationAction mainFrameLink(String url) => NavigationAction(
+            request: URLRequest(url: WebUri(url)),
+            isForMainFrame: true,
+            hasGesture: true,
+            navigationType: NavigationType.LINK_ACTIVATED,
+          );
+
+      testWidgets('Android: before any page loads, the page itself was refused: the error screen says so',
+          (tester) async {
+        PlatformInfo.debugIsAndroid = true;
+        final events = await _pumpWebView(tester);
+        expect(await refused('m.youtube.com'), ServerTrustAuthResponseAction.CANCEL);
+        expect(events.errors, hasLength(1));
+        final e = events.errors.single;
+        expect(e.secureConnectionBlocked, isTrue);
+        expect(e.offline, isFalse);
+        // A redirect hop to another host before the first page (consent, www): still the page's own.
+        expect(await refused('consent.youtube.com'), ServerTrustAuthResponseAction.CANCEL);
+        expect(events.errors, hasLength(2));
+      });
+
+      testWidgets('Android: once a page is on screen, only its own host covers it; every bad certificate is refused',
+          (tester) async {
+        PlatformInfo.debugIsAndroid = true;
+        final events = await _pumpWebView(tester);
+        _platform.params!.onLoadStart!(_controller(), WebUri('https://m.youtube.com/'));
+        for (final host in ['i.ytimg.com', 'rr1---sn-ab5l6nzr.googlevideo.com', 'googleads.g.doubleclick.net']) {
+          expect(await refused(host), ServerTrustAuthResponseAction.CANCEL, reason: host);
+        }
+        expect(events.errors, isEmpty, reason: 'a picture, a video segment or an ad never covers a working page');
+        expect(await refused('M.YouTube.com'), ServerTrustAuthResponseAction.CANCEL);
+        expect(events.errors.single.secureConnectionBlocked, isTrue);
+      });
+
+      testWidgets('Android: a link to another host the main frame is loading counts as the page', (tester) async {
+        PlatformInfo.debugIsAndroid = true;
+        final events = await _pumpWebView(tester);
+        _platform.params!.onLoadStart!(_controller(), WebUri('https://m.youtube.com/watch?v=dQw4w9WgXcQ'));
+        expect(await refused('music.youtube.com'), ServerTrustAuthResponseAction.CANCEL);
+        expect(events.errors, isEmpty, reason: 'nothing loads from there yet');
+        final policy = await _platform.params!.shouldOverrideUrlLoading!(
+          _controller(),
+          mainFrameLink('https://music.youtube.com/'),
+        );
+        expect(policy, NavigationActionPolicy.ALLOW);
+        expect(await refused('music.youtube.com'), ServerTrustAuthResponseAction.CANCEL);
+        expect(events.errors.single.secureConnectionBlocked, isTrue);
+        // Once that page is on screen, the old host is only a resource.
+        events.errors.clear();
+        _platform.params!.onLoadStart!(_controller(), WebUri('https://music.youtube.com/'));
+        expect(await refused('m.youtube.com'), ServerTrustAuthResponseAction.CANCEL);
+        expect(events.errors, isEmpty);
+        // about:blank (the plugin's stand-in for an error page) is no page: the next refusal is the page's.
+        _platform.params!.onLoadStart!(_controller(), WebUri('about:blank'));
+        expect(await refused('m.youtube.com'), ServerTrustAuthResponseAction.CANCEL);
+        expect(events.errors.single.secureConnectionBlocked, isTrue);
+      });
+
+      test('which host is the page: the first page, links, loads from the app and the page on screen', () {
+        final hosts = OnlineMainDocumentHosts(Uri.parse('https://m.youtube.com/'));
+        expect(hosts.isMainDocument('i.ytimg.com'), isTrue, reason: 'no page yet');
+        hosts.shown(Uri.parse('https://m.youtube.com/'));
+        expect(hosts.isMainDocument('m.youtube.com'), isTrue);
+        expect(hosts.isMainDocument('i.ytimg.com'), isFalse);
+        hosts.loading(Uri.parse('https://accounts.google.com/v3/signin/identifier'));
+        expect(hosts.isMainDocument('accounts.google.com'), isTrue);
+        expect(hosts.isMainDocument('m.youtube.com'), isTrue);
+        hosts.shown(Uri.parse('https://accounts.google.com/v3/signin/identifier'));
+        expect(hosts.isMainDocument('m.youtube.com'), isFalse);
+        hosts.loading(null);
+        hosts.loading(Uri.parse('about:blank'));
+        expect(hosts.isMainDocument('m.youtube.com'), isFalse, reason: 'no web page to load: nothing changes');
+      });
+
+      testWidgets('iOS: no answer from the app (WebKit refuses a bad certificate itself), and its errors say the same',
+          (tester) async {
+        PlatformInfo.debugIsIOS = true;
+        final events = await _pumpWebView(tester);
+        expect(_platform.params!.onReceivedServerTrustAuthRequest, isNull,
+            reason: 'iOS asks about trusted certificates too: answering would cost a round trip or break pages');
+        final onReceivedError = _platform.params!.onReceivedError!;
+        final request = WebResourceRequest(url: WebUri('https://m.youtube.com/'), isForMainFrame: true);
+        for (final type in [
+          WebResourceErrorType.SERVER_CERTIFICATE_UNTRUSTED,
+          WebResourceErrorType.SERVER_CERTIFICATE_HAS_UNKNOWN_ROOT,
+          WebResourceErrorType.SERVER_CERTIFICATE_HAS_BAD_DATE,
+          WebResourceErrorType.SERVER_CERTIFICATE_NOT_YET_VALID,
+        ]) {
+          onReceivedError(_controller(), request, WebResourceError(type: type, description: 'x'));
+          expect(events.errors.last.secureConnectionBlocked, isTrue, reason: '$type');
+          expect(events.errors.last.offline, isFalse);
+        }
+        // A picture's certificate error is not the page's.
+        onReceivedError(
+          _controller(),
+          WebResourceRequest(url: WebUri('https://i.ytimg.com/vi/x/hq.jpg'), isForMainFrame: false),
+          WebResourceError(type: WebResourceErrorType.SERVER_CERTIFICATE_UNTRUSTED, description: 'x'),
+        );
+        expect(events.errors, hasLength(4));
+        // Android never gets these types: unchanged there.
+        expect(
+          onlineLoadErrorFor(WebResourceErrorType.SERVER_CERTIFICATE_UNTRUSTED, 'x', isIOS: false)!
+              .secureConnectionBlocked,
+          isFalse,
+        );
+      });
+    });
+
     testWidgets('the plugin fullscreen events still reach the screen (it decides per platform)', (tester) async {
       PlatformInfo.debugIsIOS = true;
       final events = await _pumpWebView(tester);
@@ -350,9 +467,16 @@ void main() {
       final defaults = InAppWebViewSettings();
       expect(android.preferredContentMode, defaults.preferredContentMode);
       expect(android.allowsLinkPreview, defaults.allowsLinkPreview);
-      final a = android.toMap()..removeWhere((k, _) => k == 'preferredContentMode' || k == 'allowsLinkPreview');
+      // Block ads differs on purpose: WebKit's rule list on iOS, no native
+      // rule on Android (online_ad_block.dart).
+      const perPlatform = {
+        'preferredContentMode',
+        'allowsLinkPreview',
+        'contentBlockers',
+      };
+      final a = android.toMap()..removeWhere((k, _) => perPlatform.contains(k));
       final i = onlineWebViewSettings(backgroundPlay: true, isIOS: true).toMap()
-        ..removeWhere((k, _) => k == 'preferredContentMode' || k == 'allowsLinkPreview');
+        ..removeWhere((k, _) => perPlatform.contains(k));
       expect(i, a);
       expect(android.supportMultipleWindows, isFalse);
     });
@@ -363,6 +487,42 @@ void main() {
       final settings = _platform.params!.initialSettings!;
       expect(settings.preferredContentMode, UserPreferredContentMode.MOBILE);
       expect(settings.allowsLinkPreview, isFalse);
+    });
+
+    testWidgets('Block ads: the real web view gets the ad rules on iOS, no native rule on Android',
+        (tester) async {
+      PlatformInfo.debugIsIOS = true;
+      await _pumpWebView(tester);
+      var settings = _platform.params!.initialSettings!;
+      expect(settings.contentBlockers, hasLength(onlineAdUrlFilters().length));
+      expect(settings.regexToCancelSubFramesLoading, isNull);
+
+      // A WebView's settings are fixed when it starts: a new one for Android.
+      await tester.pumpWidget(const SizedBox());
+      PlatformInfo.resetForTests();
+      PlatformInfo.debugIsAndroid = true;
+      await _pumpWebView(tester);
+      settings = _platform.params!.initialSettings!;
+      expect(settings.contentBlockers, isEmpty,
+          reason: "the plugin's Android content blockers send a HEAD request for every resource");
+      expect(settings.regexToCancelSubFramesLoading, isNull,
+          reason: 'never consulted for an http(s) frame on Android: it would only claim to block');
+    });
+
+    testWidgets('Block ads off: no ad rules on either phone', (tester) async {
+      for (final ios in [true, false]) {
+        await tester.pumpWidget(const SizedBox());
+        PlatformInfo.resetForTests();
+        if (ios) {
+          PlatformInfo.debugIsIOS = true;
+        } else {
+          PlatformInfo.debugIsAndroid = true;
+        }
+        await _pumpWebView(tester, blockAds: false);
+        final settings = _platform.params!.initialSettings!;
+        expect(settings.contentBlockers, isEmpty, reason: 'iOS: $ios');
+        expect(settings.regexToCancelSubFramesLoading, isNull, reason: 'iOS: $ios');
+      }
     });
   });
 
