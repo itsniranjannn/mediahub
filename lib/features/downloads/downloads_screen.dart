@@ -237,7 +237,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
         ),
       if (ytdlpSupported && !ytdlpOn)
         TextButton.icon(
-          icon: const Icon(Icons.settings_outlined),
+          icon: const Icon(Icons.settings_rounded),
           label: const Text('Enable downloader'),
           onPressed: () => context.push('/settings'),
         ),
@@ -340,7 +340,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                   if (_notificationPermissionDenied) ...[
                     const SizedBox(height: AppSpacing.md12),
                     const _Callout(
-                      icon: Icons.notifications_off_outlined,
+                      icon: Icons.notifications_off_rounded,
                       tone: _Tone.warning,
                       text:
                           'Notifications are disabled. Downloads still run in the background, but progress will not show in the status bar.',
@@ -516,7 +516,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           ),
           const SizedBox(height: AppSpacing.sm8),
           _DetailLine(
-            icon: Icons.description_outlined,
+            icon: Icons.description_rounded,
             text: 'Content Type: ${info.contentType ?? "Unknown"}',
           ),
           _DetailLine(
@@ -1263,8 +1263,10 @@ class _Header extends StatelessWidget {
     ];
 
     return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.xl20, bottom: AppSpacing.lg16),
-      child: Column(
+      padding: const EdgeInsets.only(top: AppSpacing.md12, bottom: AppSpacing.lg16),
+      child: EntranceFade(
+        child: HeroBand(
+          child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // One line, scaled down rather than clipped at large text sizes.
@@ -1285,6 +1287,8 @@ class _Header extends StatelessWidget {
             ),
           ],
         ],
+          ),
+        ),
       ),
     );
   }
@@ -1583,7 +1587,7 @@ class _StorageStats extends StatelessWidget {
           runSpacing: AppSpacing.xs4,
           children: [
             _Stat(icon: Icons.download_done_rounded, value: '$usedMb MB', label: 'used'),
-            if (freeGb != null) _Stat(icon: Icons.sd_storage_outlined, value: '$freeGb GB', label: 'free'),
+            if (freeGb != null) _Stat(icon: Icons.sd_storage_rounded, value: '$freeGb GB', label: 'free'),
           ],
         ),
       ),

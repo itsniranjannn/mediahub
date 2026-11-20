@@ -4,7 +4,7 @@ Last updated: 2026-11-20. `feat/post-6-1-fixes` was merged into `main` on 2026-1
 a fresh branch from `main`. The 2026-11-19
 round (section A0) is committed on top of `cc43807` in five area commits.
 Read `docs/ROADMAP.md` for the goals checklist and security model, `docs/DESIGN.md` for the
-"Bijuli" design system, `docs/IOS.md` for the iPhone, and `docs/DECISIONS.md` (items 15–19) for why
+"Sindur" design system, `docs/IOS.md` for the iPhone, and `docs/DECISIONS.md` (items 15–19) for why
 things are built the way they are.
 
 ## Where things stand
@@ -43,7 +43,7 @@ and D).
 5. iOS needs a Mac: follow `docs/IOS.md` section 6. Do **not** start with `cd ios && pod install`:
    there is no `ios/Podfile` until the first `flutter build ios --release` (or `flutter run --release`)
    writes it and runs CocoaPods itself.
-6. Fonts are bundled (Unbounded, Anek Devanagari Wide, Atkinson Hyperlegible Next, Mukta, DM Mono, all
+6. Fonts are bundled (Fraunces, Poppins (Latin and Devanagari), DM Mono, all
    OFL; licences in `assets/fonts/licenses/`). `tools/fonts/README.md` shows how the subsets were made.
 
 ### Helper tools in this repo
@@ -128,6 +128,15 @@ driven on the emulator (B.0), except Block ads (tests only). Nothing has run on 
   network where IPv4 or IPv6 is broken (now raced like a browser), YouTube pausing itself in
   picture-in-picture (now keeps playing and shows only the video), and yt-dlp stalling on such a
   network (now told which family works).
+
+## Latest: Sindur
+
+- **Sindur rebrand (branch feat/rebrand)**: near-black #0B0B0D canvas with crimson #CC324C fills, rose #FF6E86 accent,
+  lavender #B98FFF and milk #FFF3E6 text; light is white + wine #81021F + purple #5B2FC2 (Bijuli Classic stays in
+  Settings). Fonts: Fraunces headings, Poppins names/body (draws Devanagari), DM Mono figures. Screen mastheads
+  sit in a `HeroBand` (heroGradient) with an `EntranceFade` stagger (off with reduced motion); icons are the rounded
+  set. App icon: crimson play-bolt on #0B0B0D to #4A0F24 (`assets/icon/draw_icon.py`), splash and launch screen #0B0B0D.
+  The Bijuli notes below describe the earlier look.
 
 ## A. What changed in the previous round
 

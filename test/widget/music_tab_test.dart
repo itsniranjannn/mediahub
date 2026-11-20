@@ -21,6 +21,7 @@ import 'package:mediahub/features/library/library_notifier.dart';
 import 'package:mediahub/features/music_player/music_screen.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
+import 'package:mediahub/shared/widgets/ui_kit.dart';
 import 'package:mocktail/mocktail.dart';
 
 class _MockRepo extends Mock implements LibraryRepository {}
@@ -221,6 +222,15 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('3 new songs'), findsOneWidget);
+  });
+
+  testWidgets('Music fits 360 x 690 at 1.3x text in dark and light, hero band included', (tester) async {
+    for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+      await pump(tester, const MusicScreen(), size: const Size(360, 690), theme: theme, textScale: 1.3);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+      expect(find.byType(HeroBand), findsOneWidget);
+    }
   });
 
   testWidgets('a grid that fails to load says so and can retry', (tester) async {

@@ -495,7 +495,8 @@ class EmptyHint extends StatelessWidget {
     final type = AppTypography.of(palette);
     final kicker = this.kicker;
     return Center(
-      child: Padding(
+      child: EntranceFade(
+        child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xxxl32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -537,6 +538,7 @@ class EmptyHint extends StatelessWidget {
               action!,
             ],
           ],
+        ),
         ),
       ),
     );
@@ -1222,4 +1224,106 @@ class _ArtworkPresenceBuilderState extends State<ArtworkPresenceBuilder> {
 
   @override
   Widget build(BuildContext context) => widget.builder(context, _hasArtwork, widget.child);
+}
+
+/// The masthead band at the top of a screen (docs/DESIGN.md 7.5): a rounded
+/// [AppPalette.heroGradient] card holding the page title and its summary.
+/// Text on it uses the ordinary text colours, which the contrast tests check
+/// against every gradient stop.
+class HeroBand extends StatelessWidget {
+  final Widget child;
+  final EdgeInsetsGeometry margin;
+  final EdgeInsetsGeometry padding;
+
+  static const EdgeInsetsGeometry defaultPadding = EdgeInsets.fromLTRB(
+    AppSpacing.xl20,
+    AppSpacing.xl20,
+    AppSpacing.xl20,
+    AppSpacing.lg16,
+  );
+
+  const HeroBand({
+    super.key,
+    required this.child,
+    this.margin = EdgeInsets.zero,
+    this.padding = defaultPadding,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      margin: margin,
+      width: double.infinity,
+      padding: padding,
+      decoration: BoxDecoration(
+        gradient: palette.heroGradient,
+        borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+        border: Border.all(color: palette.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Fades [child] in and lifts it 8 dp on first build ([MotionTokens.page],
+/// emphasised curve), [index] x 40 ms after the first item so a list
+/// staggers. Shown at once with reduced motion. Purely visual: the child is
+/// built, laid out and in the semantics tree from the first frame.
+class EntranceFade extends StatefulWidget {
+  final Widget child;
+  final int index;
+
+  const EntranceFade({super.key, required this.child, this.index = 0});
+
+  static const Duration stagger = Duration(milliseconds: 40);
+
+  /// Items after this many share its delay, so a long list never waits.
+  static const int maxStagger = 6;
+
+  @override
+  State<EntranceFade> createState() => _EntranceFadeState();
+}
+
+class _EntranceFadeState extends State<EntranceFade> with SingleTickerProviderStateMixin {
+  AnimationController? _controller;
+  Animation<double>? _curve;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_controller != null) return;
+    final base = MotionTokens.duration(context, MotionTokens.page);
+    if (base == Duration.zero) return;
+    final delay = EntranceFade.stagger * math.min(widget.index, EntranceFade.maxStagger);
+    final total = base + delay;
+    final controller = AnimationController(vsync: this, duration: total);
+    _controller = controller;
+    _curve = CurvedAnimation(
+      parent: controller,
+      curve: Interval(delay.inMicroseconds / total.inMicroseconds, 1, curve: MotionTokens.emphasized),
+    );
+    controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final curve = _curve;
+    if (curve == null) return widget.child;
+    return AnimatedBuilder(
+      animation: curve,
+      builder: (context, child) => Opacity(
+        opacity: curve.value,
+        alwaysIncludeSemantics: true,
+        child: Transform.translate(offset: Offset(0, 8 * (1 - curve.value)), child: child),
+      ),
+      child: widget.child,
+    );
+  }
 }

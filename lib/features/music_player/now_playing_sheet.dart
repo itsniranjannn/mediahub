@@ -1641,7 +1641,7 @@ class _SleepButton extends ConsumerWidget {
     final active = ref.watch(sleepTimerProvider.select((s) => s.isActive));
     return IconButton(
       tooltip: active ? 'Sleep timer on' : 'Sleep timer',
-      icon: Icon(active ? Icons.bedtime_rounded : Icons.bedtime_outlined),
+      icon: Icon(active ? Icons.bedtime_rounded : Icons.bedtime_rounded),
       color: active ? palette.primary : palette.textSecondary,
       onPressed: onPressed,
     );
@@ -1745,7 +1745,7 @@ class SleepTimerSheet extends ConsumerWidget {
               ),
             const Divider(height: 1),
             for (final preset in SleepTimerStatus.presets)
-              option(presetLabel(preset), Icons.timer_outlined, () {
+              option(presetLabel(preset), Icons.timer_rounded, () {
                 notifier.setSleepTimer(preset);
                 done();
               }),

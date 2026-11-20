@@ -108,19 +108,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             const _Header(),
             const SizedBox(height: AppSpacing.xxl24),
-            const _AppearanceCard(),
+            const EntranceFade(index: 1, child: _AppearanceCard()),
             const SizedBox(height: _cardGap),
-            const _PlaybackCard(),
+            const EntranceFade(index: 2, child: _PlaybackCard()),
             const SizedBox(height: _cardGap),
-            const _OnlineCard(),
+            const EntranceFade(index: 3, child: _OnlineCard()),
             if (showPersonalTools) ...const [
               SizedBox(height: _cardGap),
               _PersonalToolsCard(),
             ],
             const SizedBox(height: _cardGap),
-            const _PrivacyCard(),
+            const EntranceFade(index: 4, child: _PrivacyCard()),
             const SizedBox(height: _cardGap),
-            const _AboutCard(),
+            const EntranceFade(index: 5, child: _AboutCard()),
           ],
         ),
       ),
@@ -138,20 +138,24 @@ class _Header extends StatelessWidget {
     final type = context.typography;
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.xs4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Semantics(
-            header: true,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: AlignmentDirectional.centerStart,
-              child: Text('Settings', style: type.display, maxLines: 1),
-            ),
+      child: EntranceFade(
+        child: HeroBand(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Semantics(
+                header: true,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text('Settings', style: type.display, maxLines: 1),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs4),
+              Text('Look, playback, YouTube, downloads and your privacy.', style: type.metadata),
+            ],
           ),
-          const SizedBox(height: AppSpacing.xs4),
-          Text('Look, playback, YouTube, downloads and your privacy.', style: type.metadata),
-        ],
+        ),
       ),
     );
   }
@@ -167,9 +171,9 @@ class _AppearanceCard extends ConsumerWidget {
   const _AppearanceCard();
 
   static const List<(AppearanceChoice, IconData, String, String)> _options = [
-    (AppearanceChoice.system, Icons.brightness_auto_outlined, 'System', 'Dark or light, the same as your phone.'),
-    (AppearanceChoice.dark, Icons.dark_mode_outlined, 'Dark', 'Always dark.'),
-    (AppearanceChoice.light, Icons.light_mode_outlined, 'Light', 'Always light.'),
+    (AppearanceChoice.system, Icons.brightness_auto_rounded, 'System', 'Dark or light, the same as your phone.'),
+    (AppearanceChoice.dark, Icons.dark_mode_rounded, 'Dark', 'Always dark.'),
+    (AppearanceChoice.light, Icons.light_mode_rounded, 'Light', 'Always light.'),
     (AppearanceChoice.classic, Icons.bolt_outlined, 'Bijuli Classic', 'The original lime-on-violet look. Always dark.'),
   ];
 
@@ -181,7 +185,7 @@ class _AppearanceCard extends ConsumerWidget {
     return _SettingsCard(
       children: [
         const _CardHeading(
-          icon: Icons.palette_outlined,
+          icon: Icons.palette_rounded,
           title: 'Appearance',
           subtitle: 'How MediaHub looks. The player stays dark either way.',
         ),
@@ -286,7 +290,7 @@ class _OnlineCard extends ConsumerWidget {
     return _SettingsCard(
       children: [
         const _CardHeading(
-          icon: Icons.smart_display_outlined,
+          icon: Icons.smart_display_rounded,
           title: 'Online',
           subtitle: 'YouTube in the Online tab.',
         ),
@@ -320,13 +324,13 @@ class _OnlineCard extends ConsumerWidget {
         // YouTube); Google may still refuse an app's web view for some
         // accounts, and the row says so.
         const _InfoRow(
-          icon: Icons.account_circle_outlined,
+          icon: Icons.account_circle_rounded,
           title: youTubeSignInSettingsTitle,
           body: youTubeSignInSettingsBody,
         ),
         const _CardDivider.betweenRows(),
         _NavRow(
-          icon: Icons.delete_sweep_outlined,
+          icon: Icons.delete_sweep_rounded,
           title: 'Clear YouTube data',
           subtitle: clearYouTubeDataSettingsSubtitle(),
           trailingIcon: Icons.chevron_right_rounded,
@@ -362,7 +366,7 @@ class _PersonalToolsCard extends ConsumerWidget {
         ),
         const _CardDivider.underHeading(),
         _SwitchRow(
-          icon: Icons.download_for_offline_outlined,
+          icon: Icons.download_for_offline_rounded,
           title: 'Enable web link downloader',
           subtitle: 'Personal use only. May break third-party service terms and is the user\'s own '
               'responsibility. Only public media without authentication is supported.',
@@ -473,7 +477,7 @@ class _PrivacyCard extends ConsumerWidget {
     return _SettingsCard(
       children: [
         const _CardHeading(
-          icon: Icons.shield_outlined,
+          icon: Icons.shield_rounded,
           title: 'Privacy & permissions',
           subtitle: 'What MediaHub uses, in plain words.',
         ),
@@ -481,7 +485,7 @@ class _PrivacyCard extends ConsumerWidget {
         // The iPhone app reads nothing else on the phone: its library is
         // what you download in MediaHub.
         _InfoRow(
-          icon: Icons.library_music_outlined,
+          icon: Icons.library_music_rounded,
           title: 'Your music and videos',
           body: isIOS
               ? 'Only the ones you download in MediaHub. MediaHub never uploads them.'
@@ -514,7 +518,7 @@ class _PrivacyCard extends ConsumerWidget {
           ),
         const _CardDivider.betweenRows(),
         _NavRow(
-          icon: Icons.app_settings_alt_outlined,
+          icon: Icons.app_settings_alt_rounded,
           title: 'App permissions',
           subtitle: isIOS
               ? 'See or change what MediaHub may use, in iPhone Settings.'
@@ -559,7 +563,7 @@ class _AboutCard extends StatelessWidget {
         const _AppIdentity(),
         const _CardDivider.underHeading(),
         _NavRow(
-          icon: Icons.bug_report_outlined,
+          icon: Icons.bug_report_rounded,
           title: 'Diagnostics log',
           subtitle: 'Recent app events (playback, downloads, network), handy when something goes wrong.',
           onTap: () {
@@ -568,7 +572,7 @@ class _AboutCard extends StatelessWidget {
         ),
         const _CardDivider.betweenRows(),
         _NavRow(
-          icon: Icons.description_outlined,
+          icon: Icons.description_rounded,
           title: 'Open-source licenses',
           subtitle: 'Libraries used by MediaHub and their licenses.',
           onTap: () => showLicensePage(
@@ -834,7 +838,7 @@ class _PromiseNote extends StatelessWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.only(top: 1),
-                child: Icon(Icons.verified_user_outlined, size: 22, color: palette.primary),
+                child: Icon(Icons.verified_user_rounded, size: 22, color: palette.primary),
               ),
               const SizedBox(width: AppSpacing.md12),
               Expanded(
@@ -859,9 +863,14 @@ class _PromiseNote extends StatelessWidget {
 class _AppIdentity extends StatelessWidget {
   const _AppIdentity();
 
-  /// The app icon in miniature (DESIGN.md 7.16): the ultraviolet-to-ink
-  /// diagonal with the Volt play glyph, the same in both themes.
-  static const AppPalette _icon = AppPalette.dark;
+  /// The app icon in miniature (DESIGN.md 7.16): the near-black-to-wine
+  /// diagonal with the crimson play-bolt, the same in every theme.
+  static const LinearGradient _iconField = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [Color(0xFF0B0B0D), Color(0xFF4A0F24)],
+  );
+  static const Color _iconGlyph = Color(0xFFCC324C);
 
   @override
   Widget build(BuildContext context) {
@@ -876,10 +885,10 @@ class _AppIdentity extends StatelessWidget {
               width: _leadingSlot,
               height: _leadingSlot,
               decoration: BoxDecoration(
-                gradient: _icon.heroGradient,
+                gradient: _iconField,
                 borderRadius: _tileRadius,
               ),
-              child: Icon(Icons.play_arrow_rounded, size: 26, color: _icon.primary),
+              child: const Icon(Icons.play_arrow_rounded, size: 26, color: _iconGlyph),
             ),
             const SizedBox(width: AppSpacing.md12),
             // The name gets the whole width; the version and the pill share

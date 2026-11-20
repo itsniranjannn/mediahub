@@ -149,7 +149,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         actions: [
           IconButton(
             tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
+            icon: const Icon(Icons.settings_rounded),
             onPressed: () => context.push('/settings'),
           ),
           const SizedBox(width: AppSpacing.xs4),
@@ -164,10 +164,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
           // Quick actions (Shuffle all, Liked, Online, Downloads)
           SliverToBoxAdapter(
-            child: _QuickActions(
+            child: EntranceFade(
+              index: 1,
+              child: _QuickActions(
               songsLoading: songs == null,
               onShuffle: (songs == null || songs.isEmpty) ? null : () => _shuffleAll(songs),
               onLiked: _openLiked,
+              ),
             ),
           ),
 
@@ -529,8 +532,10 @@ class _Greeting extends StatelessWidget {
     final line = type.body.copyWith(color: palette.textSecondary);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.lg16, AppSpacing.xs4),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.sm8),
+      child: EntranceFade(
+        child: HeroBand(
+          child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -561,6 +566,8 @@ class _Greeting extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         ],
+          ),
+        ),
       ),
     );
   }

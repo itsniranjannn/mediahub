@@ -3,20 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bijuli Specimen</title>
+<title>Sindur Specimen</title>
 <style>
 /* ---------- fonts: the same files the app bundles (all SIL OFL 1.1) ---------- */
-@font-face{font-family:'Unbounded';font-weight:600;font-display:swap;src:url(https://raw.githubusercontent.com/googlefonts/unbounded/main/fonts/ttf/Unbounded-SemiBold.ttf) format('truetype')}
-@font-face{font-family:'Unbounded';font-weight:700;font-display:swap;src:url(https://raw.githubusercontent.com/googlefonts/unbounded/main/fonts/ttf/Unbounded-Bold.ttf) format('truetype')}
-@font-face{font-family:'AnekWide';font-weight:100 800;font-stretch:75% 125%;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/anekdevanagari/AnekDevanagari%5Bwdth,wght%5D.ttf) format('truetype')}
-@font-face{font-family:'AtkinsonNext';font-weight:400;font-display:swap;src:url(https://raw.githubusercontent.com/googlefonts/atkinson-hyperlegible-next/main/fonts/ttf/AtkinsonHyperlegibleNext-Regular.ttf) format('truetype')}
-@font-face{font-family:'AtkinsonNext';font-weight:500;font-display:swap;src:url(https://raw.githubusercontent.com/googlefonts/atkinson-hyperlegible-next/main/fonts/ttf/AtkinsonHyperlegibleNext-Medium.ttf) format('truetype')}
-@font-face{font-family:'AtkinsonNext';font-weight:600;font-display:swap;src:url(https://raw.githubusercontent.com/googlefonts/atkinson-hyperlegible-next/main/fonts/ttf/AtkinsonHyperlegibleNext-SemiBold.ttf) format('truetype')}
-@font-face{font-family:'AtkinsonNext';font-weight:700;font-display:swap;src:url(https://raw.githubusercontent.com/googlefonts/atkinson-hyperlegible-next/main/fonts/ttf/AtkinsonHyperlegibleNext-Bold.ttf) format('truetype')}
-@font-face{font-family:'Mukta';font-weight:400;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/mukta/Mukta-Regular.ttf) format('truetype')}
-@font-face{font-family:'Mukta';font-weight:500;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/mukta/Mukta-Medium.ttf) format('truetype')}
-@font-face{font-family:'Mukta';font-weight:600;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/mukta/Mukta-SemiBold.ttf) format('truetype')}
-@font-face{font-family:'Mukta';font-weight:700;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/mukta/Mukta-Bold.ttf) format('truetype')}
+@font-face{font-family:'Fraunces';font-weight:600;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/fraunces/static/Fraunces_72pt-SemiBold.ttf) format('truetype')}
+@font-face{font-family:'Fraunces';font-weight:700;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/fraunces/static/Fraunces_72pt-Bold.ttf) format('truetype')}
+@font-face{font-family:'Poppins';font-weight:400;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Regular.ttf) format('truetype')}
+@font-face{font-family:'Poppins';font-weight:500;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Medium.ttf) format('truetype')}
+@font-face{font-family:'Poppins';font-weight:600;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-SemiBold.ttf) format('truetype')}
+@font-face{font-family:'Poppins';font-weight:700;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Bold.ttf) format('truetype')}
 @font-face{font-family:'DMMono';font-weight:400;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/dmmono/DMMono-Regular.ttf) format('truetype')}
 @font-face{font-family:'DMMono';font-weight:500;font-display:swap;src:url(https://raw.githubusercontent.com/google/fonts/main/ofl/dmmono/DMMono-Medium.ttf) format('truetype')}
 
@@ -24,69 +19,69 @@
 :root{--page:#0E0919;--pageCard:#1A1228;--pageText:#EEE9F8;--pageMuted:#B9AFCF;--pageLine:#3A2E52}
 *{box-sizing:border-box}
 html,body{margin:0}
-body{background:var(--page);color:var(--pageText);font-family:'AtkinsonNext','Mukta',system-ui,sans-serif;font-size:16px;line-height:24px}
+body{background:var(--page);color:var(--pageText);font-family:'Poppins',system-ui,sans-serif;font-size:16px;line-height:24px}
 .wrap{max-width:1260px;margin:0 auto;padding:32px 16px 72px}
 .intro{max-width:820px}
-.intro h1{font-family:'Unbounded','AnekWide',sans-serif;font-stretch:112.5%;font-weight:700;font-size:34px;line-height:44px;margin:0 0 8px;letter-spacing:-.5px}
-.intro h1 .v{color:#CCFF3A}
+.intro h1{font-family:'Fraunces','Poppins',sans-serif;font-weight:700;font-size:34px;line-height:44px;margin:0 0 8px;letter-spacing:-.5px}
+.intro h1 .v{color:#FF6E86}
 .intro p{color:var(--pageMuted);margin:0 0 12px}
-.kick{font-family:'DMMono',monospace;font-weight:500;font-size:12px;letter-spacing:1.2px;text-transform:uppercase;color:#CCFF3A}
+.kick{font-family:'DMMono',monospace;font-weight:500;font-size:12px;letter-spacing:1.2px;text-transform:uppercase;color:#FF6E86}
 .cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;margin-top:28px}
 @media (max-width:1120px){.cols{grid-template-columns:minmax(0,1fr)}}
 .panelHead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 16px}
-.panelHead h2{font-family:'Unbounded','AnekWide',sans-serif;font-weight:600;font-size:20px;line-height:28px;margin:0}
+.panelHead h2{font-family:'Fraunces','Poppins',sans-serif;font-weight:600;font-size:20px;line-height:28px;margin:0}
 .panelHead span{font-family:'DMMono',monospace;font-size:12px;letter-spacing:1px;text-transform:uppercase;opacity:.85}
 
 /* ---------- theme tokens (exactly the DESIGN.md values) ---------- */
-.dark{--bg:#180A2E;--surface:#22123E;--elev:#2B1A50;--pressed:#382664;
-  --primary:#CCFF3A;--onPrimary:#180A2E;--tonal:#33225E;--onTonal:#D9FF73;
-  --volt:#CCFF3A;--voltPressed:#A9DC14;--onVolt:#180A2E;--onVoltMuted:#4A3B66;--voltEdge:transparent;
-  --accent:#78C4FF;--onAccent:#180A2E;--favorite:#FF66B8;
-  --t1:#F6F2FF;--t2:#C6BBDF;--t3:#A698C4;--divider:#382A5C;--outline:#8E7EB4;
+.dark{--bg:#0B0B0D;--surface:#121214;--elev:#19191C;--pressed:#222226;
+  --primary:#FF6E86;--onPrimary:#0B0B0D;--tonal:#3A1220;--onTonal:#F9E8F2;
+  --volt:#CC324C;--voltPressed:#A9DC14;--onVolt:#FFFFFF;--onVoltMuted:#4A3B66;--voltEdge:transparent;
+  --accent:#B98FFF;--onAccent:#0B0B0D;--favorite:#FF8FD8;
+  --t1:#FFF3E6;--t2:#C9C3C6;--t3:#A8A3AB;--divider:#2A2A2F;--outline:#85828C;
   --success:#5CF0A8;--warning:#FFC44D;--error:#FF8A5C;--live:#BE1E3E;
-  --glass:rgba(34,18,62,.878);--overlay:rgba(24,10,46,.72);--sliderInactive:#382664;
-  --snackbar:#2B1A50;--onSnackbar:#F6F2FF;--snackAction:#CCFF3A;--print:#CCFF3A;--lift:none;
-  --hero:linear-gradient(135deg,#421E78 0%,#25133F 50%,#180A2E 100%);
+  --glass:rgba(34,18,62,.878);--overlay:rgba(24,10,46,.72);--sliderInactive:#222226;
+  --snackbar:#2B1A50;--onSnackbar:#F6F2FF;--snackAction:#FF6E86;--print:#CC324C;--lift:none;
+  --hero:linear-gradient(135deg,#4A0F24 0%,#1A0A12 50%,#0B0B0D 100%);
   --dock:rgba(28,14,54,.94);--onDock:#F6F2FF;--onDockMuted:#B4A8CF;--dockLine:#3E2E62;
-  --sheetShadow:none;--cardEdge:#382A5C;
+  --sheetShadow:none;--cardEdge:#2A2A2F;
   --a1:linear-gradient(135deg,#7A4BF0,#240F5C);--a2:linear-gradient(135deg,#1C86B0,#0A2848);--a3:linear-gradient(135deg,#C93A8C,#460E38);--a4:linear-gradient(135deg,#567A0C,#192506);
   --a5:linear-gradient(135deg,#C8502F,#4A1320);--a6:linear-gradient(135deg,#4363E0,#131D58);--a7:linear-gradient(135deg,#A042C4,#33104C);--a8:linear-gradient(135deg,#12806E,#062E2B);
   color-scheme:dark}
-.light{--bg:#F7F2E8;--surface:#FFFCF6;--elev:#FFFFFF;--pressed:#ECE4D3;
-  --primary:#5A32D6;--onPrimary:#FFFFFF;--tonal:#EAE1FF;--onTonal:#38189A;
-  --volt:#CCFF3A;--voltPressed:#A9DC14;--onVolt:#180A2E;--onVoltMuted:#4A3B66;--voltEdge:#180A2E;
-  --accent:#00658A;--onAccent:#FFFFFF;--favorite:#B5166B;
-  --t1:#180A2E;--t2:#4C4358;--t3:#655B71;--divider:#E4DACA;--outline:#8A7F6B;
+.light{--bg:#FFFFFF;--surface:#FFFAFB;--elev:#FFFFFF;--pressed:#F8EAF0;
+  --primary:#81021F;--onPrimary:#FFFFFF;--tonal:#F9E8F2;--onTonal:#5E0016;
+  --volt:#CC324C;--voltPressed:#A9DC14;--onVolt:#FFFFFF;--onVoltMuted:#4A3B66;--voltEdge:#180A2E;
+  --accent:#5B2FC2;--onAccent:#FFFFFF;--favorite:#A8126E;
+  --t1:#121214;--t2:#4A4250;--t3:#645B66;--divider:#F0E2E6;--outline:#8C7E84;
   --success:#0B7446;--warning:#8A5500;--error:#BE1E3E;--live:#BE1E3E;
   --glass:rgba(255,252,246,.878);--overlay:rgba(24,10,46,.72);--sliderInactive:#DDD3C0;
-  --snackbar:#180A2E;--onSnackbar:#F6F2FF;--snackAction:#CCFF3A;--print:#180A2E;--lift:0 8px 24px rgba(24,10,46,.10);
-  --hero:linear-gradient(135deg,#E6DAFF 0%,#F1EAF2 50%,#F7F2E8 100%);
+  --snackbar:#180A2E;--onSnackbar:#F6F2FF;--snackAction:#FF6E86;--print:#180A2E;--lift:0 8px 24px rgba(24,10,46,.10);
+  --hero:linear-gradient(135deg,#F9E8F2 0%,#FDF2F6 50%,#FFFFFF 100%);
   --dock:rgba(28,14,54,.94);--onDock:#F6F2FF;--onDockMuted:#B4A8CF;--dockLine:#3E2E62;
-  --sheetShadow:0 -8px 24px rgba(24,10,46,.10);--cardEdge:#E4DACA;
+  --sheetShadow:0 -8px 24px rgba(24,10,46,.10);--cardEdge:#F0E2E6;
   --a1:linear-gradient(135deg,#7A4BF0,#3A1E86);--a2:linear-gradient(135deg,#1C86B0,#0E3F6A);--a3:linear-gradient(135deg,#C93A8C,#6A1654);--a4:linear-gradient(135deg,#567A0C,#2A3C08);
   --a5:linear-gradient(135deg,#C8502F,#6E1D2C);--a6:linear-gradient(135deg,#4363E0,#1F2C82);--a7:linear-gradient(135deg,#A042C4,#4E1A72);--a8:linear-gradient(135deg,#12806E,#0A4842);
   color-scheme:light}
 /* the Ink Dock and the stage always use the dark tokens */
-.ink{--bg:#180A2E;--surface:#22123E;--elev:#2B1A50;--pressed:#382664;--primary:#CCFF3A;--onPrimary:#180A2E;
-  --t1:#F6F2FF;--t2:#C6BBDF;--t3:#A698C4;--divider:#382A5C;--outline:#8E7EB4;--accent:#78C4FF;--favorite:#FF66B8;--sliderInactive:#382664;--voltEdge:transparent}
+.ink{--bg:#0B0B0D;--surface:#121214;--elev:#19191C;--pressed:#222226;--primary:#FF6E86;--onPrimary:#0B0B0D;
+  --t1:#FFF3E6;--t2:#C9C3C6;--t3:#A8A3AB;--divider:#2A2A2F;--outline:#85828C;--accent:#B98FFF;--favorite:#FF8FD8;--sliderInactive:#222226;--voltEdge:transparent}
 
 .panel{background:var(--bg);color:var(--t1);border-radius:28px;padding:24px 16px 28px}
 .light.panel{box-shadow:0 0 0 1px #3A2E52}
 
 /* ---------- type roles ---------- */
-.display{font-family:'Unbounded','AnekWide',sans-serif;font-stretch:112.5%;font-weight:700;font-size:32px;line-height:40px;letter-spacing:-.5px}
-.section{font-family:'Unbounded','AnekWide',sans-serif;font-stretch:112.5%;font-weight:600;font-size:18px;line-height:26px}
-.greeting{font-family:'AnekWide','AtkinsonNext',sans-serif;font-stretch:112.5%;font-weight:700;font-size:30px;line-height:42px}
-.screenT{font-family:'AnekWide','AtkinsonNext',sans-serif;font-stretch:112.5%;font-weight:700;font-size:24px;line-height:34px}
-.playerT{font-family:'AnekWide','AtkinsonNext',sans-serif;font-stretch:112.5%;font-weight:600;font-size:22px;line-height:30px}
-.cardT{font-family:'AnekWide','AtkinsonNext',sans-serif;font-stretch:112.5%;font-weight:700;font-size:20px;line-height:28px}
-.body{font-family:'AtkinsonNext','Mukta',sans-serif;font-weight:400;font-size:16px;line-height:24px}
-.bodyS{font-family:'AtkinsonNext','Mukta',sans-serif;font-weight:600;font-size:16px;line-height:24px}
-.meta{font-family:'AtkinsonNext','Mukta',sans-serif;font-weight:400;font-size:14px;line-height:20px;color:var(--t2)}
-.label{font-family:'AtkinsonNext','Mukta',sans-serif;font-weight:600;font-size:12px;line-height:16px;letter-spacing:.2px}
-.chipT{font-family:'AtkinsonNext','Mukta',sans-serif;font-weight:600;font-size:14px;line-height:20px}
-.btnT{font-family:'AtkinsonNext','Mukta',sans-serif;font-weight:700;font-size:15px;line-height:20px;letter-spacing:.15px}
-.caption{font-family:'AtkinsonNext','Mukta',sans-serif;font-weight:400;font-size:12px;line-height:16px;color:var(--t3)}
+.display{font-family:'Fraunces','Poppins',sans-serif;font-weight:700;font-size:32px;line-height:40px;letter-spacing:-.5px}
+.section{font-family:'Fraunces','Poppins',sans-serif;font-weight:600;font-size:18px;line-height:26px}
+.greeting{font-family:'Poppins',sans-serif;font-weight:700;font-size:30px;line-height:42px}
+.screenT{font-family:'Poppins',sans-serif;font-weight:700;font-size:24px;line-height:34px}
+.playerT{font-family:'Poppins',sans-serif;font-weight:600;font-size:22px;line-height:30px}
+.cardT{font-family:'Poppins',sans-serif;font-weight:700;font-size:20px;line-height:28px}
+.body{font-family:'Poppins',sans-serif;font-weight:400;font-size:16px;line-height:24px}
+.bodyS{font-family:'Poppins',sans-serif;font-weight:600;font-size:16px;line-height:24px}
+.meta{font-family:'Poppins',sans-serif;font-weight:400;font-size:14px;line-height:20px;color:var(--t2)}
+.label{font-family:'Poppins',sans-serif;font-weight:600;font-size:12px;line-height:16px;letter-spacing:.2px}
+.chipT{font-family:'Poppins',sans-serif;font-weight:600;font-size:14px;line-height:20px}
+.btnT{font-family:'Poppins',sans-serif;font-weight:700;font-size:15px;line-height:20px;letter-spacing:.15px}
+.caption{font-family:'Poppins',sans-serif;font-weight:400;font-size:12px;line-height:16px;color:var(--t3)}
 .tab{font-family:'DMMono','Mukta',monospace;font-weight:500;font-size:13px;line-height:18px;font-variant-numeric:tabular-nums;color:var(--t2)}
 .index{font-family:'DMMono','Mukta',monospace;font-weight:500;font-size:13px;line-height:18px;color:var(--t3)}
 .over{font-family:'DMMono','Mukta',monospace;font-weight:500;font-size:11px;line-height:16px;letter-spacing:1.1px;text-transform:uppercase}
@@ -146,7 +141,7 @@ svg.s20{width:20px;height:20px}svg.s18{width:18px;height:18px}svg.s16{width:16px
 
 /* buttons */
 .btns{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-.btn{height:48px;border-radius:24px;padding:0 20px;display:inline-flex;align-items:center;gap:8px;border:0;font-family:'AtkinsonNext','Mukta',sans-serif;font-weight:700;font-size:15px;letter-spacing:.15px}
+.btn{height:48px;border-radius:24px;padding:0 20px;display:inline-flex;align-items:center;gap:8px;border:0;font-family:'Poppins',sans-serif;font-weight:700;font-size:15px;letter-spacing:.15px}
 .btn.big{height:52px}
 .btn.filled{background:var(--primary);color:var(--onPrimary)}
 .btn.voltB{background:var(--volt);color:var(--onVolt);box-shadow:0 0 0 1.5px var(--voltEdge)}
@@ -155,7 +150,7 @@ svg.s20{width:20px;height:20px}svg.s18{width:18px;height:18px}svg.s16{width:16px
 .btn.text{background:transparent;color:var(--primary);padding:0 12px}
 .btn.danger{background:transparent;color:var(--error);padding:0 12px}
 .btn.sm{height:40px;padding:0 16px;font-size:14px}
-.chip{height:36px;border-radius:18px;padding:0 14px;display:inline-flex;align-items:center;gap:6px;font-family:'AtkinsonNext','Mukta',sans-serif;font-weight:600;font-size:14px;color:var(--t1);background:var(--elev)}
+.chip{height:36px;border-radius:18px;padding:0 14px;display:inline-flex;align-items:center;gap:6px;font-family:'Poppins',sans-serif;font-weight:600;font-size:14px;color:var(--t1);background:var(--elev)}
 .light .chip{background:var(--surface);box-shadow:inset 0 0 0 1px var(--outline)}
 .chip.sel,.light .chip.sel{background:var(--volt);color:var(--onVolt);box-shadow:0 0 0 1.5px var(--voltEdge)}
 .board{background:var(--surface);border-radius:20px;padding:16px;box-shadow:0 0 0 1px var(--cardEdge);margin-top:16px}
@@ -272,7 +267,7 @@ svg.s20{width:20px;height:20px}svg.s18{width:18px;height:18px}svg.s16{width:16px
 <div class="wrap">
   <div class="intro">
     <div class="kick">MediaHub · design specimen · both themes follow the phone</div>
-    <h1>Bijuli <span class="v">·</span> Volt on Ink</h1>
+    <h1>Sindur <span class="v">·</span> crimson on near-black</h1>
     <p>One loud colour, Volt lime, on a deep ultraviolet ink. In the light theme the canvas becomes ivory paper, the reading colour becomes Ultraviolet ink, and Volt turns into a highlighter "sticker" with an ink edge. The Ink Dock (mini player + nav) and the playback stage stay ink in both themes.</p>
     <p>Type: <b>Unbounded</b> for app mastheads and section heads, <b>Anek Devanagari Wide</b> for anything a song, video or person is called (Latin and Nepali in one voice), <b>Atkinson Hyperlegible Next</b> + <b>Mukta</b> for every line people read, <b>DM Mono</b> for times, sizes and kickers. Fonts load from raw.githubusercontent.com; the app bundles the same files.</p>
   </div>

@@ -227,7 +227,7 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
         SliverFillRemaining(
           hasScrollBody: false,
           child: EmptyStateWidget(
-            icon: Icons.videocam_off_outlined,
+            icon: Icons.videocam_off_rounded,
             title: state.searchQuery.isNotEmpty ? 'No matching videos' : 'No videos yet',
             // On iPhone there is no shared video folder to scan: videos come
             // from MediaHub's own downloads.
@@ -342,13 +342,16 @@ class _VideosHeader extends StatelessWidget {
     final type = context.typography;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        AppSpacing.lg16,
-        AppSpacing.xl20,
-        granted ? AppSpacing.xs4 : AppSpacing.lg16,
-        AppSpacing.md12,
-      ),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.md12, AppSpacing.lg16, AppSpacing.md12),
+      child: EntranceFade(
+        child: HeroBand(
+          padding: EdgeInsetsDirectional.fromSTEB(
+            AppSpacing.xl20,
+            AppSpacing.lg16,
+            granted ? AppSpacing.xs4 : AppSpacing.xl20,
+            AppSpacing.lg16,
+          ),
+          child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
@@ -414,6 +417,8 @@ class _VideosHeader extends StatelessWidget {
             ),
           ],
         ],
+          ),
+        ),
       ),
     );
   }

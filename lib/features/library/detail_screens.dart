@@ -822,7 +822,7 @@ class _AddSongsSheetState extends ConsumerState<_AddSongsSheet> {
                     if (songs == null) return const Center(child: CircularProgressIndicator());
                     if (songs.isEmpty) {
                       return EmptyHint(
-                        icon: Icons.music_off_outlined,
+                        icon: Icons.music_off_rounded,
                         title: _search.text.isEmpty ? 'No songs yet' : 'No matching songs',
                         message: _search.text.isNotEmpty
                             ? 'No songs matching "${_search.text}".'

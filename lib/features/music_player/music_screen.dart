@@ -342,7 +342,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           SliverFillRemaining(
             hasScrollBody: false,
             child: EmptyStateWidget(
-              icon: Icons.music_off_outlined,
+              icon: Icons.music_off_rounded,
               title: searching ? 'No matching songs' : 'No songs yet',
               message: searching
                   ? 'No songs matching "${state.searchQuery}".'
@@ -789,13 +789,16 @@ class _MusicHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final type = context.typography;
     return Padding(
-      padding: EdgeInsetsDirectional.fromSTEB(
-        AppSpacing.lg16,
-        AppSpacing.xl20,
-        actions.isEmpty ? AppSpacing.lg16 : AppSpacing.xs4,
-        AppSpacing.md12,
-      ),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.md12, AppSpacing.lg16, AppSpacing.md12),
+      child: EntranceFade(
+        child: HeroBand(
+          padding: EdgeInsetsDirectional.fromSTEB(
+            AppSpacing.xl20,
+            AppSpacing.lg16,
+            actions.isEmpty ? AppSpacing.xl20 : AppSpacing.xs4,
+            AppSpacing.lg16,
+          ),
+          child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
@@ -818,6 +821,8 @@ class _MusicHeader extends StatelessWidget {
           ),
           ...actions,
         ],
+          ),
+        ),
       ),
     );
   }

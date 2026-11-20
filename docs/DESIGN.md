@@ -440,6 +440,10 @@ gets the same press / focus / hover wash: `primaryBase` (crimson) at 16 / 14 / 8
 (`ruleAccentWidth`), 12dp, the kicker in `overline` / `primary`, 4dp, then the `sectionTitle` row with the trailing
 "See all" TextButton. Rule only on screen-level sections.
 
+Screen mastheads (Home greeting, Music, Videos, Downloads, Settings) sit in a `HeroBand`: a radius-20 card filled
+with `heroGradient`, 20dp padding, the title in `display` / `greeting`. Mastheads, Settings cards and empty states
+enter with `EntranceFade` (fade + 8dp lift, `MotionTokens.page`, 40ms stagger capped at 6), instant with reduced motion.
+
 ### 7.6 List rows
 
 - **Song row**, 64dp minimum: 48dp art (radius 10) or a 32dp `index` column; `bodyStrong` title; `metadata` line with the
@@ -513,7 +517,18 @@ VoltButton for play / get, else a FilledButton).
 
 ### 7.16 App icon and splash
 
-Unchanged by the Sindur rebrand (see pubspec `flutter_launcher_icons`).
+The play-bolt: a rounded play triangle split by a lightning notch, crimson `#CC324C` with a 2dp near-black
+`#0B0B0D` keyline, a thin rose `#FF6E86` rim on its upper-left edges and a small milk `#FFF3E6` glint. Drawn by
+`assets/icon/draw_icon.py` (Pillow, 4x supersampled):
+
+- `app_icon.png`: 1024 full bleed on a `#0B0B0D` (top left) to `#4A0F24` (bottom right) diagonal, no alpha (iOS, legacy).
+- `app_icon_foreground.png`: the glyph on transparent, inside the 66dp safe circle; `adaptive_icon_background` `#0B0B0D`.
+- `app_icon_monochrome.png`: the glyph silhouette in white for themed icons.
+
+Regenerate with `python -I assets/icon/draw_icon.py assets/icon` then `dart run flutter_launcher_icons`. The launch
+screen (`launch_background.xml`, iOS `LaunchScreen.storyboard`) and the Android 12+ splash are `#0B0B0D`
+(`mediahub_canvas`) in both system themes; the running window is white / `#0B0B0D` (`mediahub_window`). Settings →
+About shows the icon in miniature with the same diagonal and crimson glyph.
 
 ### 7.17 Playback behaviour
 

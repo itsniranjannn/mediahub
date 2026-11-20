@@ -14,6 +14,7 @@ import 'package:mediahub/data/repositories/library_repository_impl.dart';
 import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/domain/repositories/library_repository.dart';
 import 'package:mediahub/features/home/home_screen.dart';
+import 'package:mediahub/shared/widgets/ui_kit.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 
 import '../helpers/app_fonts.dart';
@@ -81,8 +82,9 @@ Future<void> _pumpHome(
   List<MediaItem> videos = const [],
   double textScale = 1.0,
   ThemeData? theme,
+  double height = 1200,
 }) async {
-  tester.view.physicalSize = const Size(360 * 3, 1200 * 3);
+  tester.view.physicalSize = Size(360 * 3, height * 3);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
 
@@ -256,6 +258,18 @@ void main() {
       expect(find.bySemanticsLabel(RegExp(r'^Good (morning|afternoon|evening)')), findsOneWidget);
       expect(find.bySemanticsLabel('Pause'), findsNothing);
       expect(find.bySemanticsLabel('Resume'), findsOneWidget, reason: 'the slab disc is its own button');
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('Home fits 360 x 690 at 1.3x text in dark and light, hero band included', (tester) async {
+    for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+      await _pumpHome(tester, theme: theme, textScale: 1.3, height: 690);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+      expect(find.byType(HeroBand), findsOneWidget);
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -600));
+      await tester.pump(const Duration(milliseconds: 400));
       expect(tester.takeException(), isNull);
     }
   });
