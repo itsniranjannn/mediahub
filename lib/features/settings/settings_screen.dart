@@ -18,24 +18,33 @@ import '../online/online_settings.dart';
 import '../online/online_web_view.dart' show onlineDataClearerProvider;
 import 'settings_notifier.dart';
 import 'theme_mode_setting.dart';
+import 'user_name_setting.dart';
 
 const String _appVersion = '1.0.0';
 
 /// Width of the leading slot on every row, so all row titles line up with the
-/// card heading text (16 gutter + 40 slot + 12 gap = 68).
-const double _leadingSlot = 40;
+/// card heading text (16 gutter + 32 slot + 12 gap = 60). Compact: 32 dp
+/// icons, rows stay at least 48 dp tall.
+const double _leadingSlot = 32;
 const double _rowTextInset = AppSpacing.lg16 + _leadingSlot + AppSpacing.md12;
 
-/// Corner radius of the 40 dp tiles (card headings, app identity): the tile
+/// Corner radius of the 32 dp tiles (card headings, app identity): the tile
 /// radius of DESIGN.md 7.1.
 const BorderRadius _tileRadius = BorderRadius.all(Radius.circular(AppSpacing.radiusThumb));
 
 /// Space between two cards. The card headings carry the hierarchy, so there
 /// are no separate group labels above the cards.
-const double _cardGap = AppSpacing.xl20;
+const double _cardGap = AppSpacing.lg16;
 
-/// Row titles: the body role a step heavier (app strings, so Atkinson).
+/// Row titles: the body role a step heavier (app strings, so Poppins).
 TextStyle _rowTitleStyle(AppTextStyles type) => type.body.copyWith(fontWeight: FontWeight.w500);
+
+/// Row and heading explanations: the metadata role one size down (13).
+TextStyle _subtitleStyle(AppTextStyles type) => type.metadata.copyWith(fontSize: 13, height: 18 / 13);
+
+/// Rows: ~10 dp above and below the text, one density step tighter.
+const double _rowVerticalPadding = 10;
+const VisualDensity _rowDensity = VisualDensity(vertical: -2);
 
 /// Settings, opened from the gear in the Home header: one card each for
 /// appearance, playback, YouTube, downloads, privacy and app info.
@@ -108,19 +117,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             const _Header(),
             const SizedBox(height: AppSpacing.xxl24),
-            const _AppearanceCard(),
+            const EntranceFade(index: 1, child: _YouCard()),
             const SizedBox(height: _cardGap),
-            const _PlaybackCard(),
+            const EntranceFade(index: 1, child: _AppearanceCard()),
             const SizedBox(height: _cardGap),
-            const _OnlineCard(),
+            const EntranceFade(index: 2, child: _PlaybackCard()),
+            const SizedBox(height: _cardGap),
+            const EntranceFade(index: 3, child: _OnlineCard()),
             if (showPersonalTools) ...const [
               SizedBox(height: _cardGap),
               _PersonalToolsCard(),
             ],
             const SizedBox(height: _cardGap),
-            const _PrivacyCard(),
+            const EntranceFade(index: 4, child: _PrivacyCard()),
             const SizedBox(height: _cardGap),
-            const _AboutCard(),
+            const EntranceFade(index: 5, child: _AboutCard()),
           ],
         ),
       ),
@@ -138,20 +149,24 @@ class _Header extends StatelessWidget {
     final type = context.typography;
     return Padding(
       padding: const EdgeInsets.only(top: AppSpacing.xs4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Semantics(
-            header: true,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: AlignmentDirectional.centerStart,
-              child: Text('Settings', style: type.display, maxLines: 1),
-            ),
+      child: EntranceFade(
+        child: HeroBand(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Semantics(
+                header: true,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text('Settings', style: type.display, maxLines: 1),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs4),
+              Text('Look, playback, YouTube, downloads and your privacy.', style: type.metadata),
+            ],
           ),
-          const SizedBox(height: AppSpacing.xs4),
-          Text('Look, playback, YouTube, downloads and your privacy.', style: type.metadata),
-        ],
+        ),
       ),
     );
   }
@@ -161,52 +176,139 @@ class _Header extends StatelessWidget {
 // Groups
 // ---------------------------------------------------------------------------
 
-/// Settings → Appearance: follow the phone (the default), or always dark or
-/// always light ([themeModeSettingProvider]).
+/// Settings → You: the name Home greets with. Tap opens [_NameDialog].
+class _YouCard extends ConsumerWidget {
+  const _YouCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final name = ref.watch(userNameProvider);
+    return _SettingsCard(
+      children: [
+        const _CardHeading(
+          icon: Icons.person_rounded,
+          title: 'You',
+          subtitle: 'Kept on this phone only.',
+        ),
+        const _CardDivider.underHeading(),
+        _NavRow(
+          key: const ValueKey('settings_user_name'),
+          icon: Icons.badge_outlined,
+          title: 'Your name',
+          subtitle: name.isEmpty ? 'Not set. Home says just नमस्ते.' : name,
+          trailingIcon: Icons.edit_rounded,
+          onTap: () async {
+            final result = await showDialog<String>(
+              context: context,
+              builder: (_) => _NameDialog(initial: name),
+            );
+            if (result != null) ref.read(userNameProvider.notifier).set(result);
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// Name editor: returns the new name, '' for Clear, or null for dismiss.
+class _NameDialog extends StatefulWidget {
+  final String initial;
+
+  const _NameDialog({required this.initial});
+
+  @override
+  State<_NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<_NameDialog> {
+  late final TextEditingController _text = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _save() => Navigator.of(context).pop(UserNameNotifier.normalize(_text.text));
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Your name'),
+      content: TextField(
+        key: const ValueKey('user_name_field'),
+        controller: _text,
+        autofocus: true,
+        maxLength: UserNameNotifier.maxLength,
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(hintText: 'How Home greets you'),
+        onSubmitted: (_) => _save(),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('user_name_clear'),
+          onPressed: () => Navigator.of(context).pop(''),
+          child: const Text('Clear'),
+        ),
+        FilledButton(
+          key: const ValueKey('user_name_save'),
+          onPressed: _save,
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Settings → Appearance: follow the phone (the default), always dark, always
+/// light or Bijuli Classic ([appearanceSettingProvider]).
 class _AppearanceCard extends ConsumerWidget {
   const _AppearanceCard();
 
-  static const List<(ThemeMode, IconData, String, String)> _options = [
-    (ThemeMode.system, Icons.brightness_auto_outlined, 'System', 'Dark or light, the same as your phone.'),
-    (ThemeMode.dark, Icons.dark_mode_outlined, 'Dark', 'Always dark.'),
-    (ThemeMode.light, Icons.light_mode_outlined, 'Light', 'Always light.'),
+  static const List<(AppearanceChoice, IconData, String, String)> _options = [
+    (AppearanceChoice.system, Icons.brightness_auto_rounded, 'System', 'Dark or light, the same as your phone.'),
+    (AppearanceChoice.dark, Icons.dark_mode_rounded, 'Dark', 'Always dark.'),
+    (AppearanceChoice.light, Icons.light_mode_rounded, 'Light', 'Always light.'),
+    (AppearanceChoice.classic, Icons.bolt_outlined, 'Bijuli Classic', 'The original lime-on-violet look. Always dark.'),
   ];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final mode = ref.watch(themeModeSettingProvider);
+    final mode = ref.watch(appearanceSettingProvider);
     final type = context.typography;
 
     return _SettingsCard(
       children: [
         const _CardHeading(
-          icon: Icons.palette_outlined,
+          icon: Icons.palette_rounded,
           title: 'Appearance',
           subtitle: 'How MediaHub looks. The player stays dark either way.',
         ),
         const _CardDivider.underHeading(),
-        RadioGroup<ThemeMode>(
+        RadioGroup<AppearanceChoice>(
           groupValue: mode,
           onChanged: (value) {
-            if (value != null) ref.read(themeModeSettingProvider.notifier).set(value);
+            if (value != null) ref.read(appearanceSettingProvider.notifier).set(value);
           },
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               for (final (i, (value, icon, title, subtitle)) in _options.indexed) ...[
                 if (i > 0) const _CardDivider.betweenRows(),
-                RadioListTile<ThemeMode>(
+                RadioListTile<AppearanceChoice>(
                   key: ValueKey('appearance_${value.name}'),
                   value: value,
                   controlAffinity: ListTileControlAffinity.trailing,
                   contentPadding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.md12, 0),
-                  minVerticalPadding: AppSpacing.md12,
+                  minVerticalPadding: _rowVerticalPadding,
+                  visualDensity: _rowDensity,
                   horizontalTitleGap: AppSpacing.md12,
                   secondary: _RowIcon(icon),
                   title: Text(title, style: _rowTitleStyle(type)),
                   subtitle: Padding(
                     padding: const EdgeInsets.only(top: 2),
-                    child: Text(subtitle, style: type.metadata),
+                    child: Text(subtitle, style: _subtitleStyle(type)),
                   ),
                 ),
               ],
@@ -285,7 +387,7 @@ class _OnlineCard extends ConsumerWidget {
     return _SettingsCard(
       children: [
         const _CardHeading(
-          icon: Icons.smart_display_outlined,
+          icon: Icons.smart_display_rounded,
           title: 'Online',
           subtitle: 'YouTube in the Online tab.',
         ),
@@ -319,13 +421,13 @@ class _OnlineCard extends ConsumerWidget {
         // YouTube); Google may still refuse an app's web view for some
         // accounts, and the row says so.
         const _InfoRow(
-          icon: Icons.account_circle_outlined,
+          icon: Icons.account_circle_rounded,
           title: youTubeSignInSettingsTitle,
           body: youTubeSignInSettingsBody,
         ),
         const _CardDivider.betweenRows(),
         _NavRow(
-          icon: Icons.delete_sweep_outlined,
+          icon: Icons.delete_sweep_rounded,
           title: 'Clear YouTube data',
           subtitle: clearYouTubeDataSettingsSubtitle(),
           trailingIcon: Icons.chevron_right_rounded,
@@ -361,7 +463,7 @@ class _PersonalToolsCard extends ConsumerWidget {
         ),
         const _CardDivider.underHeading(),
         _SwitchRow(
-          icon: Icons.download_for_offline_outlined,
+          icon: Icons.download_for_offline_rounded,
           title: 'Enable web link downloader',
           subtitle: 'Personal use only. May break third-party service terms and is the user\'s own '
               'responsibility. Only public media without authentication is supported.',
@@ -378,7 +480,8 @@ class _PersonalToolsCard extends ConsumerWidget {
                   children: [
                     const _CardDivider.betweenRows(),
                     ListTile(
-                      minVerticalPadding: AppSpacing.md12,
+                      minVerticalPadding: _rowVerticalPadding,
+                  visualDensity: _rowDensity,
                       contentPadding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.md12, 0),
                       horizontalTitleGap: AppSpacing.md12,
                       leading: const _RowIcon(Icons.memory_rounded),
@@ -472,7 +575,7 @@ class _PrivacyCard extends ConsumerWidget {
     return _SettingsCard(
       children: [
         const _CardHeading(
-          icon: Icons.shield_outlined,
+          icon: Icons.shield_rounded,
           title: 'Privacy & permissions',
           subtitle: 'What MediaHub uses, in plain words.',
         ),
@@ -480,7 +583,7 @@ class _PrivacyCard extends ConsumerWidget {
         // The iPhone app reads nothing else on the phone: its library is
         // what you download in MediaHub.
         _InfoRow(
-          icon: Icons.library_music_outlined,
+          icon: Icons.library_music_rounded,
           title: 'Your music and videos',
           body: isIOS
               ? 'Only the ones you download in MediaHub. MediaHub never uploads them.'
@@ -513,7 +616,7 @@ class _PrivacyCard extends ConsumerWidget {
           ),
         const _CardDivider.betweenRows(),
         _NavRow(
-          icon: Icons.app_settings_alt_outlined,
+          icon: Icons.app_settings_alt_rounded,
           title: 'App permissions',
           subtitle: isIOS
               ? 'See or change what MediaHub may use, in iPhone Settings.'
@@ -558,7 +661,7 @@ class _AboutCard extends StatelessWidget {
         const _AppIdentity(),
         const _CardDivider.underHeading(),
         _NavRow(
-          icon: Icons.bug_report_outlined,
+          icon: Icons.bug_report_rounded,
           title: 'Diagnostics log',
           subtitle: 'Recent app events (playback, downloads, network), handy when something goes wrong.',
           onTap: () {
@@ -567,7 +670,7 @@ class _AboutCard extends StatelessWidget {
         ),
         const _CardDivider.betweenRows(),
         _NavRow(
-          icon: Icons.description_outlined,
+          icon: Icons.description_rounded,
           title: 'Open-source licenses',
           subtitle: 'Libraries used by MediaHub and their licenses.',
           onTap: () => showLicensePage(
@@ -628,7 +731,7 @@ class _CardHeading extends StatelessWidget {
     final palette = context.palette;
     final type = AppTypography.of(palette);
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.lg16),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.md12, AppSpacing.lg16, AppSpacing.md12),
       child: Row(
         children: [
           _IconTile(icon: icon, color: accent ? palette.accent : palette.primary),
@@ -643,7 +746,7 @@ class _CardHeading extends StatelessWidget {
                   child: Text(title, style: type.sectionTitle),
                 ),
                 const SizedBox(height: 2),
-                Text(subtitle, style: type.metadata),
+                Text(subtitle, style: _subtitleStyle(type)),
               ],
             ),
           ),
@@ -653,7 +756,7 @@ class _CardHeading extends StatelessWidget {
   }
 }
 
-/// 40 dp tonal tile ([AppPalette.primaryContainer]) holding a [color] glyph.
+/// 32 dp tonal tile ([AppPalette.primaryContainer]) holding a [color] glyph.
 class _IconTile extends StatelessWidget {
   final IconData icon;
   final Color color;
@@ -669,12 +772,12 @@ class _IconTile extends StatelessWidget {
         color: context.palette.primaryContainer,
         borderRadius: _tileRadius,
       ),
-      child: Icon(icon, size: 22, color: color),
+      child: Icon(icon, size: 18, color: color),
     );
   }
 }
 
-/// Plain row icon centred in the same 40 dp slot as the heading tile.
+/// Plain row icon centred in the same 32 dp slot as the heading tile.
 class _RowIcon extends StatelessWidget {
   final IconData icon;
 
@@ -684,7 +787,7 @@ class _RowIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: _leadingSlot,
-      child: Center(child: Icon(icon, size: 22, color: context.palette.textSecondary)),
+      child: Center(child: Icon(icon, size: 20, color: context.palette.textSecondary)),
     );
   }
 }
@@ -732,14 +835,15 @@ class _SwitchRow extends StatelessWidget {
     final type = context.typography;
     return SwitchListTile(
       contentPadding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.md12, 0),
-      minVerticalPadding: AppSpacing.md12,
+      minVerticalPadding: _rowVerticalPadding,
+      visualDensity: _rowDensity,
       horizontalTitleGap: AppSpacing.md12,
       secondary: _RowIcon(icon),
       controlAffinity: ListTileControlAffinity.trailing,
       title: Text(title, style: _rowTitleStyle(type)),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 2),
-        child: Text(subtitle, style: type.metadata),
+        child: Text(subtitle, style: _subtitleStyle(type)),
       ),
       value: value,
       onChanged: onChanged,
@@ -755,6 +859,7 @@ class _NavRow extends StatelessWidget {
   final VoidCallback onTap;
 
   const _NavRow({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -767,13 +872,14 @@ class _NavRow extends StatelessWidget {
     final palette = context.palette;
     final type = AppTypography.of(palette);
     return ListTile(
-      minVerticalPadding: AppSpacing.md12,
+      minVerticalPadding: _rowVerticalPadding,
+      visualDensity: _rowDensity,
       horizontalTitleGap: AppSpacing.md12,
       leading: _RowIcon(icon),
       title: Text(title, style: _rowTitleStyle(type)),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 2),
-        child: Text(subtitle, style: type.metadata),
+        child: Text(subtitle, style: _subtitleStyle(type)),
       ),
       trailing: Icon(trailingIcon, color: palette.textMuted),
       onTap: onTap,
@@ -794,10 +900,11 @@ class _InfoRow extends StatelessWidget {
     final type = context.typography;
     return ListTile(
       minVerticalPadding: AppSpacing.sm8,
+      visualDensity: _rowDensity,
       horizontalTitleGap: AppSpacing.md12,
       leading: _RowIcon(icon),
       title: Text(title, style: _rowTitleStyle(type)),
-      subtitle: Text(body, style: type.metadata),
+      subtitle: Text(body, style: _subtitleStyle(type)),
     );
   }
 }
@@ -833,7 +940,7 @@ class _PromiseNote extends StatelessWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.only(top: 1),
-                child: Icon(Icons.verified_user_outlined, size: 22, color: palette.primary),
+                child: Icon(Icons.verified_user_rounded, size: 22, color: palette.primary),
               ),
               const SizedBox(width: AppSpacing.md12),
               Expanded(
@@ -858,9 +965,14 @@ class _PromiseNote extends StatelessWidget {
 class _AppIdentity extends StatelessWidget {
   const _AppIdentity();
 
-  /// The app icon in miniature (DESIGN.md 7.16): the ultraviolet-to-ink
-  /// diagonal with the Volt play glyph, the same in both themes.
-  static const AppPalette _icon = AppPalette.dark;
+  /// The app icon in miniature (DESIGN.md 7.16): the near-black-to-wine
+  /// diagonal with the crimson play-bolt, the same in every theme.
+  static const LinearGradient _iconField = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [Color(0xFF0B0B0D), Color(0xFF4A0F24)],
+  );
+  static const Color _iconGlyph = Color(0xFFCC324C);
 
   @override
   Widget build(BuildContext context) {
@@ -875,10 +987,10 @@ class _AppIdentity extends StatelessWidget {
               width: _leadingSlot,
               height: _leadingSlot,
               decoration: BoxDecoration(
-                gradient: _icon.heroGradient,
+                gradient: _iconField,
                 borderRadius: _tileRadius,
               ),
-              child: Icon(Icons.play_arrow_rounded, size: 26, color: _icon.primary),
+              child: const Icon(Icons.play_arrow_rounded, size: 22, color: _iconGlyph),
             ),
             const SizedBox(width: AppSpacing.md12),
             // The name gets the whole width; the version and the pill share

@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
-import '../../app/theme/app_theme.dart';
+import '../../app/theme/ink_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
@@ -495,7 +495,7 @@ class _StandaloneDock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Theme(
-      data: AppTheme.darkTheme,
+      data: InkTheme.of(context),
       child: Builder(
         builder: (context) {
           final palette = context.palette;

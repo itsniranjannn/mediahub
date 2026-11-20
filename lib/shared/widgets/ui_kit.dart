@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -107,6 +108,9 @@ class SectionHeader extends StatelessWidget {
   /// Thickness of the rule above a kicker.
   static const double ruleThickness = 2;
 
+  /// Length of the brand segment that leads the rule.
+  static const double ruleAccentWidth = 28;
+
   /// The action button's narrowest width (Material's TextButton minimum).
   static const double _actionMinWidth = 64;
 
@@ -182,7 +186,13 @@ class SectionHeader extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (rule) ...[
-                        Container(height: ruleThickness, color: palette.rule),
+                        // The rule, led by a short brand segment.
+                        Container(
+                          height: ruleThickness,
+                          color: palette.rule,
+                          alignment: AlignmentDirectional.centerStart,
+                          child: Container(width: ruleAccentWidth, color: palette.primaryBase),
+                        ),
                         const SizedBox(height: AppSpacing.md12),
                       ],
                       if (kicker != null) ...[
@@ -412,9 +422,18 @@ class SurfaceCard extends StatelessWidget {
     );
   }
 
+  /// The soft ink shadow under a card on paper (none on ink, where the
+  /// hairline edge separates it).
+  static List<BoxShadow> shadowsFor(AppPalette palette) => palette.isDark
+      ? const []
+      : [
+          BoxShadow(color: palette.schemeShadow.withValues(alpha: 0.06), blurRadius: 2, offset: const Offset(0, 1)),
+          BoxShadow(color: palette.schemeShadow.withValues(alpha: 0.07), blurRadius: 16, offset: const Offset(0, 6)),
+        ];
+
   Widget _card(AppPalette palette, Gradient? gradient) {
     final radius = BorderRadius.circular(AppSpacing.cardRadius);
-    return Material(
+    final card = Material(
       color: gradient == null ? palette.surface : Colors.transparent,
       borderRadius: radius,
       child: Ink(
@@ -427,9 +446,16 @@ class SurfaceCard extends StatelessWidget {
           borderRadius: radius,
           onTap: onTap,
           highlightColor: palette.surfacePressed,
+          splashColor: palette.primaryBase.withValues(alpha: 0.10),
           child: Padding(padding: padding, child: child),
         ),
       ),
+    );
+    final shadows = shadowsFor(palette);
+    if (shadows.isEmpty) return card;
+    return DecoratedBox(
+      decoration: BoxDecoration(borderRadius: radius, boxShadow: shadows),
+      child: card,
     );
   }
 }
@@ -470,7 +496,8 @@ class EmptyHint extends StatelessWidget {
     final type = AppTypography.of(palette);
     final kicker = this.kicker;
     return Center(
-      child: Padding(
+      child: EntranceFade(
+        child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xxxl32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -480,6 +507,7 @@ class EmptyHint extends StatelessWidget {
               height: 84,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
+                border: Border.all(color: palette.primaryBase.withValues(alpha: 0.22)),
                 gradient: RadialGradient(
                   colors: [
                     palette.primaryBase.withValues(alpha: 0.28),
@@ -512,8 +540,60 @@ class EmptyHint extends StatelessWidget {
             ],
           ],
         ),
+        ),
       ),
     );
+  }
+}
+
+/// A round tonal icon button (docs/DESIGN.md 7.3): the icon on a
+/// [AppPalette.secondaryContainer] disc, 48 dp, with the crimson press wash
+/// and a 0.97 press scale (instant with reduced motion). For secondary
+/// actions next to a [VoltButton] (shuffle, add to playlist ...).
+class TonalIconButton extends StatefulWidget {
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final String? tooltip;
+  final double size;
+
+  const TonalIconButton({
+    super.key,
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+    this.size = 48,
+  });
+
+  @override
+  State<TonalIconButton> createState() => _TonalIconButtonState();
+}
+
+class _TonalIconButtonState extends State<TonalIconButton> with _PressedState<TonalIconButton> {
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final button = IconButton.filledTonal(
+      statesController: states,
+      tooltip: widget.tooltip,
+      onPressed: widget.onPressed,
+      style: IconButton.styleFrom(
+        backgroundColor: palette.secondaryContainer,
+        foregroundColor: palette.onSecondaryContainer,
+        disabledBackgroundColor: palette.textPrimary.withValues(alpha: 0.12),
+        disabledForegroundColor: palette.textPrimary.withValues(alpha: 0.38),
+        fixedSize: Size.square(widget.size),
+        shape: const CircleBorder(),
+      ).copyWith(
+        overlayColor: WidgetStateProperty.resolveWith((s) {
+          if (s.contains(WidgetState.pressed)) return palette.primaryBase.withValues(alpha: 0.18);
+          if (s.contains(WidgetState.focused)) return palette.primaryBase.withValues(alpha: 0.14);
+          if (s.contains(WidgetState.hovered)) return palette.primaryBase.withValues(alpha: 0.08);
+          return null;
+        }),
+      ),
+      icon: Icon(widget.icon),
+    );
+    return _PressScale(pressed: pressed, child: button);
   }
 }
 
@@ -587,7 +667,7 @@ class VoltButton extends StatefulWidget {
   final VoidCallback? onPressed;
   final VoidCallback? onLongPress;
 
-  /// 40 dp tall with 16 dp side padding, for toolbars and the watch strip.
+  /// 40 dp tall with 12 dp side padding, for toolbars and the watch strip.
   final bool compact;
 
   /// Fills the available width (the Downloads link field's button).
@@ -652,7 +732,7 @@ class _VoltButtonState extends State<VoltButton> with _PressedState<VoltButton> 
       shadowColor: const WidgetStatePropertyAll(Colors.transparent),
       surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
       padding: WidgetStatePropertyAll(
-        EdgeInsets.symmetric(horizontal: widget.compact ? AppSpacing.lg16 : AppSpacing.xxl24),
+        EdgeInsets.symmetric(horizontal: widget.compact ? AppSpacing.md12 : AppSpacing.xxl24),
       ),
       minimumSize: WidgetStatePropertyAll(widget.expand ? Size.fromHeight(height) : Size(height, height)),
       tapTargetSize: MaterialTapTargetSize.padded,
@@ -711,7 +791,23 @@ ShapeDecoration _voltButtonDecoration(AppPalette palette, Set<WidgetState> state
     shape: StadiumBorder(side: side),
     color: disabled ? palette.surfacePressed : (pressed ? palette.voltPressed : null),
     gradient: disabled || pressed ? null : palette.primaryGradient,
+    shadows: voltGlowShadows(palette, disabled: disabled, pressed: pressed),
   );
+}
+
+/// The soft crimson glow under an enabled Volt button or disc: only where the
+/// palette has a glow (ink; transparent on paper, where the ink edge does the
+/// job), tighter while pressed, none when disabled.
+List<BoxShadow> voltGlowShadows(AppPalette palette, {bool disabled = false, bool pressed = false}) {
+  if (disabled || palette.voltGlow.a == 0) return const [];
+  return [
+    BoxShadow(
+      color: palette.voltGlow,
+      blurRadius: pressed ? 8 : 18,
+      offset: Offset(0, pressed ? 2 : 6),
+      spreadRadius: -2,
+    ),
+  ];
 }
 
 /// Round Volt play button with an ink glyph: [small] 44 dp (mini player, 24
@@ -807,7 +903,7 @@ class _VoltDiscState extends State<VoltDisc> with _PressedState<VoltDisc> {
       disc = DecoratedBox(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          boxShadow: [BoxShadow(color: palette.voltGlow, blurRadius: 24)],
+          boxShadow: [BoxShadow(color: palette.voltGlow, blurRadius: pressed ? 12 : 24)],
         ),
         child: disc,
       );
@@ -1129,4 +1225,378 @@ class _ArtworkPresenceBuilderState extends State<ArtworkPresenceBuilder> {
 
   @override
   Widget build(BuildContext context) => widget.builder(context, _hasArtwork, widget.child);
+}
+
+/// The masthead band at the top of a screen (docs/DESIGN.md 7.5): a rounded
+/// [AppPalette.heroGradient] card holding the page title and its summary.
+/// Text on it uses the ordinary text colours, which the contrast tests check
+/// against every gradient stop.
+class HeroBand extends StatelessWidget {
+  final Widget child;
+  final EdgeInsetsGeometry margin;
+  final EdgeInsetsGeometry padding;
+
+  /// Adds the Sindur v2 glow: a soft wine orb in the top end corner and a
+  /// plum / indigo one at the bottom start, painted under the child. Purely
+  /// decorative; the text still sits on the verified hero gradient stops.
+  final bool glow;
+
+  static const EdgeInsetsGeometry defaultPadding = EdgeInsets.fromLTRB(
+    AppSpacing.xl20,
+    AppSpacing.xl20,
+    AppSpacing.xl20,
+    AppSpacing.lg16,
+  );
+
+  const HeroBand({
+    super.key,
+    required this.child,
+    this.margin = EdgeInsets.zero,
+    this.padding = defaultPadding,
+    this.glow = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final radius = BorderRadius.circular(AppSpacing.cardRadius);
+    Widget content = Padding(padding: padding, child: child);
+    if (glow) {
+      content = Stack(
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0.95, -1.1),
+                    radius: 1.1,
+                    colors: [palette.primaryBase.withValues(alpha: palette.isDark ? 0.30 : 0.10), palette.primaryBase.withValues(alpha: 0)],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(-1.1, 1.2),
+                    radius: 1.0,
+                    colors: [palette.secondaryContainer.withValues(alpha: palette.isDark ? 0.55 : 0.35), palette.secondaryContainer.withValues(alpha: 0)],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          content,
+        ],
+      );
+    }
+    return Container(
+      margin: margin,
+      width: double.infinity,
+      clipBehavior: glow ? Clip.antiAlias : Clip.none,
+      decoration: BoxDecoration(
+        gradient: palette.heroGradient,
+        borderRadius: radius,
+        border: Border.all(color: palette.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: content,
+    );
+  }
+}
+
+/// A large Volt block (Sindur v2 Home bento): a big glyph over a Fraunces
+/// label on the loud brand fill, the primary gradient sheen included.
+///
+/// Effects: a slow diagonal shine sweeps across it every [shineEvery] (none
+/// with reduced motion), the Volt glow sits under it on ink, and a press
+/// scales it to 0.97 with a ripple while the glyph gives a small turn.
+class VoltTile extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final String semanticLabel;
+  final double height;
+  final VoidCallback onTap;
+
+  const VoltTile({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.semanticLabel,
+    required this.height,
+    required this.onTap,
+  });
+
+  /// Time between two shine sweeps.
+  static const Duration shineEvery = Duration(seconds: 6);
+
+  /// Length of one sweep.
+  static const Duration shineSweep = Duration(milliseconds: 1400);
+
+  @override
+  State<VoltTile> createState() => _VoltTileState();
+}
+
+class _VoltTileState extends State<VoltTile> with SingleTickerProviderStateMixin {
+  late final AnimationController _shine = AnimationController(vsync: this, duration: VoltTile.shineSweep);
+  Timer? _timer;
+  bool _pressed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = MotionTokens.duration(context, MotionTokens.page) == Duration.zero;
+    if (reduced) {
+      _timer?.cancel();
+      _timer = null;
+      _shine.value = 0;
+    } else {
+      _timer ??= Timer.periodic(VoltTile.shineEvery, (_) {
+        if (mounted && TickerMode.valuesOf(context).enabled) _shine.forward(from: 0);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _shine.dispose();
+    super.dispose();
+  }
+
+  void _setPressed(bool value) {
+    if (value != _pressed) setState(() => _pressed = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
+    final radius = BorderRadius.circular(AppSpacing.cardRadius);
+    final press = MotionTokens.duration(context, MotionTokens.micro);
+    return Semantics(
+      button: true,
+      label: widget.semanticLabel,
+      onTap: widget.onTap,
+      excludeSemantics: true,
+      child: AnimatedScale(
+        scale: _pressed ? MotionTokens.pressedScale : 1,
+        duration: press,
+        curve: MotionTokens.easeOut,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            boxShadow: voltGlowShadows(palette, pressed: _pressed),
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: Ink(
+              decoration: ShapeDecoration(
+                gradient: palette.primaryGradient,
+                shape: RoundedRectangleBorder(borderRadius: radius, side: _voltEdge(palette)),
+              ),
+              child: InkWell(
+                customBorder: RoundedRectangleBorder(borderRadius: radius),
+                onTap: widget.onTap,
+                onHighlightChanged: _setPressed,
+                child: SizedBox(
+                  height: widget.height,
+                  width: double.infinity,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: ClipRRect(
+                            borderRadius: radius,
+                            child: AnimatedBuilder(
+                              animation: _shine,
+                              builder: (context, _) => _shine.value == 0 || _shine.value == 1
+                                  ? const SizedBox.shrink()
+                                  : CustomPaint(
+                                      key: const ValueKey('volt_tile_shine'),
+                                      painter: _ShinePainter(_shine.value, palette.onVoltFill),
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(AppSpacing.lg16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            PressGlyph(
+                              pressed: _pressed,
+                              child: Icon(widget.icon, size: 32, color: palette.onVoltFill),
+                            ),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: AlignmentDirectional.centerStart,
+                              child: Text(
+                                widget.label,
+                                style: type.cardTitle.copyWith(color: palette.onVoltFill),
+                                maxLines: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The shine band: a soft diagonal streak at [t] (0..1) of its way across.
+class _ShinePainter extends CustomPainter {
+  final double t;
+  final Color tint;
+
+  const _ShinePainter(this.t, this.tint);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final band = size.shortestSide * 0.9;
+    final travel = size.width + size.height + band * 2;
+    final x = -band - size.height + travel * Curves.easeInOut.transform(t);
+    final rect = Rect.fromLTWH(x, 0, band, size.height);
+    canvas
+      ..save()
+      ..translate(rect.center.dx, size.height / 2)
+      ..skew(-0.5, 0)
+      ..translate(-rect.center.dx, -size.height / 2)
+      ..drawRect(
+        rect,
+        Paint()
+          ..shader = LinearGradient(
+            colors: [tint.withValues(alpha: 0), tint.withValues(alpha: 0.14), tint.withValues(alpha: 0)],
+          ).createShader(rect),
+      )
+      ..restore();
+  }
+
+  @override
+  bool shouldRepaint(_ShinePainter oldDelegate) => oldDelegate.t != t || oldDelegate.tint != tint;
+}
+
+/// A glyph that gives a small turn and grows a touch while [pressed]
+/// (instant with reduced motion). Used by the Home bento tiles.
+class PressGlyph extends StatelessWidget {
+  final bool pressed;
+  final Widget child;
+
+  const PressGlyph({super.key, required this.pressed, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = MotionTokens.duration(context, MotionTokens.feedback);
+    return AnimatedRotation(
+      turns: pressed ? -0.03 : 0,
+      duration: duration,
+      curve: MotionTokens.easeOut,
+      child: AnimatedScale(
+        scale: pressed ? 1.12 : 1,
+        duration: duration,
+        curve: MotionTokens.easeOut,
+        child: child,
+      ),
+    );
+  }
+}
+
+/// The Sindur v2 spark: a short rounded amber bar that marks a section title.
+/// Decorative (never the only cue), so it skips the text contrast floors.
+class SparkMark extends StatelessWidget {
+  final double height;
+  const SparkMark({super.key, this.height = 18});
+
+  static const double width = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: context.palette.navIndicator,
+          borderRadius: BorderRadius.circular(width),
+        ),
+      ),
+    );
+  }
+}
+
+/// Fades [child] in and lifts it 8 dp on first build ([MotionTokens.page],
+/// emphasised curve), [index] x 40 ms after the first item so a list
+/// staggers. Shown at once with reduced motion. Purely visual: the child is
+/// built, laid out and in the semantics tree from the first frame.
+class EntranceFade extends StatefulWidget {
+  final Widget child;
+  final int index;
+
+  const EntranceFade({super.key, required this.child, this.index = 0});
+
+  static const Duration stagger = Duration(milliseconds: 40);
+
+  /// Items after this many share its delay, so a long list never waits.
+  static const int maxStagger = 6;
+
+  @override
+  State<EntranceFade> createState() => _EntranceFadeState();
+}
+
+class _EntranceFadeState extends State<EntranceFade> with SingleTickerProviderStateMixin {
+  AnimationController? _controller;
+  Animation<double>? _curve;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_controller != null) return;
+    final base = MotionTokens.duration(context, MotionTokens.page);
+    if (base == Duration.zero) return;
+    final delay = EntranceFade.stagger * math.min(widget.index, EntranceFade.maxStagger);
+    final total = base + delay;
+    final controller = AnimationController(vsync: this, duration: total);
+    _controller = controller;
+    _curve = CurvedAnimation(
+      parent: controller,
+      curve: Interval(delay.inMicroseconds / total.inMicroseconds, 1, curve: MotionTokens.emphasized),
+    );
+    controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final curve = _curve;
+    if (curve == null) return widget.child;
+    return AnimatedBuilder(
+      animation: curve,
+      builder: (context, child) => Opacity(
+        opacity: curve.value,
+        alwaysIncludeSemantics: true,
+        child: Transform.translate(offset: Offset(0, 8 * (1 - curve.value)), child: child),
+      ),
+      child: widget.child,
+    );
+  }
 }

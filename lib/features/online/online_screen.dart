@@ -781,7 +781,9 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
               Expanded(
                 child: Stack(
                   children: [
-                    Positioned.fill(child: web),
+                    // Clipped to its own box: the page ends above the dock
+                    // and never paints into the dock's corner area.
+                    Positioned.fill(child: ClipRect(child: web)),
                     if (_error != null)
                       Positioned.fill(
                         child: ColoredBox(
@@ -929,7 +931,7 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
         selected: background,
         onSelected: _setBackgroundPlay,
       ),
-      iconAction('online_save', Icons.library_add_outlined, 'Save to Liked songs or a playlist', _save),
+      iconAction('online_save', Icons.library_add_rounded, 'Save to Favourites or a playlist', _save),
       iconAction('online_copy_link', Icons.link_rounded, 'Copy link', _copyLink),
       FilterChip(
         key: const ValueKey('online_autopip_chip'),
@@ -1160,19 +1162,19 @@ class _OnlineMenuSheet extends ConsumerWidget {
             ),
             ListTile(
               key: const ValueKey('online_menu_music'),
-              leading: const Icon(Icons.library_music_outlined),
+              leading: const Icon(Icons.library_music_rounded),
               title: const Text('YouTube Music'),
               onTap: onYouTubeMusic,
             ),
             ListTile(
               key: const ValueKey('online_menu_sign_in'),
-              leading: const Icon(Icons.account_circle_outlined),
+              leading: const Icon(Icons.account_circle_rounded),
               title: const Text('Sign in to YouTube'),
               onTap: onSignIn,
             ),
             if (onOpenDownloads != null)
               ListTile(
-                leading: const Icon(Icons.file_download_outlined),
+                leading: const Icon(Icons.file_download_rounded),
                 title: const Text('Open Downloads'),
                 onTap: onOpenDownloads,
               ),
@@ -1201,7 +1203,7 @@ class _OnlineMenuSheet extends ConsumerWidget {
             const Divider(height: 1),
             ListTile(
               key: const ValueKey('online_menu_clear'),
-              leading: Icon(Icons.delete_sweep_outlined, color: p.error),
+              leading: Icon(Icons.delete_sweep_rounded, color: p.error),
               title: Text('Clear site data', style: context.typography.body.copyWith(color: p.error)),
               onTap: onClearData,
             ),

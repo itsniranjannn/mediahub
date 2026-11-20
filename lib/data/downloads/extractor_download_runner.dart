@@ -201,7 +201,7 @@ class ExtractorDownloadRunner {
     final id = _newId();
     final host = Uri.tryParse(pageUrl)?.host ?? '';
     final title = meta.title.trim().isEmpty ? 'Media' : meta.title.trim();
-    final guessedExt = choice.isAudio ? (choice.audioFormat ?? 'm4a') : 'mp4';
+    final guessedExt = choice.isAudio ? (AudioConversion.parse(choice.audioFormat)?.codec ?? 'm4a') : 'mp4';
     final now = DateTime.now();
 
     // Queueing only writes the row; run() creates the folders it writes to.
@@ -466,7 +466,8 @@ class ExtractorDownloadRunner {
             formatSelector: selector,
             formatSort: formatSort,
             extractorArgs: row.extractorArgs,
-            audioFormat: row.audioFormat,
+            audioFormat: AudioConversion.parse(row.audioFormat)?.codec,
+            audioQuality: AudioConversion.parse(row.audioFormat)?.quality,
             onProgress: onProgress,
             onLine: onLine,
           );

@@ -2,14 +2,15 @@
 // test/unit/palette_tokens_test.dart checks every value against that table.
 import 'package:flutter/material.dart';
 
-/// The Bijuli "Volt on Ink" colour tokens (docs/DESIGN.md section 2) as a
+/// The Sindur colour tokens (docs/DESIGN.md section 2) as a
 /// [ThemeExtension], so every widget reads the colours of the theme it sits
 /// in: `context.palette.textPrimary`.
 ///
-/// [dark] is the ink theme, [light] the paper theme. `AppTheme` registers the
+/// [dark] is the near-black theme, [light] the white theme and [classic]
+/// the original Bijuli "Volt on Ink" theme. `AppTheme` registers the
 /// matching instance in each [ThemeData]; the Ink Dock, Now Playing and the
-/// video player wrap themselves in the dark theme, so `context.palette` is
-/// always [dark] inside them.
+/// video player wrap themselves in `InkTheme.of(context)`, so `context.palette`
+/// is always a dark palette ([dark] or [classic]) inside them.
 ///
 /// Volt fills ([voltFill], [primaryGradient], [onVoltFill]) reach the screen
 /// only through `VoltButton`, `VoltDisc`, `VoltSlab` (lib/shared/widgets/
@@ -78,13 +79,163 @@ class AppPalette extends ThemeExtension<AppPalette> {
     required this.snackbarAction,
     required this.shadow,
     required this.printShadow,
+    required this.onTertiary,
+    required this.schemeShadow,
+    required this.inverseSurface,
+    required this.onInverseSurface,
+    required this.inversePrimary,
     required this.heroGradient,
     required this.primaryGradient,
     required this.artworkGradients,
   });
 
-  /// Deep ultraviolet ink canvas with Volt lime as the brand colour.
+  /// Sindur dark: near-black canvas, crimson brand fill, rose text accent,
+  /// lavender second accent and milk text.
   static const AppPalette dark = AppPalette(
+    brightness: Brightness.dark,
+    background: _Sindur.background,
+    surface: _Sindur.surface,
+    surfaceElevated: _Sindur.surfaceElevated,
+    surfacePressed: _Sindur.surfacePressed,
+    primary: _Sindur.primary,
+    primaryBase: _Sindur.primaryBase,
+    primaryPressed: _Sindur.primaryPressed,
+    onPrimary: _Sindur.onPrimary,
+    primaryContainer: _Sindur.primaryContainer,
+    onPrimaryContainer: _Sindur.onPrimaryContainer,
+    secondary: _Sindur.secondary,
+    onSecondary: _Sindur.onSecondary,
+    secondaryContainer: _Sindur.secondaryContainer,
+    onSecondaryContainer: _Sindur.onSecondaryContainer,
+    voltFill: _Sindur.voltFill,
+    voltPressed: _Sindur.voltPressed,
+    onVoltFill: _Sindur.onVoltFill,
+    onVoltMuted: _Sindur.onVoltMuted,
+    voltEdge: _Sindur.voltEdge,
+    voltGlow: _Sindur.voltGlow,
+    accent: _Sindur.accent,
+    onAccent: _Sindur.onAccent,
+    favorite: _Sindur.favorite,
+    textPrimary: _Sindur.textPrimary,
+    textSecondary: _Sindur.textSecondary,
+    textMuted: _Sindur.textMuted,
+    divider: _Sindur.divider,
+    outlineVariant: _Sindur.outlineVariant,
+    outline: _Sindur.outline,
+    rule: _Sindur.rule,
+    focusRing: _Sindur.focusRing,
+    dragHandle: _Sindur.dragHandle,
+    success: _Sindur.success,
+    warning: _Sindur.warning,
+    error: _Sindur.error,
+    onError: _Sindur.onError,
+    errorContainer: _Sindur.errorContainer,
+    onErrorContainer: _Sindur.onErrorContainer,
+    liveFill: _Sindur.liveFill,
+    onLive: _Sindur.onLive,
+    scrim: _Sindur.scrim,
+    glass: _Sindur.glass,
+    overlay: _Sindur.overlay,
+    onOverlay: _Sindur.onOverlay,
+    dock: _Sindur.dock,
+    onDock: _Sindur.onDock,
+    onDockMuted: _Sindur.onDockMuted,
+    dockLine: _Sindur.dockLine,
+    navIndicator: _Sindur.navIndicator,
+    onNavIndicator: _Sindur.onNavIndicator,
+    sliderActive: _Sindur.sliderActive,
+    sliderInactive: _Sindur.sliderInactive,
+    sliderThumb: _Sindur.sliderThumb,
+    snackbar: _Sindur.snackbar,
+    onSnackbar: _Sindur.onSnackbar,
+    snackbarAction: _Sindur.snackbarAction,
+    shadow: _Sindur.shadow,
+    printShadow: _Sindur.printShadow,
+    onTertiary: _Sindur.onTertiary,
+    schemeShadow: _Sindur.schemeShadow,
+    inverseSurface: _Sindur.inverseSurface,
+    onInverseSurface: _Sindur.onInverseSurface,
+    inversePrimary: _Sindur.inversePrimary,
+    heroGradient: _Sindur.heroGradient,
+    primaryGradient: _Sindur.primaryGradient,
+    artworkGradients: _Sindur.artworkGradients,
+  );
+
+  /// Sindur light: white canvas with blush steps, wine text accent, crimson
+  /// fill (ink-edged sticker), purple accent and near-black text.
+  static const AppPalette light = AppPalette(
+    brightness: Brightness.light,
+    background: _SindurPaper.background,
+    surface: _SindurPaper.surface,
+    surfaceElevated: _SindurPaper.surfaceElevated,
+    surfacePressed: _SindurPaper.surfacePressed,
+    primary: _SindurPaper.primary,
+    primaryBase: _SindurPaper.primaryBase,
+    primaryPressed: _SindurPaper.primaryPressed,
+    onPrimary: _SindurPaper.onPrimary,
+    primaryContainer: _SindurPaper.primaryContainer,
+    onPrimaryContainer: _SindurPaper.onPrimaryContainer,
+    secondary: _SindurPaper.secondary,
+    onSecondary: _SindurPaper.onSecondary,
+    secondaryContainer: _SindurPaper.secondaryContainer,
+    onSecondaryContainer: _SindurPaper.onSecondaryContainer,
+    voltFill: _SindurPaper.voltFill,
+    voltPressed: _SindurPaper.voltPressed,
+    onVoltFill: _SindurPaper.onVoltFill,
+    onVoltMuted: _SindurPaper.onVoltMuted,
+    voltEdge: _SindurPaper.voltEdge,
+    voltGlow: _SindurPaper.voltGlow,
+    accent: _SindurPaper.accent,
+    onAccent: _SindurPaper.onAccent,
+    favorite: _SindurPaper.favorite,
+    textPrimary: _SindurPaper.textPrimary,
+    textSecondary: _SindurPaper.textSecondary,
+    textMuted: _SindurPaper.textMuted,
+    divider: _SindurPaper.divider,
+    outlineVariant: _SindurPaper.outlineVariant,
+    outline: _SindurPaper.outline,
+    rule: _SindurPaper.rule,
+    focusRing: _SindurPaper.focusRing,
+    dragHandle: _SindurPaper.dragHandle,
+    success: _SindurPaper.success,
+    warning: _SindurPaper.warning,
+    error: _SindurPaper.error,
+    onError: _SindurPaper.onError,
+    errorContainer: _SindurPaper.errorContainer,
+    onErrorContainer: _SindurPaper.onErrorContainer,
+    liveFill: _SindurPaper.liveFill,
+    onLive: _SindurPaper.onLive,
+    scrim: _SindurPaper.scrim,
+    glass: _SindurPaper.glass,
+    overlay: _SindurPaper.overlay,
+    onOverlay: _SindurPaper.onOverlay,
+    dock: _SindurPaper.dock,
+    onDock: _SindurPaper.onDock,
+    onDockMuted: _SindurPaper.onDockMuted,
+    dockLine: _SindurPaper.dockLine,
+    navIndicator: _SindurPaper.navIndicator,
+    onNavIndicator: _SindurPaper.onNavIndicator,
+    sliderActive: _SindurPaper.sliderActive,
+    sliderInactive: _SindurPaper.sliderInactive,
+    sliderThumb: _SindurPaper.sliderThumb,
+    snackbar: _SindurPaper.snackbar,
+    onSnackbar: _SindurPaper.onSnackbar,
+    snackbarAction: _SindurPaper.snackbarAction,
+    shadow: _SindurPaper.shadow,
+    printShadow: _SindurPaper.printShadow,
+    onTertiary: _SindurPaper.onTertiary,
+    schemeShadow: _SindurPaper.schemeShadow,
+    inverseSurface: _SindurPaper.inverseSurface,
+    onInverseSurface: _SindurPaper.onInverseSurface,
+    inversePrimary: _SindurPaper.inversePrimary,
+    heroGradient: _SindurPaper.heroGradient,
+    primaryGradient: _SindurPaper.primaryGradient,
+    artworkGradients: _SindurPaper.artworkGradients,
+  );
+
+  /// Bijuli Classic: the original deep ultraviolet ink with Volt lime.
+  /// Always dark; chosen in Settings > Appearance.
+  static const AppPalette classic = AppPalette(
     brightness: Brightness.dark,
     background: _Ink.background,
     surface: _Ink.surface,
@@ -144,76 +295,14 @@ class AppPalette extends ThemeExtension<AppPalette> {
     snackbarAction: _Ink.snackbarAction,
     shadow: _Ink.shadow,
     printShadow: _Ink.printShadow,
+    onTertiary: _Ink.onTertiary,
+    schemeShadow: _Ink.schemeShadow,
+    inverseSurface: _Ink.inverseSurface,
+    onInverseSurface: _Ink.onInverseSurface,
+    inversePrimary: _Ink.inversePrimary,
     heroGradient: _Ink.heroGradient,
     primaryGradient: _Ink.primaryGradient,
     artworkGradients: _Ink.artworkGradients,
-  );
-
-  /// Warm ivory paper with Ultraviolet ink as the reading accent; Volt fills
-  /// become ink-edged stickers.
-  static const AppPalette light = AppPalette(
-    brightness: Brightness.light,
-    background: _Paper.background,
-    surface: _Paper.surface,
-    surfaceElevated: _Paper.surfaceElevated,
-    surfacePressed: _Paper.surfacePressed,
-    primary: _Paper.primary,
-    primaryBase: _Paper.primaryBase,
-    primaryPressed: _Paper.primaryPressed,
-    onPrimary: _Paper.onPrimary,
-    primaryContainer: _Paper.primaryContainer,
-    onPrimaryContainer: _Paper.onPrimaryContainer,
-    secondary: _Paper.secondary,
-    onSecondary: _Paper.onSecondary,
-    secondaryContainer: _Paper.secondaryContainer,
-    onSecondaryContainer: _Paper.onSecondaryContainer,
-    voltFill: _Paper.voltFill,
-    voltPressed: _Paper.voltPressed,
-    onVoltFill: _Paper.onVoltFill,
-    onVoltMuted: _Paper.onVoltMuted,
-    voltEdge: _Paper.voltEdge,
-    voltGlow: _Paper.voltGlow,
-    accent: _Paper.accent,
-    onAccent: _Paper.onAccent,
-    favorite: _Paper.favorite,
-    textPrimary: _Paper.textPrimary,
-    textSecondary: _Paper.textSecondary,
-    textMuted: _Paper.textMuted,
-    divider: _Paper.divider,
-    outlineVariant: _Paper.outlineVariant,
-    outline: _Paper.outline,
-    rule: _Paper.rule,
-    focusRing: _Paper.focusRing,
-    dragHandle: _Paper.dragHandle,
-    success: _Paper.success,
-    warning: _Paper.warning,
-    error: _Paper.error,
-    onError: _Paper.onError,
-    errorContainer: _Paper.errorContainer,
-    onErrorContainer: _Paper.onErrorContainer,
-    liveFill: _Paper.liveFill,
-    onLive: _Paper.onLive,
-    scrim: _Paper.scrim,
-    glass: _Paper.glass,
-    overlay: _Paper.overlay,
-    onOverlay: _Paper.onOverlay,
-    dock: _Paper.dock,
-    onDock: _Paper.onDock,
-    onDockMuted: _Paper.onDockMuted,
-    dockLine: _Paper.dockLine,
-    navIndicator: _Paper.navIndicator,
-    onNavIndicator: _Paper.onNavIndicator,
-    sliderActive: _Paper.sliderActive,
-    sliderInactive: _Paper.sliderInactive,
-    sliderThumb: _Paper.sliderThumb,
-    snackbar: _Paper.snackbar,
-    onSnackbar: _Paper.onSnackbar,
-    snackbarAction: _Paper.snackbarAction,
-    shadow: _Paper.shadow,
-    printShadow: _Paper.printShadow,
-    heroGradient: _Paper.heroGradient,
-    primaryGradient: _Paper.primaryGradient,
-    artworkGradients: _Paper.artworkGradients,
   );
 
   /// The palette for [brightness]: [dark] or [light].
@@ -417,6 +506,23 @@ class AppPalette extends ThemeExtension<AppPalette> {
   /// Hard 6x6 dp offset, no blur, under hero and stage covers.
   final Color printShadow;
 
+  // ColorScheme extras (docs/DESIGN.md 2.3)
+
+  /// ColorScheme.onTertiary (label on [favorite]).
+  final Color onTertiary;
+
+  /// ColorScheme.shadow.
+  final Color schemeShadow;
+
+  /// ColorScheme.inverseSurface.
+  final Color inverseSurface;
+
+  /// ColorScheme.onInverseSurface.
+  final Color onInverseSurface;
+
+  /// ColorScheme.inversePrimary.
+  final Color inversePrimary;
+
   // Gradients (docs/DESIGN.md section 3; all run topLeft to bottomRight)
 
   /// Detail headers, the Home top band and the empty-state band.
@@ -493,6 +599,11 @@ class AppPalette extends ThemeExtension<AppPalette> {
     Color? snackbarAction,
     Color? shadow,
     Color? printShadow,
+    Color? onTertiary,
+    Color? schemeShadow,
+    Color? inverseSurface,
+    Color? onInverseSurface,
+    Color? inversePrimary,
     LinearGradient? heroGradient,
     LinearGradient? primaryGradient,
     List<LinearGradient>? artworkGradients,
@@ -557,6 +668,11 @@ class AppPalette extends ThemeExtension<AppPalette> {
       snackbarAction: snackbarAction ?? this.snackbarAction,
       shadow: shadow ?? this.shadow,
       printShadow: printShadow ?? this.printShadow,
+      onTertiary: onTertiary ?? this.onTertiary,
+      schemeShadow: schemeShadow ?? this.schemeShadow,
+      inverseSurface: inverseSurface ?? this.inverseSurface,
+      onInverseSurface: onInverseSurface ?? this.onInverseSurface,
+      inversePrimary: inversePrimary ?? this.inversePrimary,
       heroGradient: heroGradient ?? this.heroGradient,
       primaryGradient: primaryGradient ?? this.primaryGradient,
       artworkGradients: artworkGradients ?? this.artworkGradients,
@@ -631,6 +747,11 @@ class AppPalette extends ThemeExtension<AppPalette> {
       snackbarAction: c(snackbarAction, other.snackbarAction),
       shadow: c(shadow, other.shadow),
       printShadow: c(printShadow, other.printShadow),
+      onTertiary: c(onTertiary, other.onTertiary),
+      schemeShadow: c(schemeShadow, other.schemeShadow),
+      inverseSurface: c(inverseSurface, other.inverseSurface),
+      onInverseSurface: c(onInverseSurface, other.onInverseSurface),
+      inversePrimary: c(inversePrimary, other.inversePrimary),
       heroGradient: g(heroGradient, other.heroGradient),
       primaryGradient: g(primaryGradient, other.primaryGradient),
       artworkGradients: [
@@ -655,7 +776,7 @@ const LinearGradient _primaryGradient = LinearGradient(
   colors: [Color(0xFFDAFF63), Color(0xFFB4EE14)],
 );
 
-/// Raw values of [AppPalette.dark] (docs/DESIGN.md 2.2, "Dark" column).
+/// Raw values of [AppPalette.classic], the original Bijuli "Volt on Ink" dark theme.
 abstract final class _Ink {
   static const Color background = Color(0xFF180A2E);
   static const Color surface = Color(0xFF22123E);
@@ -715,6 +836,11 @@ abstract final class _Ink {
   static const Color snackbarAction = Color(0xFFCCFF3A);
   static const Color shadow = Color(0x00000000);
   static const Color printShadow = Color(0xFFCCFF3A);
+  static const Color onTertiary = Color(0xFF180A2E);
+  static const Color schemeShadow = Color(0xFF000000);
+  static const Color inverseSurface = Color(0xFFF6F2FF);
+  static const Color onInverseSurface = Color(0xFF180A2E);
+  static const Color inversePrimary = Color(0xFF5A32D6);
 
   static const LinearGradient heroGradient = LinearGradient(
     begin: Alignment.topLeft,
@@ -776,123 +902,262 @@ abstract final class _Ink {
   ];
 }
 
-/// Raw values of [AppPalette.light] (docs/DESIGN.md 2.2, "Light" column).
-abstract final class _Paper {
-  static const Color background = Color(0xFFF7F2E8);
-  static const Color surface = Color(0xFFFFFCF6);
-  static const Color surfaceElevated = Color(0xFFFFFFFF);
-  static const Color surfacePressed = Color(0xFFECE4D3);
-  static const Color primary = Color(0xFF5A32D6);
-  static const Color primaryBase = Color(0xFF6A45E6);
-  static const Color primaryPressed = Color(0xFF4723B5);
-  static const Color onPrimary = Color(0xFFFFFFFF);
-  static const Color primaryContainer = Color(0xFFEAE1FF);
-  static const Color onPrimaryContainer = Color(0xFF38189A);
-  static const Color secondary = Color(0xFF00658A);
-  static const Color onSecondary = Color(0xFFFFFFFF);
-  static const Color secondaryContainer = Color(0xFFEAE1FF);
-  static const Color onSecondaryContainer = Color(0xFF38189A);
-  static const Color voltFill = Color(0xFFCCFF3A);
-  static const Color voltPressed = Color(0xFFA9DC14);
-  static const Color onVoltFill = Color(0xFF180A2E);
-  static const Color onVoltMuted = Color(0xFF4A3B66);
-  static const Color voltEdge = Color(0xFF180A2E);
-  static const Color voltGlow = Color(0x00CCFF3A);
-  static const Color accent = Color(0xFF00658A);
-  static const Color onAccent = Color(0xFFFFFFFF);
-  static const Color favorite = Color(0xFFB5166B);
-  static const Color textPrimary = Color(0xFF180A2E);
-  static const Color textSecondary = Color(0xFF4C4358);
-  static const Color textMuted = Color(0xFF655B71);
-  static const Color divider = Color(0xFFE4DACA);
-  static const Color outlineVariant = Color(0xFFE4DACA);
-  static const Color outline = Color(0xFF8A7F6B);
-  static const Color rule = Color(0xFF8A7F6B);
-  static const Color focusRing = Color(0xFF5A32D6);
-  static const Color dragHandle = Color(0xFF8A7F6B);
-  static const Color success = Color(0xFF0B7446);
-  static const Color warning = Color(0xFF8A5500);
-  static const Color error = Color(0xFFBE1E3E);
-  static const Color onError = Color(0xFFFFFFFF);
-  static const Color errorContainer = Color(0xFFFBE3E6);
-  static const Color onErrorContainer = Color(0xFF5E0A1E);
-  static const Color liveFill = Color(0xFFBE1E3E);
+/// Raw values of [AppPalette.dark] (docs/DESIGN.md 2.2, "Dark" column).
+abstract final class _Sindur {
+  static const Color background = Color(0xFF000000);
+  static const Color surface = Color(0xFF0A0A0A);
+  static const Color surfaceElevated = Color(0xFF141216);
+  static const Color surfacePressed = Color(0xFF1E1A22);
+  static const Color primary = Color(0xFFFF7A92);
+  static const Color primaryBase = Color(0xFFCC324C);
+  static const Color primaryPressed = Color(0xFFE8667E);
+  static const Color onPrimary = Color(0xFF000000);
+  static const Color primaryContainer = Color(0xFF3D0612);
+  static const Color onPrimaryContainer = Color(0xFFF9E8F2);
+  static const Color secondary = Color(0xFFAAA6E3);
+  static const Color onSecondary = Color(0xFF000000);
+  static const Color secondaryContainer = Color(0xFF32396F);
+  static const Color onSecondaryContainer = Color(0xFFE7EEFE);
+  static const Color voltFill = Color(0xFFCC324C);
+  static const Color voltPressed = Color(0xFFB32A42);
+  static const Color onVoltFill = Color(0xFFFFF3E6);
+  static const Color onVoltMuted = Color(0xFFFFF3E6);
+  static const Color voltEdge = Color(0x00000000);
+  static const Color voltGlow = Color(0x47CC324C);
+  static const Color accent = Color(0xFFAAA6E3);
+  static const Color onAccent = Color(0xFF000000);
+  static const Color favorite = Color(0xFFFFA0B8);
+  static const Color textPrimary = Color(0xFFFFF3E6);
+  static const Color textSecondary = Color(0xFFD9CEC4);
+  static const Color textMuted = Color(0xFFABA3AD);
+  static const Color divider = Color(0xFF26222A);
+  static const Color outlineVariant = Color(0xFF26222A);
+  static const Color outline = Color(0xFF857F8C);
+  static const Color rule = Color(0xFF857F8C);
+  static const Color focusRing = Color(0xFFF69E1C);
+  static const Color dragHandle = Color(0xFF857F8C);
+  static const Color success = Color(0xFF4FD8C4);
+  static const Color warning = Color(0xFFF69E1C);
+  static const Color error = Color(0xFFFF9466);
+  static const Color onError = Color(0xFF000000);
+  static const Color errorContainer = Color(0xFF3A1A16);
+  static const Color onErrorContainer = Color(0xFFFFDCCF);
+  static const Color liveFill = Color(0xFFB3132F);
   static const Color onLive = Color(0xFFFFFFFF);
-  static const Color scrim = Color(0x99180A2E);
-  static const Color glass = Color(0xE0FFFCF6);
-  static const Color overlay = Color(0xB8180A2E);
+  static const Color scrim = Color(0xCC000000);
+  static const Color glass = Color(0xEB0A0A0A);
+  static const Color overlay = Color(0xB8000000);
   static const Color onOverlay = Color(0xFFFFFFFF);
-  static const Color dock = Color(0xF01C0E36);
-  static const Color onDock = Color(0xFFF6F2FF);
-  static const Color onDockMuted = Color(0xFFB4A8CF);
-  static const Color dockLine = Color(0xFF3E2E62);
-  static const Color navIndicator = Color(0xFFCCFF3A);
-  static const Color onNavIndicator = Color(0xFF180A2E);
-  static const Color sliderActive = Color(0xFF5A32D6);
-  static const Color sliderInactive = Color(0xFFDDD3C0);
-  static const Color sliderThumb = Color(0xFF5A32D6);
-  static const Color snackbar = Color(0xFF180A2E);
-  static const Color onSnackbar = Color(0xFFF6F2FF);
-  static const Color snackbarAction = Color(0xFFCCFF3A);
-  static const Color shadow = Color(0x1A180A2E);
-  static const Color printShadow = Color(0xFF180A2E);
+  static const Color dock = Color(0xF00C0A10);
+  static const Color onDock = Color(0xFFFFF3E6);
+  static const Color onDockMuted = Color(0xFFB7AFBE);
+  static const Color dockLine = Color(0xFF2E2638);
+  static const Color navIndicator = Color(0xFFF69E1C);
+  static const Color onNavIndicator = Color(0xFF000000);
+  static const Color sliderActive = Color(0xFFF69E1C);
+  static const Color sliderInactive = Color(0xFF2E2836);
+  static const Color sliderThumb = Color(0xFFFFF3E6);
+  static const Color snackbar = Color(0xFF141216);
+  static const Color onSnackbar = Color(0xFFFFF3E6);
+  static const Color snackbarAction = Color(0xFFF69E1C);
+  static const Color shadow = Color(0x00000000);
+  static const Color printShadow = Color(0xFF81021F);
+  static const Color onTertiary = Color(0xFF000000);
+  static const Color schemeShadow = Color(0xFF000000);
+  static const Color inverseSurface = Color(0xFFFFF3E6);
+  static const Color onInverseSurface = Color(0xFF000000);
+  static const Color inversePrimary = Color(0xFF81021F);
 
   static const LinearGradient heroGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [Color(0xFFE6DAFF), Color(0xFFF1EAF2), Color(0xFFF7F2E8)],
+    colors: [Color(0xFF5A0418), Color(0xFF2A1230), Color(0xFF000000)],
   );
 
-  static const LinearGradient primaryGradient = _primaryGradient;
+  static const LinearGradient primaryGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFFC42A46), Color(0xFFA8203A)],
+  );
 
   static const List<LinearGradient> artworkGradients = [
-    // ultraviolet
+    // crimson
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF7A4BF0), Color(0xFF3A1E86)],
+      colors: [Color(0xFFCC324C), Color(0xFF4A0A1A)],
     ),
-    // ice
+    // wine
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF1C86B0), Color(0xFF0E3F6A)],
+      colors: [Color(0xFF9A0A2C), Color(0xFF3A0010)],
     ),
-    // flare
+    // lavender
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFFC93A8C), Color(0xFF6A1654)],
+      colors: [Color(0xFF7A3A6E), Color(0xFF2A0F26)],
     ),
-    // moss
+    // navy
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF567A0C), Color(0xFF2A3C08)],
+      colors: [Color(0xFF4A54A8), Color(0xFF161A40)],
     ),
-    // ember
+    // amber
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFFC8502F), Color(0xFF6E1D2C)],
+      colors: [Color(0xFFB5600A), Color(0xFF4A2204)],
     ),
-    // cobalt
+    // graphite
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF4363E0), Color(0xFF1F2C82)],
+      colors: [Color(0xFF55525E), Color(0xFF0A0A0A)],
     ),
-    // orchid
+    // ocean
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFFA042C4), Color(0xFF4E1A72)],
+      colors: [Color(0xFF7E6FD0), Color(0xFF241A50)],
     ),
-    // jade
+    // rose
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF12806E), Color(0xFF0A4842)],
+      colors: [Color(0xFFB0407A), Color(0xFF40102C)],
+    ),
+  ];
+}
+
+/// Raw values of [AppPalette.light] (docs/DESIGN.md 2.2, "Light" column).
+abstract final class _SindurPaper {
+  static const Color background = Color(0xFFF6EBCF);
+  static const Color surface = Color(0xFFFBF4E2);
+  static const Color surfaceElevated = Color(0xFFFFFAF0);
+  static const Color surfacePressed = Color(0xFFEFE2C2);
+  static const Color primary = Color(0xFF81021F);
+  static const Color primaryBase = Color(0xFF9E0A2C);
+  static const Color primaryPressed = Color(0xFF5E0016);
+  static const Color onPrimary = Color(0xFFFFF3E6);
+  static const Color primaryContainer = Color(0xFFC6CBE8);
+  static const Color onPrimaryContainer = Color(0xFF381932);
+  static const Color secondary = Color(0xFF32396F);
+  static const Color onSecondary = Color(0xFFFFF3E6);
+  static const Color secondaryContainer = Color(0xFFAAA6E3);
+  static const Color onSecondaryContainer = Color(0xFF381932);
+  static const Color voltFill = Color(0xFF81021F);
+  static const Color voltPressed = Color(0xFF5E0016);
+  static const Color onVoltFill = Color(0xFFFFF3E6);
+  static const Color onVoltMuted = Color(0xFFF9E8F2);
+  static const Color voltEdge = Color(0x00000000);
+  static const Color voltGlow = Color(0x0081021F);
+  static const Color accent = Color(0xFF32396F);
+  static const Color onAccent = Color(0xFFFFF3E6);
+  static const Color favorite = Color(0xFF9C1458);
+  static const Color textPrimary = Color(0xFF381932);
+  static const Color textSecondary = Color(0xFF56404F);
+  static const Color textMuted = Color(0xFF5E4A58);
+  static const Color divider = Color(0xFFE6D7B2);
+  static const Color outlineVariant = Color(0xFFE6D7B2);
+  static const Color outline = Color(0xFF857565);
+  static const Color rule = Color(0xFF857565);
+  static const Color focusRing = Color(0xFF81021F);
+  static const Color dragHandle = Color(0xFF857565);
+  static const Color success = Color(0xFF0A6A40);
+  static const Color warning = Color(0xFF5A4F00);
+  static const Color error = Color(0xFFA8231C);
+  static const Color onError = Color(0xFFFFF3E6);
+  static const Color errorContainer = Color(0xFFFCE4DC);
+  static const Color onErrorContainer = Color(0xFF5E1608);
+  static const Color liveFill = Color(0xFFB3132F);
+  static const Color onLive = Color(0xFFFFFFFF);
+  static const Color scrim = Color(0x99381932);
+  static const Color glass = Color(0xE0FBF4E2);
+  static const Color overlay = Color(0xB8000000);
+  static const Color onOverlay = Color(0xFFFFFFFF);
+  static const Color dock = Color(0xF00C0A10);
+  static const Color onDock = Color(0xFFFFF3E6);
+  static const Color onDockMuted = Color(0xFFB7AFBE);
+  static const Color dockLine = Color(0xFF2E2638);
+  static const Color navIndicator = Color(0xFFF69E1C);
+  static const Color onNavIndicator = Color(0xFF000000);
+  static const Color sliderActive = Color(0xFF81021F);
+  static const Color sliderInactive = Color(0xFFE2D2A8);
+  static const Color sliderThumb = Color(0xFF81021F);
+  static const Color snackbar = Color(0xFF381932);
+  static const Color onSnackbar = Color(0xFFFFF3E6);
+  static const Color snackbarAction = Color(0xFFF69E1C);
+  static const Color shadow = Color(0x1A381932);
+  static const Color printShadow = Color(0xFF381932);
+  static const Color onTertiary = Color(0xFFFFF3E6);
+  static const Color schemeShadow = Color(0xFF381932);
+  static const Color inverseSurface = Color(0xFF381932);
+  static const Color onInverseSurface = Color(0xFFFFF3E6);
+  static const Color inversePrimary = Color(0xFFFF7A92);
+
+  static const LinearGradient heroGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [Color(0xFFC6CBE8), Color(0xFFE7EEFE), Color(0xFFF6EBCF)],
+  );
+
+  static const LinearGradient primaryGradient = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [Color(0xFFC42A46), Color(0xFFA8203A)],
+  );
+
+  static const List<LinearGradient> artworkGradients = [
+    // crimson
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFFCC324C), Color(0xFF7A1028)],
+    ),
+    // wine
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF9A0A2C), Color(0xFF5E0016)],
+    ),
+    // lavender
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF7A3A6E), Color(0xFF4A1A40)],
+    ),
+    // navy
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF4A54A8), Color(0xFF252C6A)],
+    ),
+    // amber
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFFB5600A), Color(0xFF6E3606)],
+    ),
+    // graphite
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF55525E), Color(0xFF2C2A32)],
+    ),
+    // ocean
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF7E6FD0), Color(0xFF3E3488)],
+    ),
+    // rose
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFFB0407A), Color(0xFF6A1A48)],
     ),
   ];
 }

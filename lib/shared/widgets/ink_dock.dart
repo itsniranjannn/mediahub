@@ -2,15 +2,17 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_theme.dart';
+import '../../app/theme/ink_theme.dart';
 
 /// The Ink Dock (docs/DESIGN.md 7.7): the container for the mini player and
 /// the bottom navigation. It is ink in both themes, so the place the family
 /// spends most time looks the same on every phone.
 ///
-/// It wraps its content in [AppTheme.darkTheme] (so `context.palette` inside
-/// is always [AppPalette.dark]) and in [AppTheme.barsOnInk], so the Android
+/// It wraps its content in `InkTheme.of(context)` (so `context.palette` inside
+/// is always a dark palette: [AppPalette.dark] or [AppPalette.classic]) and in [AppTheme.barsOnInk], so the Android
 /// navigation bar icons stay light over it in both themes. The fill is
 /// [AppPalette.dock] over a 24 blur, with 24 dp top corners and a 1 dp
 /// [AppPalette.dockLine] along the top edge.
@@ -26,12 +28,23 @@ class InkDock extends StatelessWidget {
 
   final double blur;
 
-  const InkDock({
-    super.key,
-    this.miniPlayer,
-    required this.navigation,
-    this.blur = 24,
-  });
+  /// The dock always paints an opaque fill behind its rounded top corners,
+  /// so the two corner gaps never show what is under it (a WebView on
+  /// Samsung One UI painted its white page there): the scaffold background,
+  /// or with [squareCorners] (the shell's Online tab) the dock colour itself,
+  /// so the corners read square.
+  final bool squareCorners;
+
+  const InkDock({super.key, this.miniPlayer, required this.navigation, this.blur = 24, this.squareCorners = false});
+
+  /// The system bottom inset the dock pads for: the larger of the padding
+  /// and the view padding, so gesture-nav phones that report the bar in only
+  /// one of them still keep the labels clear of it.
+  static double systemBottomInset(BuildContext context) {
+    final padding = MediaQuery.paddingOf(context).bottom;
+    final view = MediaQuery.viewPaddingOf(context).bottom;
+    return padding > view ? padding : view;
+  }
 
   static const double miniPlayerHeight = 64;
   static const double navigationHeight = 64;
@@ -40,30 +53,43 @@ class InkDock extends StatelessWidget {
   /// Bottom padding for scrolling content behind the dock: dock height plus
   /// the system inset plus 16 dp, so the last row clears the controls.
   static double contentBottomPadding(BuildContext context, {bool hasMiniPlayer = true}) =>
-      (hasMiniPlayer ? miniPlayerHeight : 0) + navigationHeight + MediaQuery.paddingOf(context).bottom + 16;
+      (hasMiniPlayer ? miniPlayerHeight : 0) + navigationHeight + systemBottomInset(context) + 16;
 
   @override
   Widget build(BuildContext context) {
     final miniPlayer = this.miniPlayer;
+    final pageBackground = Theme.of(context).scaffoldBackgroundColor;
     return Theme(
-      data: AppTheme.darkTheme,
+      data: InkTheme.of(context),
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         value: AppTheme.barsOnInk,
         child: Builder(
           builder: (context) {
             final palette = context.palette;
-            return ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(topRadius)),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-                child: CustomPaint(
-                  foregroundPainter: _DockEdgePainter(color: palette.dockLine, radius: topRadius),
-                  child: ColoredBox(
-                    color: palette.dock,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [?miniPlayer, navigation],
+            final backing = squareCorners ? palette.dock : pageBackground;
+            // Opaque, so nothing under the dock shows through the corners.
+            return DecoratedBox(
+              key: const ValueKey('dock_corner_backing'),
+              decoration: BoxDecoration(color: backing.withValues(alpha: 1)),
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(topRadius)),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+                  child: CustomPaint(
+                    foregroundPainter: _DockEdgePainter(
+                      color: palette.dockLine,
+                      radius: topRadius,
+                      glint: palette.voltGlow.withValues(
+                        alpha: palette.voltGlow.a * 1.6 > 1 ? 1 : palette.voltGlow.a * 1.6,
+                      ),
+                    ),
+                    child: ColoredBox(
+                      color: palette.dock,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [?miniPlayer, navigation],
+                      ),
                     ),
                   ),
                 ),
@@ -80,8 +106,9 @@ class InkDock extends StatelessWidget {
 class _DockEdgePainter extends CustomPainter {
   final Color color;
   final double radius;
+  final Color glint;
 
-  const _DockEdgePainter({required this.color, required this.radius});
+  const _DockEdgePainter({required this.color, required this.radius, this.glint = const Color(0x00000000)});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -101,8 +128,20 @@ class _DockEdgePainter extends CustomPainter {
         ..strokeWidth = stroke
         ..color = color,
     );
+    // A brand glint across the middle of the top edge, fading out to the
+    // corners (transparent where the palette has no glow).
+    if (glint.a > 0 && size.width > r * 2) {
+      final rect = Rect.fromLTWH(r, 0, size.width - r * 2, stroke);
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..shader = LinearGradient(colors: [glint.withValues(alpha: 0), glint, glint.withValues(alpha: 0)])
+              .createShader(rect),
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(_DockEdgePainter oldDelegate) => oldDelegate.color != color || oldDelegate.radius != radius;
+  bool shouldRepaint(_DockEdgePainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.radius != radius || oldDelegate.glint != glint;
 }

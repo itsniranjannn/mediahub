@@ -107,7 +107,7 @@ void main() {
       expect(FormatOptions.formatSortFor(choice.selector), isNull);
       expect(FormatOptions.originalAudioSelector(null), 'ba/b');
       expect(FormatOptions.originalAudioSelector('m4a;rm'), 'ba/b', reason: 'only a plain extension');
-      final mp3 = FormatOptions.build(_wide).firstWhere((c) => c.id == 'audio_mp3');
+      final mp3 = FormatOptions.build(_wide).firstWhere((c) => c.id == 'audio_mp3_320');
       expect(mp3.selector, 'ba/b', reason: 'MP3 is converted anyway');
     });
 

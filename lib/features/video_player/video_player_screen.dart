@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_theme.dart';
+import '../../app/theme/ink_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/platform/device_controls.dart';
@@ -646,7 +647,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
         }
       },
       child: Theme(
-        data: AppTheme.darkTheme,
+        data: InkTheme.of(context),
         child: AnnotatedRegion<SystemUiOverlayStyle>(
           value: AppTheme.barsOnInk,
           child: Builder(
@@ -1456,7 +1457,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm8),
-                      // The video's own name: Anek, two lines at most, broken
+                      // The video's own name: Poppins, two lines at most, broken
                       // after "_" in file-style names; read as written.
                       child: Text(
                         shownTitle,

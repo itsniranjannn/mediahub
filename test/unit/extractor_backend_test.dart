@@ -82,13 +82,13 @@ void main() {
       );
 
       final presets = FormatSelectionSheet.getPresets(meta);
-      expect(presets.length, equals(3));
+      expect(presets.length, equals(6)); // best, original, MP3 x4
       expect(presets.any((p) => p.isAudio), isTrue);
       expect(presets.any((p) => !p.isAudio), isTrue);
       // yt-dlp's own default: the best video with sound, whatever there is.
       expect(presets.first.selector, 'bv*+ba/b');
       expect(presets.last.selector, 'ba/b');
-      expect(presets.last.audioFormat, equals('mp3'));
+      expect(presets.last.audioFormat, equals('mp3-128'));
     });
 
     test('Quality list reflects the formats that were really found (not a fixed 720p cap)', () {
@@ -113,9 +113,9 @@ void main() {
       expect(p360.streamSizes, equals([8000000]));
 
       final audio = choices.where((c) => c.isAudio).toList();
-      expect(audio.map((c) => c.id), equals(['audio_best', 'audio_mp3']));
+      expect(audio.map((c) => c.id), equals(['audio_best', 'audio_mp3_320', 'audio_mp3_256', 'audio_mp3_192', 'audio_mp3_128']));
       expect(audio.first.estimatedBytes, equals(3000000));
-      expect(audio.last.audioFormat, equals('mp3'));
+      expect(audio.last.audioFormat, equals('mp3-128'));
     });
 
     test('Fake backend handles init, version, update, getInfo and download flow', () async {

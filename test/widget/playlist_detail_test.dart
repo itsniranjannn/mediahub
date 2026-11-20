@@ -1,4 +1,4 @@
-// The album, artist, playlist and Liked songs pages (fix plan P2): Shuffle
+// The album, artist, playlist and Favourites pages (fix plan P2): Shuffle
 // really turns shuffle on, a rename shows at once, the page closes when its
 // playlist goes, a playlist row has its menu and drag handle, a removal can
 // be undone, "Add songs" adds several at once, and the page menu acts on the
@@ -186,7 +186,7 @@ void main() {
       expect(playback.lastShuffle, isTrue);
     });
 
-    testWidgets('on Liked songs, leaving the online video out of the queue', (tester) async {
+    testWidgets('on Favourites, leaving the online video out of the queue', (tester) async {
       when(() => repo.watchFavorites(searchQuery: any(named: 'searchQuery')))
           .thenAnswer((_) => Stream.value([_song(1), _song(9, source: 'online'), _song(2)]));
       await pump(tester, const LikedSongsScreen());

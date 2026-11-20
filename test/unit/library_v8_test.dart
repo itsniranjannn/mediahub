@@ -1,5 +1,5 @@
 // Probes for the v8 library (fix plan P2): album identity and track order,
-// search (several words, accents, LIKE wildcards, Devanagari), Liked songs,
+// search (several words, accents, LIKE wildcards, Devanagari), Favourites,
 // playlists after a deleted download, missing files, online items and the
 // scan's own bookkeeping. Each test is the shape of a bug it would have
 // caught.
@@ -482,7 +482,7 @@ void main() {
       expect(await repo.watchRecentlyAdded().first, hasLength(1));
     });
 
-    test('Liked songs shows a liked online item, not a missing file', () async {
+    test('Favourites shows a liked online item, not a missing file', () async {
       expect(ids(await repo.watchFavorites().first), ['yt_dQw4w9WgXcQ']);
     });
 
@@ -517,7 +517,7 @@ void main() {
   });
 
   group('liked songs (LIB-13)', () {
-    test('liking stamps the time; Liked songs is newest first; unliking clears it', () async {
+    test('liking stamps the time; Favourites is newest first; unliking clears it', () async {
       await insertRow('a', title: 'Zed');
       await insertRow('b', title: 'Abe');
       await repo.toggleFavorite('a');

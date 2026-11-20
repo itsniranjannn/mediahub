@@ -145,10 +145,13 @@ void main() {
     expect(AppPalette.dark.heroGradient.colors, _hexStops(heroDark));
     expect(AppPalette.light.heroGradient.colors, _hexStops(heroLight));
     for (final p in [AppPalette.dark, AppPalette.light]) {
-      for (final g in [p.heroGradient, p.primaryGradient, ...p.artworkGradients]) {
+      for (final g in [p.heroGradient, ...p.artworkGradients]) {
         expect(g.begin, Alignment.topLeft);
         expect(g.end, Alignment.bottomRight);
       }
+      // The button sheen runs top to bottom (section 3).
+      expect(p.primaryGradient.begin, Alignment.topCenter);
+      expect(p.primaryGradient.end, Alignment.bottomCenter);
     }
 
     final primaryLine = gradients.split('\n').firstWhere((l) => l.startsWith('**primaryGradient**'));

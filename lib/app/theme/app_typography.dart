@@ -1,22 +1,21 @@
 import 'package:flutter/material.dart';
 import 'app_palette.dart';
 
-/// Every text role of the Bijuli type scale (docs/DESIGN.md section 6),
+/// Every text role of the Sindur type scale (docs/DESIGN.md section 6),
 /// coloured for one [AppPalette]. Get one with [AppTypography.of] or
 /// `context.typography`.
 ///
-/// Four voices with clear jobs:
-/// - **Unbounded** ([display], [sectionTitle]): headings the app itself
-///   writes. Never below 18, never in rows, never for a string that came
-///   from a file, tag, URL or person.
-/// - **Anek Devanagari Wide** ([greeting], [screenTitle], [playerTitle],
-///   [cardTitle]): every name of a thing, in Latin or Devanagari. Never
-///   below 20.
-/// - **Atkinson Hyperlegible Next** with Mukta for Devanagari ([body],
-///   [bodyStrong], [metadata], [label], [chipLabel], [button], [caption]):
-///   every line people read.
-/// - **DM Mono** with Mukta ([tabularFigures], [index], [overline], [badge],
-///   [figureLarge]): times, sizes, track numbers and kickers.
+/// Three voices with clear jobs:
+/// - **Fraunces** ([display], [sectionTitle]): a warm, soft serif for the
+///   headings the app itself writes. Latin only, so never below 18, never in
+///   rows, never for a string that came from a file, tag, URL or person.
+/// - **Poppins** ([greeting], [screenTitle], [playerTitle], [cardTitle],
+///   [body], [bodyStrong], [metadata], [label], [chipLabel], [button],
+///   [caption]): every name of a thing and every line people read. One design
+///   for Latin and Devanagari, so a Nepali song title never switches font.
+/// - **DM Mono** with Poppins for Devanagari ([tabularFigures], [index],
+///   [overline], [badge], [figureLarge]): times, sizes, track numbers and
+///   kickers.
 ///
 /// Every style uses [TextLeadingDistribution.even]; styles that can carry
 /// user content keep `letterSpacing: 0`, because tracking breaks the
@@ -44,44 +43,44 @@ class AppTextStyles {
     required this.figureLarge,
   });
 
-  /// U 32/40 w700. Tab mastheads only ("Music", "Videos" ...). One line.
+  /// F 32/40 w700. Tab mastheads only ("Music", "Videos" ...). One line.
   final TextStyle display;
 
-  /// A 30/42 w700. The Home greeting ("नमस्ते").
+  /// P 30/42 w700. The Home greeting ("नमस्ते").
   final TextStyle greeting;
 
-  /// A 24/34 w700. App bar titles, album / artist / playlist headers, the
+  /// P 24/34 w700. App bar titles, album / artist / playlist headers, the
   /// video title on the watch screen. Max 2 lines.
   final TextStyle screenTitle;
 
-  /// A 22/30 w600. Now Playing and video player titles. Max 2 lines.
+  /// P 22/30 w600. Now Playing and video player titles. Max 2 lines.
   final TextStyle playerTitle;
 
-  /// A 20/28 w700. Continue-listening slab and hero tiles. 1-2 lines.
+  /// P 20/28 w700. Continue-listening slab and hero tiles. 1-2 lines.
   final TextStyle cardTitle;
 
-  /// U 18/26 w600. "Recently played", sheet and dialog titles (app strings).
+  /// F 18/26 w600. "Recently played", sheet and dialog titles (app strings).
   final TextStyle sectionTitle;
 
-  /// T 16/24 w400. Paragraphs, sheet rows, dialog body, inputs.
+  /// P 16/24 w400. Paragraphs, sheet rows, dialog body, inputs.
   final TextStyle body;
 
-  /// T 16/24 w600. Song and video titles in rows.
+  /// P 16/24 w600. Song and video titles in rows.
   final TextStyle bodyStrong;
 
-  /// T 14/20 w400, textSecondary. "Artist · Album", "Channel · 1.2 GB".
+  /// P 14/20 w400, textSecondary. "Artist · Album", "Channel · 1.2 GB".
   final TextStyle metadata;
 
-  /// T 12/16 w600, +0.2, textMuted. Nav and form labels (app strings only).
+  /// P 12/16 w600, +0.2, textMuted. Nav and form labels (app strings only).
   final TextStyle label;
 
-  /// T 14/20 w600. Chips (may carry artist names).
+  /// P 14/20 w600. Chips (may carry artist names).
   final TextStyle chipLabel;
 
-  /// T 15/20 w700, +0.15, no colour (the button gives it). Every button label.
+  /// P 15/20 w600, no colour (the button gives it). Every button label.
   final TextStyle button;
 
-  /// T 12/16 w400, textMuted. Helper, error and empty-state fine print.
+  /// P 12/16 w400, textMuted. Helper, error and empty-state fine print.
   final TextStyle caption;
 
   /// M 13/18 w500 tabular, textSecondary. Seek times, durations, sizes, %.
@@ -100,42 +99,41 @@ class AppTextStyles {
   final TextStyle figureLarge;
 }
 
-/// The Bijuli type scale: five bundled families (pubspec.yaml) and the roles
-/// in [AppTextStyles].
+/// The Sindur type scale: three bundled families (pubspec.yaml) and the
+/// roles in [AppTextStyles].
 ///
 /// Get the roles with [of] and a palette, or `context.typography` (the
 /// surrounding theme's palette).
 abstract final class AppTypography {
   /// Families as registered in pubspec.yaml.
-  static const String unbounded = 'Unbounded';
-  static const String anekWide = 'AnekWide';
-  static const String atkinson = 'AtkinsonNext';
-  static const String mukta = 'Mukta';
+  static const String fraunces = 'Fraunces';
+  static const String poppins = 'Poppins';
   static const String dmMono = 'DMMono';
 
-  /// Unbounded is Latin only: a Nepali word in a static heading falls back to
-  /// Anek, which is the same width class.
-  static const List<String> headingFallback = [anekWide];
+  /// Fraunces is Latin only: a Nepali word in a static heading falls back to
+  /// Poppins.
+  static const List<String> headingFallback = [poppins];
 
-  /// Anek draws Latin and Devanagari; Atkinson and Mukta cover the symbols
-  /// it lacks.
-  static const List<String> titleFallback = [atkinson, mukta];
+  /// Poppins draws Latin and Devanagari itself; nothing else is bundled.
+  static const List<String> titleFallback = <String>[];
 
-  /// Atkinson (reading text) and DM Mono fall back to Mukta for Devanagari.
-  static const List<String> readingFallback = [mukta];
+  /// DM Mono (and text without a role) falls back to Poppins for Devanagari.
+  static const List<String> readingFallback = [poppins];
 
   /// `ThemeData.fontFamily` (with [readingFallback]): text without a role
-  /// reads in Atkinson.
-  static const String defaultFamily = atkinson;
+  /// reads in Poppins.
+  static const String defaultFamily = poppins;
 
   static final AppTextStyles _dark = _build(AppPalette.dark);
   static final AppTextStyles _light = _build(AppPalette.light);
+  static final AppTextStyles _classic = _build(AppPalette.classic);
 
-  /// Every role coloured for [palette]. The two built-in palettes are cached;
+  /// Every role coloured for [palette]. The three built-in palettes are cached;
   /// any other (a palette mid-way through a theme change) is built on demand.
   static AppTextStyles of(AppPalette palette) {
     if (identical(palette, AppPalette.dark)) return _dark;
     if (identical(palette, AppPalette.light)) return _light;
+    if (identical(palette, AppPalette.classic)) return _classic;
     return _build(palette);
   }
 
@@ -187,7 +185,7 @@ abstract final class AppTypography {
   static AppTextStyles _build(AppPalette p) {
     return AppTextStyles(
       display: _style(
-        family: unbounded,
+        family: fraunces,
         fallback: headingFallback,
         size: 32,
         line: 40,
@@ -196,7 +194,7 @@ abstract final class AppTypography {
         color: p.textPrimary,
       ),
       greeting: _style(
-        family: anekWide,
+        family: poppins,
         fallback: titleFallback,
         size: 30,
         line: 42,
@@ -204,7 +202,7 @@ abstract final class AppTypography {
         color: p.textPrimary,
       ),
       screenTitle: _style(
-        family: anekWide,
+        family: poppins,
         fallback: titleFallback,
         size: 24,
         line: 34,
@@ -212,7 +210,7 @@ abstract final class AppTypography {
         color: p.textPrimary,
       ),
       playerTitle: _style(
-        family: anekWide,
+        family: poppins,
         fallback: titleFallback,
         size: 22,
         line: 30,
@@ -220,7 +218,7 @@ abstract final class AppTypography {
         color: p.textPrimary,
       ),
       cardTitle: _style(
-        family: anekWide,
+        family: poppins,
         fallback: titleFallback,
         size: 20,
         line: 28,
@@ -228,7 +226,7 @@ abstract final class AppTypography {
         color: p.textPrimary,
       ),
       sectionTitle: _style(
-        family: unbounded,
+        family: fraunces,
         fallback: headingFallback,
         size: 18,
         line: 26,
@@ -236,32 +234,32 @@ abstract final class AppTypography {
         color: p.textPrimary,
       ),
       body: _style(
-        family: atkinson,
-        fallback: readingFallback,
+        family: poppins,
+        fallback: titleFallback,
         size: 16,
         line: 24,
         weight: FontWeight.w400,
         color: p.textPrimary,
       ),
       bodyStrong: _style(
-        family: atkinson,
-        fallback: readingFallback,
+        family: poppins,
+        fallback: titleFallback,
         size: 16,
         line: 24,
         weight: FontWeight.w600,
         color: p.textPrimary,
       ),
       metadata: _style(
-        family: atkinson,
-        fallback: readingFallback,
+        family: poppins,
+        fallback: titleFallback,
         size: 14,
         line: 20,
         weight: FontWeight.w400,
         color: p.textSecondary,
       ),
       label: _style(
-        family: atkinson,
-        fallback: readingFallback,
+        family: poppins,
+        fallback: titleFallback,
         size: 12,
         line: 16,
         weight: FontWeight.w600,
@@ -269,24 +267,23 @@ abstract final class AppTypography {
         color: p.textMuted,
       ),
       chipLabel: _style(
-        family: atkinson,
-        fallback: readingFallback,
+        family: poppins,
+        fallback: titleFallback,
         size: 14,
         line: 20,
         weight: FontWeight.w600,
         color: p.textPrimary,
       ),
       button: _style(
-        family: atkinson,
-        fallback: readingFallback,
+        family: poppins,
+        fallback: titleFallback,
         size: 15,
         line: 20,
-        weight: FontWeight.w700,
-        letterSpacing: 0.15,
+        weight: FontWeight.w600,
       ),
       caption: _style(
-        family: atkinson,
-        fallback: readingFallback,
+        family: poppins,
+        fallback: titleFallback,
         size: 12,
         line: 16,
         weight: FontWeight.w400,

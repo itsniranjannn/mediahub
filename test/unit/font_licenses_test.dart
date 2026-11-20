@@ -12,9 +12,9 @@ import '../helpers/app_fonts.dart';
 String _normalised(String text) => text.replaceAll('\r\n', '\n').replaceFirst('﻿', '');
 
 void main() {
-  test('pubspec registers the five Bijuli families, every file exists, Inter is gone', () {
+  test('pubspec registers the three Sindur families, every file exists, Inter is gone', () {
     final families = bundledFontFamilies();
-    expect(families.map((f) => f.family), ['Unbounded', 'AnekWide', 'AtkinsonNext', 'Mukta', 'DMMono']);
+    expect(families.map((f) => f.family), ['Fraunces', 'Poppins', 'DMMono']);
     for (final family in families) {
       expect(family.assets, isNotEmpty, reason: family.family);
       for (final asset in family.assets) {
@@ -31,7 +31,7 @@ void main() {
   });
 
   test('the embedded licence texts are the files in assets/fonts/licenses/', () {
-    expect(fontLicenses, hasLength(5));
+    expect(fontLicenses, hasLength(3));
     for (final license in fontLicenses) {
       final file = File('assets/fonts/licenses/${license.file}');
       expect(file.existsSync(), isTrue, reason: license.file);

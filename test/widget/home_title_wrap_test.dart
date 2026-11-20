@@ -14,6 +14,7 @@ import 'package:mediahub/data/repositories/library_repository_impl.dart';
 import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/domain/repositories/library_repository.dart';
 import 'package:mediahub/features/home/home_screen.dart';
+import 'package:mediahub/shared/widgets/ui_kit.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 
 import '../helpers/app_fonts.dart';
@@ -51,7 +52,8 @@ MediaItem _video() => MediaItem(
 /// Every Home feed answers at once: no songs, and [videos] in the rail.
 class _HomeRepo implements LibraryRepository {
   final List<MediaItem> videos;
-  _HomeRepo({this.videos = const []});
+  final List<MediaItem> songs;
+  _HomeRepo({this.videos = const [], this.songs = const []});
 
   @override
   Stream<List<MediaItem>> watchMediaItems({
@@ -60,9 +62,11 @@ class _HomeRepo implements LibraryRepository {
     MediaSortOption sortBy = MediaSortOption.title,
     bool ascending = true,
   }) =>
-      Stream.value(mediaType == MediaType.video ? videos : const []);
+      Stream.value(mediaType == MediaType.video ? videos : songs);
   @override
-  Stream<List<MediaItem>> watchRecentlyPlayed({int limit = 20}) => Stream.value(const []);
+  Stream<List<MediaItem>> watchRecentlyPlayed({int limit = 20}) => Stream.value(songs);
+  @override
+  Stream<List<MediaItem>> watchFavorites({String? searchQuery}) => Stream.value(songs);
   @override
   Stream<List<MediaItem>> watchMostPlayed({int limit = 20}) => Stream.value(const []);
   @override
@@ -81,15 +85,17 @@ Future<void> _pumpHome(
   List<MediaItem> videos = const [],
   double textScale = 1.0,
   ThemeData? theme,
+  double height = 1200,
+  List<MediaItem> songs = const [],
 }) async {
-  tester.view.physicalSize = const Size(360 * 3, 1200 * 3);
+  tester.view.physicalSize = Size(360 * 3, height * 3);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
 
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        libraryRepositoryProvider.overrideWithValue(_HomeRepo(videos: videos)),
+        libraryRepositoryProvider.overrideWithValue(_HomeRepo(videos: videos, songs: songs)),
         currentMediaItemProvider.overrideWith((ref) => song ?? _song()),
         isPlayingProvider.overrideWith((ref) => false),
       ],
@@ -258,6 +264,65 @@ void main() {
       expect(find.bySemanticsLabel('Resume'), findsOneWidget, reason: 'the slab disc is its own button');
       expect(tester.takeException(), isNull);
     }
+  });
+
+  testWidgets('Home fits 360 x 690 at 1.3x text in dark and light, hero band included', (tester) async {
+    for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+      await _pumpHome(tester, theme: theme, textScale: 1.3, height: 690);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+      expect(find.byType(HeroBand), findsOneWidget);
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -600));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  group('Sindur v2 Home', () {
+    final songs = [
+      for (var i = 0; i < 6; i++)
+        MediaItem(
+          id: 'rail_$i',
+          uri: 'content://media/external/audio/media/${100 + i}',
+          mediaType: MediaType.audio,
+          title: 'Rail song $i',
+          artist: 'Artist $i',
+          durationMs: 200000,
+          sizeBytes: 1,
+          dateAdded: DateTime(2026),
+        ),
+    ];
+
+    testWidgets('glowing hero, bento quick actions and cover rails with amber marks', (tester) async {
+      for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+        await _pumpHome(tester, theme: theme, songs: songs, videos: [_video()]);
+        expect(tester.widget<HeroBand>(find.byType(HeroBand)).glow, isTrue);
+        expect(find.bySemanticsLabel('Shuffle all songs'), findsOneWidget);
+        expect(find.bySemanticsLabel('Open Favourites'), findsOneWidget);
+        expect(find.bySemanticsLabel('Open Online'), findsOneWidget);
+        // The tall Shuffle block is as tall as Liked + gap + Online.
+        final shuffle = tester.getRect(find.bySemanticsLabel('Shuffle all songs'));
+        final liked = tester.getRect(find.bySemanticsLabel('Open Favourites'));
+        final online = tester.getRect(find.bySemanticsLabel('Open Online'));
+        expect(shuffle.height, moreOrLessEquals(online.bottom - liked.top, epsilon: 1));
+        expect(find.text('Recently played'), findsOneWidget);
+        expect(find.bySemanticsLabel('Rail song 0 by Artist 0'), findsWidgets);
+        expect(find.byType(SparkMark), findsWidgets);
+        expect(tester.takeException(), isNull);
+      }
+    });
+
+    testWidgets('with rails, Home fits 360 x 690 at 1.3x text in dark and light', (tester) async {
+      for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+        await _pumpHome(tester, theme: theme, songs: songs, videos: [_video()], textScale: 1.3, height: 690);
+        expect(tester.takeException(), isNull);
+        for (var i = 0; i < 4; i++) {
+          await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(tester.takeException(), isNull);
+        }
+      }
+    });
   });
 
   testWidgets('a title without underscores is shown unchanged', (tester) async {

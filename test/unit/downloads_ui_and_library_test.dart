@@ -219,6 +219,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // Click Download -> First-use notice dialog appears
+      await tester.ensureVisible(find.text('Download'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Download'));
       await tester.pumpAndSettle();
 

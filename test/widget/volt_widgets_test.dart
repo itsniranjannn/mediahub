@@ -1,4 +1,4 @@
-// The Volt widgets and the rest of the Bijuli kit in both themes: Volt fills
+// The Volt widgets and the rest of the Sindur kit in both themes: Volt fills
 // on paper always draw the 1.5 dp ink edge (docs/DESIGN.md 0.6 and 10), the
 // kit reads context.palette, and the Ink Dock stays ink in the light theme.
 import 'package:flutter/material.dart';
@@ -13,7 +13,6 @@ import 'package:mediahub/shared/widgets/ui_kit.dart';
 
 import '../helpers/app_fonts.dart';
 
-const _ink = Color(0xFF180A2E);
 
 Future<void> _pump(
   WidgetTester tester,
@@ -73,7 +72,7 @@ void main() {
   setUpAll(loadAppFonts);
 
   group('the ink edge on paper', () {
-    testWidgets('VoltButton, VoltDisc and VoltSlab paint a 1.5 dp #180A2E border in light', (tester) async {
+    testWidgets('Sindur v2: VoltButton, VoltDisc and VoltSlab draw no edge on sand either', (tester) async {
       await _pump(
         tester,
         Column(
@@ -86,17 +85,11 @@ void main() {
         ),
       );
 
-      final button = _shapeSide(_buttonFill(tester).shape);
-      expect(button.color, _ink);
-      expect(button.width, 1.5);
+      expect(AppPalette.light.voltEdge.a, 0, reason: 'the wine fill stands out on sand by itself');
+      expect(_shapeSide(_buttonFill(tester).shape), BorderSide.none);
 
-      final disc = _shapeSide(_discMaterial(tester).shape!);
-      expect(disc.color, _ink);
-      expect(disc.width, 1.5);
-
-      final slab = _shapeSide(_slabFill(tester).shape);
-      expect(slab.color, _ink);
-      expect(slab.width, 1.5);
+      expect(_shapeSide(_discMaterial(tester).shape!), BorderSide.none);
+      expect(_shapeSide(_slabFill(tester).shape), BorderSide.none);
       expect(_slabFill(tester).gradient, AppPalette.light.primaryGradient);
     });
 
@@ -119,7 +112,7 @@ void main() {
       expect(_buttonFill(tester).gradient, AppPalette.dark.primaryGradient);
     });
 
-    testWidgets('a selected chip in light wears the ink side and the Volt fill', (tester) async {
+    testWidgets('a selected chip in light wears the Volt fill and no edge', (tester) async {
       await _pump(
         tester,
         Row(
@@ -137,9 +130,7 @@ void main() {
         return material.shape!;
       }
 
-      final selected = _shapeSide(shapeOf('Folk'));
-      expect(selected.color, _ink);
-      expect(selected.width, 1.5);
+      expect(_shapeSide(shapeOf('Folk')), BorderSide.none);
       expect(_shapeSide(shapeOf('Pop')).color, AppPalette.light.outline);
       // The check mark keeps state from depending on colour alone.
       expect(find.descendant(of: find.widgetWithText(FilterChip, 'Folk'), matching: find.byType(CustomPaint)),
@@ -181,7 +172,7 @@ void main() {
         ),
       );
       expect(text.text.style!.color, AppPalette.light.onVoltFill);
-      expect(text.text.style!.fontFamily, 'AtkinsonNext');
+      expect(text.text.style!.fontFamily, 'Poppins');
     });
 
     testWidgets('pressed: the pressed Volt and a 0.97 scale; released: the sheen again', (tester) async {
@@ -319,7 +310,7 @@ void main() {
       final title = tester.widget<Text>(find.text(breakableTitle('Audit_Long_Tone_5min')));
       expect(title.semanticsLabel, 'Audit_Long_Tone_5min');
       expect(title.style!.color, palette.onVoltFill);
-      expect(title.style!.fontFamily, 'AnekWide');
+      expect(title.style!.fontFamily, 'Poppins');
       expect(title.maxLines, 1);
       expect(tester.widget<Text>(find.text('Family Recordings · 2:41 left')).style!.color, palette.onVoltMuted);
 
@@ -330,8 +321,8 @@ void main() {
       final slabRect = tester.getRect(find.byType(VoltSlab));
       final barRect = tester.getRect(find.byType(LinearProgressIndicator));
       expect(barRect.height, VoltSlab.progressHeight);
-      // Measured inside the 1.5 dp ink edge.
-      expect(slabRect.bottom - barRect.bottom, VoltSlab.progressInset + 1.5);
+      // Measured inside the edge (none in Sindur v2).
+      expect(slabRect.bottom - barRect.bottom, VoltSlab.progressInset + (palette.voltEdge.a == 0 ? 0 : 1.5));
 
       final disc = tester.widget<IconButton>(find.byType(IconButton));
       expect(disc.style!.backgroundColor!.resolve({}), palette.onVoltFill);
@@ -484,7 +475,7 @@ void main() {
       expect(rule.color, p.rule);
       expect(tester.getSize(find.descendant(of: find.byType(SectionHeader), matching: find.byType(Container)).first).height,
           SectionHeader.ruleThickness);
-      expect(tester.widget<Text>(find.text('Recently played')).style!.fontFamily, 'Unbounded');
+      expect(tester.widget<Text>(find.text('Recently played')).style!.fontFamily, 'Fraunces');
     });
 
     testWidgets('a kicker header with an action keeps the rule on the full gutter and the label on it', (tester) async {

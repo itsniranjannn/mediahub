@@ -1,5 +1,5 @@
 // The Music tab and Home after the library work (fix plan P2): the chip
-// order with Liked songs second, Liked songs pinned first among the
+// order with Favourites second, Favourites pinned first among the
 // playlists, the search reaching playlists, no notification prompt before a
 // song plays, friendly permission states, the refresh result, and Home's
 // "Liked" tile, in both themes and at 1.3x text on 320 dp.
@@ -21,6 +21,7 @@ import 'package:mediahub/features/library/library_notifier.dart';
 import 'package:mediahub/features/music_player/music_screen.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
+import 'package:mediahub/shared/widgets/ui_kit.dart';
 import 'package:mocktail/mocktail.dart';
 
 class _MockRepo extends Mock implements LibraryRepository {}
@@ -154,10 +155,10 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('the chips read Songs, Liked songs, Playlists, Albums, Artists, and fade at the end', (tester) async {
-    expect(MusicScreen.tabs, ['Songs', 'Liked songs', 'Playlists', 'Albums', 'Artists']);
+  testWidgets('the chips read Songs, Favourites, Playlists, Albums, Artists, and fade at the end', (tester) async {
+    expect(MusicScreen.tabs, ['Songs', 'Favourites', 'Playlists', 'Albums', 'Artists']);
     await pump(tester, const MusicScreen());
-    expect(find.text('Liked songs'), findsOneWidget, reason: 'second, so it is on screen without scrolling');
+    expect(find.text('Favourites'), findsOneWidget, reason: 'second, so it is on screen without scrolling');
     final chips = find.ancestor(of: find.text('Songs'), matching: find.byType(ShaderMask));
     expect(chips, findsOneWidget, reason: 'the 24 dp end fade (DESIGN.md 7.13)');
   });
@@ -194,13 +195,13 @@ void main() {
     expect(playback.shuffle, isTrue);
   });
 
-  testWidgets('Liked songs is pinned first among the playlists and opens its page', (tester) async {
+  testWidgets('Favourites is pinned first among the playlists and opens its page', (tester) async {
     await pump(tester, const MusicScreen());
     await openChip(tester, 'Playlists');
-    final liked = tester.getTopLeft(find.bySemanticsLabel(RegExp('^Playlist Liked songs')));
+    final liked = tester.getTopLeft(find.bySemanticsLabel(RegExp('^Playlist Favourites')));
     final road = tester.getTopLeft(find.bySemanticsLabel(RegExp('^Playlist Road trip')));
     expect(liked.dx, lessThan(road.dx), reason: 'first tile of the grid');
-    await tester.tap(find.bySemanticsLabel(RegExp('^Playlist Liked songs')));
+    await tester.tap(find.bySemanticsLabel(RegExp('^Playlist Favourites')));
     await tester.pumpAndSettle();
     expect(find.byType(LikedSongsScreen), findsOneWidget);
   });
@@ -212,7 +213,7 @@ void main() {
     await openChip(tester, 'Playlists');
     expect(find.bySemanticsLabel(RegExp('^Playlist Dashain')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp('^Playlist Road trip')), findsNothing);
-    expect(find.bySemanticsLabel(RegExp('^Playlist Liked songs')), findsNothing);
+    expect(find.bySemanticsLabel(RegExp('^Playlist Favourites')), findsNothing);
   });
 
   testWidgets('the refresh button says how many new songs it found', (tester) async {
@@ -221,6 +222,15 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('3 new songs'), findsOneWidget);
+  });
+
+  testWidgets('Music fits 360 x 690 at 1.3x text in dark and light, hero band included', (tester) async {
+    for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+      await pump(tester, const MusicScreen(), size: const Size(360, 690), theme: theme, textScale: 1.3);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+      expect(find.byType(HeroBand), findsOneWidget);
+    }
   });
 
   testWidgets('a grid that fails to load says so and can retry', (tester) async {
@@ -267,10 +277,10 @@ void main() {
     });
   }
 
-  testWidgets('Home has a "Liked" quick tile that opens Liked songs', (tester) async {
+  testWidgets('Home has a "Liked" quick tile that opens Favourites', (tester) async {
     await pump(tester, const HomeScreen());
-    expect(find.bySemanticsLabel('Open Liked songs'), findsOneWidget);
-    await tester.tap(find.bySemanticsLabel('Open Liked songs'));
+    expect(find.bySemanticsLabel('Open Favourites'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Open Favourites'));
     await tester.pumpAndSettle();
     expect(find.byType(LikedSongsScreen), findsOneWidget);
   });
@@ -278,6 +288,6 @@ void main() {
   testWidgets('Home quick tiles hold at 1.3x text on 320 dp', (tester) async {
     await pump(tester, const HomeScreen(), size: const Size(320, 640), textScale: 1.3);
     expect(tester.takeException(), isNull);
-    expect(find.bySemanticsLabel('Open Liked songs'), findsOneWidget);
+    expect(find.bySemanticsLabel('Open Favourites'), findsOneWidget);
   });
 }

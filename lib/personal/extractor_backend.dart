@@ -146,6 +146,7 @@ abstract class ExtractorBackend {
     String? formatSort,
     String? extractorArgs,
     String? audioFormat,
+    String? audioQuality,
     void Function(double progress, int eta)? onProgress,
     void Function(String line)? onLine,
   });
@@ -275,6 +276,7 @@ class AndroidExtractorBackend implements ExtractorBackend {
     String? formatSort,
     String? extractorArgs,
     String? audioFormat,
+    String? audioQuality,
     void Function(double progress, int eta)? onProgress,
     void Function(String line)? onLine,
   }) async {
@@ -297,6 +299,7 @@ class AndroidExtractorBackend implements ExtractorBackend {
         'outDir': outDir,
         'extractorArgs': extractorArgs,
         'audioFormat': audioFormat,
+        'audioQuality': audioQuality,
       });
       final hasVideo = res?['hasVideo'];
       final height = res?['height'];

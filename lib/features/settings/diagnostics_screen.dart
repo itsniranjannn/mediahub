@@ -98,7 +98,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 SliverFillRemaining(
                   hasScrollBody: false,
                   child: EmptyHint(
-                    icon: Icons.receipt_long_outlined,
+                    icon: Icons.receipt_long_rounded,
                     title: 'No events yet',
                     message: 'No diagnostic logs recorded yet. Play something and events will show up here.',
                   ),
@@ -111,7 +111,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             child: CustomScrollView(
               controller: _scrollController,
               slivers: [
-                SliverToBoxAdapter(child: _Summary(count: logs.length)),
+                SliverToBoxAdapter(child: EntranceFade(child: _Summary(count: logs.length))),
                 SliverPadding(
                   padding: EdgeInsets.fromLTRB(
                     AppSpacing.lg16,
@@ -250,7 +250,7 @@ class _Summary extends StatelessWidget {
             children: [
               PillTag(
                 text: count == 1 ? '1 event' : '$count events',
-                icon: Icons.receipt_long_outlined,
+                icon: Icons.receipt_long_rounded,
               ),
               PillTag(
                 text: 'Keeps the last ${DiagnosticsService.maxLines}',
@@ -277,7 +277,7 @@ class _LogLine extends StatelessWidget {
 
     // Every part of a line is in DM Mono (the figures role), so times line up
     // and event names read as the codes they are. Devanagari in a payload
-    // falls back to Mukta, and letterSpacing stays 0.
+    // falls back to Poppins, and letterSpacing stays 0.
     final palette = context.palette;
     final figures = AppTypography.of(palette).tabularFigures;
     // Timestamp: 12/16 muted, centred on the 18 dp event line by 1 dp.

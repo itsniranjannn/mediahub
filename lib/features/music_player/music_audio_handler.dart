@@ -1187,7 +1187,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
         if (_likeAvailable)
           MediaControl.custom(
             androidIcon: _currentFavorite ? 'drawable/ic_action_favorite_on' : 'drawable/ic_action_favorite_off',
-            label: _currentFavorite ? 'Remove from Liked songs' : 'Add to Liked songs',
+            label: _currentFavorite ? 'Remove from Favourites' : 'Add to Favourites',
             name: actionToggleFavorite,
           ),
         shuffleAction,

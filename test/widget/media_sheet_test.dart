@@ -442,7 +442,7 @@ void main() {
         'Play next',
         'Add to queue',
         'Add to playlist…',
-        'Remove from Liked songs',
+        'Remove from Favourites',
         'Go to album',
         'Go to artist',
         'Share',
@@ -503,25 +503,25 @@ void main() {
       expect(find.text('Created playlist "Dashain"'), findsOneWidget);
     });
 
-    testWidgets('Add to Liked songs toggles it, and Undo toggles it back', (tester) async {
+    testWidgets('Add to Favourites toggles it, and Undo toggles it back', (tester) async {
       final h = await _pump(tester, _song());
       await _open(tester);
       expect(find.byIcon(Icons.favorite_border_rounded), findsOneWidget);
-      await _choose(tester, 'Add to Liked songs');
+      await _choose(tester, 'Add to Favourites');
 
       verify(() => h.repo.toggleFavorite('song_1')).called(1);
-      expect(find.text('Added to Liked songs'), findsOneWidget);
+      expect(find.text('Added to Favourites'), findsOneWidget);
       await tester.tap(find.text('Undo'));
       await tester.pumpAndSettle();
       verify(() => h.repo.toggleFavorite('song_1')).called(1);
     });
 
-    testWidgets('Remove from Liked songs says so', (tester) async {
+    testWidgets('Remove from Favourites says so', (tester) async {
       final h = await _pump(tester, _song(isFavorite: true), favorite: true);
       await _open(tester);
-      await _choose(tester, 'Remove from Liked songs');
+      await _choose(tester, 'Remove from Favourites');
       verify(() => h.repo.toggleFavorite('song_1')).called(1);
-      expect(find.text('Removed from Liked songs'), findsOneWidget);
+      expect(find.text('Removed from Favourites'), findsOneWidget);
     });
 
     testWidgets('Go to album opens that very album (by its key), not a same-named one', (tester) async {
@@ -576,18 +576,18 @@ void main() {
       verify(() => h.repo.addSongToPlaylist('pl_1', 'song_1', allowDuplicate: true)).called(1);
     });
 
-    testWidgets('"Liked songs" is pinned first in Add to playlist, and likes the song', (tester) async {
+    testWidgets('"Favourites" is pinned first in Add to playlist, and likes the song', (tester) async {
       final h = await _pump(tester, _song());
       await _open(tester);
       await _choose(tester, 'Add to playlist…');
       final titles = [
         for (final tile in tester.widgetList<ListTile>(find.byType(ListTile))) (tile.title as Text?)?.data,
       ].whereType<String>().toList();
-      expect(titles.first, 'Liked songs');
+      expect(titles.first, 'Favourites');
       expect(titles, contains('Road trip'));
-      await _choose(tester, 'Liked songs');
+      await _choose(tester, 'Favourites');
       verify(() => h.repo.toggleFavorite('song_1')).called(1);
-      expect(find.text('Added to Liked songs'), findsOneWidget);
+      expect(find.text('Added to Favourites'), findsOneWidget);
     });
 
     testWidgets('Go to artist opens the artist page', (tester) async {
@@ -750,14 +750,14 @@ void main() {
       final h = await _pump(tester, _online(id: 'stream_77'));
       await _open(tester);
       expect(find.text('Channel · 3:33 · Online'), findsOneWidget, reason: 'the meta line says it is online');
-      await _choose(tester, 'Add to Liked songs');
+      await _choose(tester, 'Add to Favourites');
 
       final saved = verify(() => h.repo.saveOnlineItem(captureAny())).captured.single as MediaItem;
       expect(saved.id, 'yt_dQw4w9WgXcQ');
       expect(saved.uri, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
       expect(saved.source, 'online');
       verify(() => h.repo.toggleFavorite('yt_dQw4w9WgXcQ')).called(1);
-      expect(find.text('Added to Liked songs'), findsOneWidget);
+      expect(find.text('Added to Favourites'), findsOneWidget);
     });
 
     testWidgets('Add to playlist saves the video, then files it under its saved id', (tester) async {

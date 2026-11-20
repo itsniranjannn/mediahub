@@ -84,42 +84,25 @@ flutter:
   # Bijuli type (docs/DESIGN.md sections 5 and 6; files and licences in
   # assets/fonts/, see tools/fonts/README.md). All static, SIL OFL 1.1.
   fonts:
-    # App-authored headings (display, sectionTitle). Latin only.
-    - family: Unbounded
+    # App-authored headings (display, sectionTitle). Latin only; static
+    # instances of Fraunces at opsz 72, SOFT 50, WONK 0.
+    - family: Fraunces
       fonts:
-        - asset: assets/fonts/Unbounded-SemiBold.ttf
+        - asset: assets/fonts/Fraunces-SemiBold.ttf
           weight: 600
-        - asset: assets/fonts/Unbounded-Bold.ttf
+        - asset: assets/fonts/Fraunces-Bold.ttf
           weight: 700
-    # Every name of a thing (song, video, album, artist, person): Latin and
-    # Devanagari in one design. Anek Devanagari pinned to width 112.5.
-    - family: AnekWide
+    # Every name of a thing and every line people read: Latin and Devanagari
+    # in one design.
+    - family: Poppins
       fonts:
-        - asset: assets/fonts/AnekDevanagariWide-SemiBold.ttf
-          weight: 600
-        - asset: assets/fonts/AnekDevanagariWide-Bold.ttf
-          weight: 700
-    # Every line people read.
-    - family: AtkinsonNext
-      fonts:
-        - asset: assets/fonts/AtkinsonHyperlegibleNext-Regular.ttf
+        - asset: assets/fonts/Poppins-Regular.ttf
           weight: 400
-        - asset: assets/fonts/AtkinsonHyperlegibleNext-Medium.ttf
+        - asset: assets/fonts/Poppins-Medium.ttf
           weight: 500
-        - asset: assets/fonts/AtkinsonHyperlegibleNext-SemiBold.ttf
+        - asset: assets/fonts/Poppins-SemiBold.ttf
           weight: 600
-        - asset: assets/fonts/AtkinsonHyperlegibleNext-Bold.ttf
-          weight: 700
-    # Devanagari fallback of AtkinsonNext and DMMono.
-    - family: Mukta
-      fonts:
-        - asset: assets/fonts/Mukta-Regular.ttf
-          weight: 400
-        - asset: assets/fonts/Mukta-Medium.ttf
-          weight: 500
-        - asset: assets/fonts/Mukta-SemiBold.ttf
-          weight: 600
-        - asset: assets/fonts/Mukta-Bold.ttf
+        - asset: assets/fonts/Poppins-Bold.ttf
           weight: 700
     # Times, sizes, track numbers and kickers.
     - family: DMMono
@@ -169,7 +152,7 @@ flutter_launcher_icons:
   ios: true
   image_path: "assets/icon/app_icon.png"
   remove_alpha_ios: true
-  adaptive_icon_background: "#421E78"
+  adaptive_icon_background: "#0B0B0D"
   adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
   adaptive_icon_monochrome: "assets/icon/app_icon_monochrome.png"
 

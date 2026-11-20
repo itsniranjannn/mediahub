@@ -154,6 +154,7 @@ class FakeExtractorBackend implements ExtractorBackend {
     String? formatSort,
     String? extractorArgs,
     String? audioFormat,
+    String? audioQuality,
     void Function(double progress, int eta)? onProgress,
     void Function(String line)? onLine,
   }) async {
@@ -164,6 +165,7 @@ class FakeExtractorBackend implements ExtractorBackend {
       'formatSort': formatSort,
       'extractorArgs': extractorArgs,
       'audioFormat': audioFormat,
+      'audioQuality': audioQuality,
     });
     if (downloadErrors.isNotEmpty) {
       final scripted = downloadErrors.removeAt(0);

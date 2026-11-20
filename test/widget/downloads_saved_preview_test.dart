@@ -16,6 +16,7 @@ import 'package:mediahub/domain/models/download_state.dart';
 import 'package:mediahub/features/downloads/downloads_notifier.dart';
 import 'package:mediahub/features/downloads/downloads_screen.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
+import 'package:mediahub/shared/widgets/ui_kit.dart';
 
 final _base = DateTime(2026, 11, 20, 12);
 
@@ -86,6 +87,7 @@ void main() {
     WidgetTester tester,
     List<DownloadEntry> rows, {
     bool tall = true,
+    AppPalette palette = AppPalette.dark,
   }) async {
     if (tall) {
       tester.view.physicalSize = const Size(800, 7000);
@@ -107,7 +109,7 @@ void main() {
     addTearDown(container.dispose);
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(theme: AppTheme.build(AppPalette.dark), home: const DownloadsScreen()),
+      child: MaterialApp(theme: AppTheme.build(palette), home: const DownloadsScreen()),
     ));
     await tester.pumpAndSettle();
     return stream;
@@ -120,9 +122,27 @@ void main() {
 
   Future<void> tapToggle(WidgetTester tester) async {
     await tester.ensureVisible(find.byKey(_toggleKey));
+    await tester.pump(); // lay out at the new scroll offset before tapping
     await tester.tap(find.descendant(of: find.byKey(_toggleKey), matching: find.byType(Text)));
     await tester.pumpAndSettle();
   }
+
+  testWidgets('Sindur v2: the link field is the glowing hero, active cards carry a bold bar', (tester) async {
+    for (final palette in [AppPalette.dark, AppPalette.light]) {
+      await pump(tester, [
+        _row('r1', 'Running one', state: DownloadTaskState.downloading, received: 300, total: 1000),
+        ..._saved(2),
+      ], palette: palette);
+      final hero = find.byWidgetPredicate((w) => w is HeroBand && w.glow);
+      expect(hero, findsOneWidget);
+      expect(find.descendant(of: hero, matching: find.byType(TextField)), findsOneWidget);
+      final bar = tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator).first);
+      expect(bar.minHeight, 8);
+      expect(bar.color, palette.sliderActive);
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    }
+  });
 
   group('how many saved downloads show', () {
     testWidgets('0 saved: no Saved group and no toggle', (tester) async {
@@ -356,7 +376,8 @@ void main() {
 
   testWidgets('hundreds of saved downloads: rows are built only as they scroll in', (tester) async {
     await pump(tester, _saved(300), tall: false);
-    final list = find.byType(Scrollable).first;
+    // The page's own scroll view (the link field in the hero has one too).
+    final list = find.ancestor(of: find.byKey(const ValueKey('downloads-list')), matching: find.byType(Scrollable)).first;
     await tester.scrollUntilVisible(find.byKey(_toggleKey), 300, scrollable: list);
     expect(find.text('Show all 300 saved'), findsOneWidget);
     await tapToggle(tester);

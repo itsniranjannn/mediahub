@@ -249,6 +249,9 @@ void main() {
     expect(find.byType(FormatSelectionSheet), findsOneWidget);
     expect(find.text('360p'), findsOneWidget);
     expect(find.text('MP4 · 12.0 MB'), findsOneWidget, reason: 'sizes are shown when known');
+    // Audio choices sit in the sheet's Audio section.
+    await tester.tap(find.text('Audio'));
+    await tester.pump();
     expect(find.text(_audioLabel), findsOneWidget);
     expect(find.text(YoutubeDirectDownloadFlow.sheetNote), findsOneWidget);
     expect(find.text('Platform Link'), findsOneWidget, reason: 'the card stays behind the sheet');
@@ -546,6 +549,9 @@ void main() {
     expect(backend.infoCalls, [_linkA]);
     expect(source.streamCalls, [_idA]);
     expect(find.byType(FormatSelectionSheet), findsOneWidget);
+    // Audio choices sit in the sheet's Audio section.
+    await tester.tap(find.text('Audio'));
+    await tester.pump();
     expect(find.text(_audioLabel), findsOneWidget);
     // The downloader is already on: the sheet says why the list is short,
     // instead of asking to turn it on.

@@ -753,7 +753,7 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMessageHandler(wakelock, null);
     });
 
-    testWidgets('in the light theme: dark palette, light bar icons, a Volt play disc, the title in Anek',
+    testWidgets('in the light theme: dark palette, light bar icons, a Volt play disc, the title in Poppins',
         (tester) async {
       await _pumpScreen(tester, _EngineFactory([_ScriptedEngine()]), theme: AppTheme.lightTheme);
       expect(find.byKey(const ValueKey('video-surface')), findsOneWidget);
@@ -768,9 +768,9 @@ void main() {
       expect(find.byType(VoltDisc), findsOneWidget);
       expect(find.byTooltip('Pause'), findsOneWidget);
 
-      // The video's own name: Anek, two lines, broken after "_", read whole.
+      // The video's own name: Poppins, two lines, broken after "_", read whole.
       final title = tester.widget<Text>(find.text(breakableTitle(_item.title)));
-      expect(title.style!.fontFamily, 'AnekWide');
+      expect(title.style!.fontFamily, 'Poppins');
       expect(title.style!.letterSpacing, 0);
       expect(title.maxLines, 2);
       expect(title.semanticsLabel, _item.title);
@@ -810,7 +810,7 @@ void main() {
       );
       final heading = tester.widget<Text>(find.text('Unable to play video'));
       expect(heading.style!.color, ink.textPrimary);
-      expect(heading.style!.fontFamily, 'Unbounded', reason: 'an app string: the heading voice');
+      expect(heading.style!.fontFamily, 'Fraunces', reason: 'an app string: the heading voice');
       expect(tester.widget<Text>(find.text(_friendlyDecoder)).style!.color, ink.textSecondary);
       expect(tester.widget<Icon>(find.byIcon(Icons.error_outline_rounded)).color, ink.error);
       await _unmount(tester);

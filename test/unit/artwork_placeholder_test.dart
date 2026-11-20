@@ -108,8 +108,8 @@ void main() {
         }
       });
 
-      test('the eighth palette is jade, and no cover passes for the success green ($name)', () {
-        expect(palette.artworkGradients.last.colors.first, const Color(0xFF12806E));
+      test('the eighth palette is rose, and no cover passes for the success green ($name)', () {
+        expect(palette.artworkGradients.last.colors.first, const Color(0xFFB0407A));
         final successHue = HSVColor.fromColor(palette.success).hue;
         for (final gradient in palette.artworkGradients) {
           final hue = HSVColor.fromColor(gradient.colors.first).hue;

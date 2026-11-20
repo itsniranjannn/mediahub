@@ -27,10 +27,11 @@ double contrastRatio(Color color1, Color color2) {
 }
 
 void main() {
-  // Every check runs on the ink (dark) and the paper (light) theme.
+  // Every check runs on the dark, the light and the Bijuli Classic theme.
   final themes = {
     'dark': (AppPalette.dark, AppTheme.darkTheme),
     'light': (AppPalette.light, AppTheme.lightTheme),
+    'classic': (AppPalette.classic, AppTheme.classicTheme),
   };
 
   for (final MapEntry(key: name, value: (palette, theme)) in themes.entries) {

@@ -220,16 +220,24 @@ void main() {
       ExternalMediaSnapshot? external,
       bool reduceMotion = false,
       MusicAudioHandler? handler,
+      double bottomInset = 0,
+      bool insetInViewPaddingOnly = false,
+      String initialLocation = '/home',
     }) async {
       tester.view.physicalSize = Size(width * 3, 800 * 3);
       tester.view.devicePixelRatio = 3;
+      if (bottomInset > 0) {
+        final inset = FakeViewPadding(bottom: bottomInset * 3);
+        tester.view.viewPadding = inset;
+        if (!insetInViewPaddingOnly) tester.view.padding = inset;
+      }
       addTearDown(tester.view.reset);
       if (textScale != 1) {
         tester.platformDispatcher.textScaleFactorTestValue = textScale;
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       }
       final router = GoRouter(
-        initialLocation: '/home',
+        initialLocation: initialLocation,
         routes: [
           StatefulShellRoute.indexedStack(
             builder: (context, state, shell) => AppShell(navigationShell: shell),
@@ -368,6 +376,44 @@ void main() {
         }
       });
     }
+
+    // The owner's Samsung (One UI): labels looked cut off at the bottom and
+    // the YouTube page showed through the dock's rounded corners.
+    group('dock on system insets', () {
+      for (final inset in [0.0, 24.0, 48.0]) {
+        for (final scale in [1.0, 1.3]) {
+          testWidgets('labels fully visible above a $inset dp inset at ${scale}x', (tester) async {
+            await pumpShell(tester, bottomInset: inset, textScale: scale);
+            expect(tester.takeException(), isNull);
+            const screenBottom = 800.0;
+            for (final label in ['Home', 'Music', 'Videos', 'Online', 'Downloads']) {
+              final rect = tester.getRect(find.text(label));
+              expect(rect.bottom, lessThanOrEqualTo(screenBottom - inset), reason: '$label clears the inset');
+              expect(rect.top, greaterThanOrEqualTo(indicator(tester).bottom), reason: '$label sits under the pill');
+              expect(rect.height, greaterThan(0), reason: label);
+              expect(rect.width, lessThanOrEqualTo(360 / 5), reason: label);
+            }
+          });
+        }
+      }
+
+      testWidgets('three-button nav (inset only in the view padding) still pads the bar', (tester) async {
+        await pumpShell(tester, bottomInset: 48, insetInViewPaddingOnly: true);
+        expect(tester.getRect(find.text('Home')).bottom, lessThanOrEqualTo(800 - 48));
+      });
+
+      testWidgets('on Online the corners are backed with the dock colour; elsewhere the page colour', (tester) async {
+        await pumpShell(tester, initialLocation: '/online');
+        final backing = find.byKey(const ValueKey('dock_corner_backing'));
+        Color fill() => ((tester.widget<DecoratedBox>(backing).decoration as BoxDecoration).color)!;
+        expect(fill().a, 1, reason: 'opaque: nothing shows through');
+        final onOnline = fill();
+        await tester.tap(find.text('Home'));
+        await tester.pump();
+        expect(fill(), AppTheme.lightTheme.scaffoldBackgroundColor);
+        expect(fill(), isNot(onOnline));
+      });
+    });
 
     // The owner: "don't keep that playing menu on the Online section and
     // Videos section". The mini player folds away there and comes back on

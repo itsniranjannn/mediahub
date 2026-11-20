@@ -1,8 +1,9 @@
-"""Draws the Bijuli app icon (docs/DESIGN.md 7.16): a Volt play-bolt (a play
-triangle cut by a lightning notch) with an ink keyline.
+"""Draws the Sindur app icon (docs/DESIGN.md 7.16): a crimson play-bolt (a
+play triangle cut by a lightning notch) with a near-black keyline and a small
+rose / milk highlight on its upper edge.
 
 Outputs (1024 px):
-  app_icon.png             full-bleed iOS / legacy icon: #421E78 -> #180A2E diagonal, no alpha
+  app_icon.png             full-bleed iOS / legacy icon: #0B0B0D -> #4A0F24 diagonal, no alpha
   app_icon_foreground.png  adaptive foreground: the glyph + keyline on transparent
   app_icon_monochrome.png  themed-icon silhouette: the glyph only, white on transparent
 
@@ -14,10 +15,12 @@ import sys
 
 from PIL import Image, ImageDraw
 
-VOLT = (0xCC, 0xFF, 0x3A, 255)
-INK = (0x18, 0x0A, 0x2E, 255)
-FIELD_TOP = (0x42, 0x1E, 0x78)
-FIELD_DEEP = (0x18, 0x0A, 0x2E)
+VOLT = (0xCC, 0x32, 0x4C, 255)  # crimson fill (the name is the glyph layer's)
+INK = (0x0B, 0x0B, 0x0D, 255)
+ROSE = (0xFF, 0x6E, 0x86, 255)
+MILK = (0xFF, 0xF3, 0xE6, 255)
+FIELD_TOP = (0x0B, 0x0B, 0x0D)
+FIELD_DEEP = (0x4A, 0x0F, 0x24)
 
 SS = 4  # supersampling
 SIZE = 1024
@@ -118,11 +121,32 @@ def glyph_layers(size, box, keyline):
     return ink, volt
 
 
+def highlight(volt, size, box):
+    """A thin rose rim on the glyph's upper-left edges, upper half only."""
+    from PIL import ImageChops
+    d = int(box * 0.012)
+    shifted = ImageChops.offset(volt, d, d)
+    rim = ImageChops.subtract(volt, shifted)
+    fade = Image.linear_gradient('L').resize((size, size))  # 0 top -> 255 bottom
+    fade = fade.point(lambda v: 255 if v < 100 else max(0, 255 - (v - 110) * 6))
+    return ImageChops.multiply(rim, fade)
+
+
+def glint(size, box):
+    """A small milk dot near the glyph's top-left corner."""
+    t = Transform(box, size)
+    m = Image.new('L', (size, size), 0)
+    x, y = t((352.0, 300.0))
+    r = 16.0 * t.scale
+    ImageDraw.Draw(m).ellipse([x - r, y - r, x + r, y + r], fill=255)
+    return m
+
+
 def render(box_px, keyline_px, background):
     size = SIZE * SS
     ink, volt = glyph_layers(size, box_px * SS, keyline_px * SS)
     if background == 'field':
-        # Diagonal #421E78 (top left) -> #180A2E (bottom right).
+        # Diagonal #0B0B0D (top left) -> #4A0F24 (bottom right).
         v = Image.linear_gradient('L').resize((size, size))
         h = v.transpose(Image.Transpose.ROTATE_90)
         grad = Image.blend(v, h, 0.5)
@@ -134,6 +158,8 @@ def render(box_px, keyline_px, background):
     if background != 'mono':
         img.paste(Image.new('RGBA', (size, size), INK), (0, 0), ink)
         img.paste(Image.new('RGBA', (size, size), VOLT), (0, 0), volt)
+        img.paste(Image.new('RGBA', (size, size), ROSE), (0, 0), highlight(volt, size, box_px * SS))
+        img.paste(Image.new('RGBA', (size, size), MILK), (0, 0), glint(size, box_px * SS))
     else:
         img.paste(Image.new('RGBA', (size, size), (255, 255, 255, 255)), (0, 0), volt)
     img = img.resize((SIZE, SIZE), Image.LANCZOS)
@@ -157,7 +183,7 @@ def main():
         prev = sys.argv[2]
         os.makedirs(prev, exist_ok=True)
         fg = Image.open(os.path.join(out, 'app_icon_foreground.png'))
-        # How a launcher shows the adaptive icon: #421E78 field, 16 % inset,
+        # How a launcher shows the adaptive icon: #0B0B0D field, 16 % inset,
         # circle mask; and small sizes.
         canvas = Image.new('RGBA', (1080, 1080), FIELD_TOP + (255,))
         inner = fg.resize((734, 734), Image.LANCZOS)

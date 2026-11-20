@@ -16,7 +16,6 @@ import '../../core/widgets/artwork_thumbnail.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/video_progress.dart';
 import '../../shared/widgets/empty_state_widget.dart';
-import '../../shared/widgets/media_item_tile.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../library/library_notifier.dart';
 import '../library/media_context_menu.dart';
@@ -32,6 +31,7 @@ class VideosScreen extends ConsumerStatefulWidget {
 
 class _VideosScreenState extends ConsumerState<VideosScreen> {
   final TextEditingController _searchController = TextEditingController();
+  _VideoFilter _filter = _VideoFilter.all;
 
   @override
   void dispose() {
@@ -207,26 +207,42 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
         ),
       SliverToBoxAdapter(child: _searchField(context, notifier)),
 
-      // Continue watching rail if available
+      // Continue watching: the newest as a featured card, the rest in a rail.
       if (showContinueWatching) ...[
-        const SliverToBoxAdapter(
-          child: SectionHeader(title: 'Continue watching', kicker: 'Pick up where you left off'),
-        ),
         SliverToBoxAdapter(
-          child: _ContinueWatchingRail(
-            items: continueWatchingItems,
-            progressMap: progressMap,
-            onOpen: (item) => _openPlayer(context, item, list: continueWatchingItems),
-            onMenu: _openMenu,
-          ),
+          child: Builder(builder: (context) {
+            final item = continueWatchingItems.first;
+            final prog = progressMap[item.id];
+            final timed = (prog != null && prog.durationMs > 0) ? prog : null;
+            return _FeaturedResumeCard(
+              item: item,
+              ratio: timed == null ? 0.0 : (timed.positionMs / timed.durationMs).clamp(0.0, 1.0),
+              remainingMs: timed == null ? null : timed.durationMs - timed.positionMs,
+              onTap: () => _openPlayer(context, item, list: continueWatchingItems),
+              onLongPress: () => _openMenu(context, item),
+            );
+          }),
         ),
+        if (continueWatchingItems.length > 1) ...[
+          const SliverToBoxAdapter(
+            child: SectionHeader(title: 'Continue watching', kicker: 'Pick up where you left off'),
+          ),
+          SliverToBoxAdapter(
+            child: _ContinueWatchingRail(
+              items: continueWatchingItems.sublist(1),
+              progressMap: progressMap,
+              onOpen: (item) => _openPlayer(context, item, list: continueWatchingItems),
+              onMenu: _openMenu,
+            ),
+          ),
+        ],
       ],
 
       if (state.items.isEmpty)
         SliverFillRemaining(
           hasScrollBody: false,
           child: EmptyStateWidget(
-            icon: Icons.videocam_off_outlined,
+            icon: Icons.videocam_off_rounded,
             title: state.searchQuery.isNotEmpty ? 'No matching videos' : 'No videos yet',
             // On iPhone there is no shared video folder to scan: videos come
             // from MediaHub's own downloads.
@@ -253,31 +269,76 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
           ),
         )
       else ...[
-        if (showContinueWatching)
-          const SliverToBoxAdapter(child: SectionHeader(title: 'All videos', kicker: 'On this phone')),
-        SliverPadding(
-          padding: const EdgeInsets.only(top: AppSpacing.xs4, bottom: AppSpacing.xxl24),
-          sliver: SliverList.builder(
-            itemCount: state.items.length,
-            itemBuilder: (context, index) {
-              final video = state.items[index];
-              final prog = progressMap[video.id];
-              final ratio = (prog != null && prog.durationMs > 0)
-                  ? (prog.positionMs / prog.durationMs).clamp(0.0, 1.0)
-                  : null;
+        const SliverToBoxAdapter(child: SectionHeader(title: 'All videos', kicker: 'Your library')),
+        SliverToBoxAdapter(
+          child: _FilterChips(value: _filter, onChanged: (v) => setState(() => _filter = v)),
+        ),
+        ..._grid(context, _filtered(state.items), progressMap),
+      ],
+    ];
+  }
 
-              return MediaItemTile(
-                key: ValueKey(video.id),
-                item: video,
-                progress: ratio,
-                onTap: () => _openPlayer(context, video, list: state.items),
-                onMore: (anchor) => _openMenu(anchor, video),
-                onLongPress: () => _openMenu(context, video),
-              );
-            },
+  List<MediaItem> _filtered(List<MediaItem> items) {
+    switch (_filter) {
+      case _VideoFilter.all:
+        return items;
+      case _VideoFilter.downloaded:
+        return items.where((i) => i.source == 'download').toList();
+      case _VideoFilter.onPhone:
+        return items.where((i) => i.source != 'download').toList();
+    }
+  }
+
+  /// The two-column grid of 16:9 video cards, or a short hint when the
+  /// filter leaves nothing.
+  List<Widget> _grid(BuildContext context, List<MediaItem> items, Map<String, VideoProgress> progressMap) {
+    if (items.isEmpty) {
+      return [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.xxl24),
+            child: Text(
+              _filter == _VideoFilter.downloaded ? 'No downloaded videos yet.' : 'No videos from this phone yet.',
+              textAlign: TextAlign.center,
+              style: context.typography.body.copyWith(color: context.palette.textSecondary),
+            ),
           ),
         ),
-      ],
+      ];
+    }
+    return [
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, AppSpacing.xxl24),
+        sliver: SliverLayoutBuilder(
+          builder: (context, constraints) {
+            final cellWidth = (constraints.crossAxisExtent - AppSpacing.md12) / 2;
+            return SliverGrid.builder(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: AppSpacing.md12,
+                mainAxisSpacing: AppSpacing.lg16,
+                mainAxisExtent: _VideoGridCard.extent(context, cellWidth),
+              ),
+              itemCount: items.length,
+              itemBuilder: (context, index) {
+                final video = items[index];
+                final prog = progressMap[video.id];
+                final ratio = (prog != null && prog.durationMs > 0)
+                    ? (prog.positionMs / prog.durationMs).clamp(0.0, 1.0)
+                    : null;
+                return _VideoGridCard(
+                  key: ValueKey(video.id),
+                  item: video,
+                  ratio: ratio,
+                  width: cellWidth,
+                  onTap: () => _openPlayer(context, video, list: items),
+                  onLongPress: () => _openMenu(context, video),
+                );
+              },
+            );
+          },
+        ),
+      ),
     ];
   }
 
@@ -341,13 +402,17 @@ class _VideosHeader extends StatelessWidget {
     final type = context.typography;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(
-        AppSpacing.lg16,
-        AppSpacing.xl20,
-        granted ? AppSpacing.xs4 : AppSpacing.lg16,
-        AppSpacing.md12,
-      ),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.md12, AppSpacing.lg16, AppSpacing.md12),
+      child: EntranceFade(
+        child: HeroBand(
+          glow: true,
+          padding: EdgeInsetsDirectional.fromSTEB(
+            AppSpacing.xl20,
+            AppSpacing.lg16,
+            granted ? AppSpacing.xs4 : AppSpacing.xl20,
+            AppSpacing.lg16,
+          ),
+          child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
@@ -413,6 +478,8 @@ class _VideosHeader extends StatelessWidget {
             ),
           ],
         ],
+          ),
+        ),
       ),
     );
   }
@@ -631,7 +698,7 @@ class _ContinueWatchingRail extends StatelessWidget {
 }
 
 /// A part-watched video (docs/DESIGN.md 7.9): a 16:9 thumbnail at radius 14
-/// with the Volt resume line on its dark track, the title and the time left.
+/// with the amber resume line on its dark track, the title and the time left.
 class _ResumeCard extends StatelessWidget {
   final MediaItem item;
   final double ratio;
@@ -717,7 +784,7 @@ class _ResumeCard extends StatelessWidget {
                               minHeight: _resumeHeight,
                               borderRadius: BorderRadius.zero,
                               backgroundColor: palette.overlay,
-                              valueColor: AlwaysStoppedAnimation<Color>(AppPalette.dark.primary),
+                              valueColor: AlwaysStoppedAnimation<Color>(palette.navIndicator),
                             ),
                           ),
                         ],
@@ -755,6 +822,283 @@ class _ResumeCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Featured resume card, filter chips and the video grid (Sindur v2)
+// ---------------------------------------------------------------------------
+
+/// Which videos the grid shows.
+enum _VideoFilter { all, downloaded, onPhone }
+
+/// The amber resume line on an ink track, shared by the featured card and
+/// the grid cards.
+class _ResumeLine extends StatelessWidget {
+  final double ratio;
+  final double height;
+  const _ResumeLine({required this.ratio, this.height = 3});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return LinearProgressIndicator(
+      value: ratio,
+      minHeight: height,
+      borderRadius: BorderRadius.zero,
+      backgroundColor: palette.overlay,
+      valueColor: AlwaysStoppedAnimation<Color>(palette.navIndicator),
+    );
+  }
+}
+
+/// The most recent part-watched video as a large card: a full-width 16:9
+/// still with the amber resume line, then a kicker, the title and the time
+/// left beside a play disc, on a plum / indigo tinted surface.
+class _FeaturedResumeCard extends StatelessWidget {
+  final MediaItem item;
+  final double ratio;
+  final int? remainingMs;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _FeaturedResumeCard({
+    required this.item,
+    required this.ratio,
+    required this.remainingMs,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
+    final title = videoDisplayTitle(item.title);
+    final remaining = _ResumeCard._remainingLabel(remainingMs);
+    final radius = BorderRadius.circular(AppSpacing.cardRadius);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, AppSpacing.sm8),
+      child: Semantics(
+        button: true,
+        label: 'Continue watching $title, $remaining',
+        onTap: onTap,
+        onLongPress: onLongPress,
+        excludeSemantics: true,
+        child: Material(
+          color: palette.surfaceElevated,
+          borderRadius: radius,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            onLongPress: onLongPress,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                border: Border.all(color: palette.secondaryContainer),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        LayoutBuilder(
+                          builder: (context, c) => ArtworkThumbnail(
+                            uri: item.uri,
+                            artworkPath: item.artworkPath,
+                            width: c.maxWidth,
+                            height: c.maxHeight,
+                            borderRadius: 0,
+                            placeholderIcon: Icons.movie_outlined,
+                          ),
+                        ),
+                        Positioned(left: 0, right: 0, bottom: 0, child: _ResumeLine(ratio: ratio, height: 4)),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(AppSpacing.lg16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'CONTINUE WATCHING',
+                                style: type.overline.copyWith(color: palette.primary),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: AppSpacing.xs4),
+                              Text(
+                                breakableTitle(title),
+                                style: type.cardTitle,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                remaining,
+                                style: type.metadata.copyWith(color: palette.textSecondary),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.md12),
+                        // Decorative: the whole card is the button.
+                        ExcludeSemantics(child: VoltDisc(icon: Icons.play_arrow_rounded, onPressed: onTap)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// All / Downloaded / On this phone.
+class _FilterChips extends StatelessWidget {
+  final _VideoFilter value;
+  final ValueChanged<_VideoFilter> onChanged;
+  const _FilterChips({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    const labels = {
+      _VideoFilter.all: 'All',
+      _VideoFilter.downloaded: 'Downloaded',
+      _VideoFilter.onPhone: 'On this phone',
+    };
+    return SizedBox(
+      height: 48 * MediaQuery.textScalerOf(context).scale(14) / 14,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+        children: [
+          for (final entry in labels.entries) ...[
+            if (entry.key != _VideoFilter.all) const SizedBox(width: AppSpacing.sm8),
+            Center(
+              child: ChoiceChip(
+                label: Text(entry.value),
+                selected: value == entry.key,
+                onSelected: (_) => onChanged(entry.key),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// A video in the two-column grid: a 16:9 still (radius 14) with its
+/// duration badge and amber resume line, then up to two title lines.
+class _VideoGridCard extends StatelessWidget {
+  final MediaItem item;
+  final double? ratio;
+  final double width;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _VideoGridCard({
+    super.key,
+    required this.item,
+    required this.ratio,
+    required this.width,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  static TextStyle titleStyle(AppTextStyles type) => type.bodyStrong;
+
+  static double extent(BuildContext context, double width) {
+    final style = titleStyle(context.typography);
+    final line = MediaQuery.textScalerOf(context).scale(style.fontSize!) * style.height!;
+    return width * 9 / 16 + AppSpacing.sm8 + line * 2 + AppSpacing.xs4;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final title = videoDisplayTitle(item.title);
+    final duration = Duration(milliseconds: item.durationMs);
+    final radius = BorderRadius.circular(AppSpacing.radiusThumb);
+    final thumbHeight = width * 9 / 16;
+    final missing = item.availability == MediaAvailability.missing;
+
+    return Semantics(
+      button: true,
+      label: 'Video: $title${missing ? ', missing' : ''}',
+      onTap: onTap,
+      onLongPress: onLongPress,
+      excludeSemantics: true,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: radius,
+          onTap: onTap,
+          onLongPress: onLongPress,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DecoratedBox(
+                position: DecorationPosition.foreground,
+                decoration: BoxDecoration(borderRadius: radius, border: Border.all(color: palette.divider)),
+                child: ClipRRect(
+                  borderRadius: radius,
+                  child: SizedBox(
+                    width: width,
+                    height: thumbHeight,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Opacity(
+                          opacity: missing ? 0.45 : 1,
+                          child: ArtworkThumbnail(
+                            uri: item.uri,
+                            artworkPath: item.artworkPath,
+                            width: width,
+                            height: thumbHeight,
+                            borderRadius: 0,
+                            placeholderIcon: Icons.movie_outlined,
+                          ),
+                        ),
+                        if (duration > Duration.zero)
+                          PositionedDirectional(
+                            end: AppSpacing.xs4 + 2,
+                            bottom: AppSpacing.xs4 + 4,
+                            child: DurationBadge(duration: duration),
+                          ),
+                        if (ratio != null && ratio! > 0)
+                          Positioned(left: 0, right: 0, bottom: 0, child: _ResumeLine(ratio: ratio!)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm8),
+              Text(
+                breakableTitle(title),
+                style: titleStyle(context.typography),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
         ),
       ),
     );

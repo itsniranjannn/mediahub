@@ -118,7 +118,7 @@ void main() {
     when(() => permissions.checkVideoPermission()).thenAnswer((_) async => MediaPermissionState.granted);
 
     await pump(tester, const MusicScreen(), extra: [mediaPermissionServiceProvider.overrideWithValue(permissions)]);
-    // Albums is the fourth chip now (Songs, Liked songs, Playlists, Albums,
+    // Albums is the fourth chip now (Songs, Favourites, Playlists, Albums,
     // Artists): bring it into the row's view first.
     final chipRow = find.ancestor(of: find.text('Songs'), matching: find.byType(Scrollable)).first;
     await tester.scrollUntilVisible(find.text('Albums'), 120, scrollable: chipRow);
@@ -172,14 +172,14 @@ void main() {
     expect(printOffset(AppPalette.dark.printShadow), findsOneWidget);
   });
 
-  testWidgets('on paper the header is the lavender wash and the print offset is ink', (tester) async {
+  testWidgets('on paper the header is the periwinkle wash and the print offset is plum', (tester) async {
     mockArtwork(withArt: _coverUri);
     await pump(tester, AlbumDetailScreen(album: _group), theme: AppTheme.lightTheme);
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(heroTint(AppPalette.light.heroGradient), findsOneWidget);
     expect(printOffset(AppPalette.light.printShadow), findsOneWidget);
-    expect(AppPalette.light.printShadow, const Color(0xFF180A2E));
+    expect(AppPalette.light.printShadow, const Color(0xFF381932));
     final kicker = tester.widget<Text>(find.text('ALBUM'));
     expect(kicker.style?.color, AppPalette.light.primary);
   });

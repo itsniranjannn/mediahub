@@ -143,6 +143,12 @@ class FormatOptions {
     return audios.first;
   }
 
+  static ExtractorFormat? _bestAudioOfExt(List<ExtractorFormat> formats, String ext) =>
+      bestAudio(formats.where((f) => f.isAudioOnly && f.ext == ext).toList());
+
+  /// "webm" sound is Opus; other kinds by their extension (M4A, MP3 ...).
+  static String _audioName(String ext) => ext == 'webm' ? 'Opus' : ext.toUpperCase();
+
   static ExtractorFormat? _bestVideoAt(List<ExtractorFormat> formats, int height) {
     final candidates = formats.where((f) => f.hasVideo && f.height == height).toList();
     if (candidates.isEmpty) return null;
@@ -232,7 +238,7 @@ class FormatOptions {
     // --- audio ---
     final audioLabel = audio == null
         ? 'Original audio'
-        : 'Original audio (${audio.ext.toUpperCase()}${audio.abr > 0 ? ' ${audio.abr.round()} kbps' : ''})';
+        : 'Original · ${_audioName(audio.ext)}${audio.abr > 0 ? ' (~${audio.abr.round()} kbps)' : ''}';
     out.add(FormatChoice(
       id: 'audio_best',
       label: audioLabel,
@@ -246,19 +252,81 @@ class FormatOptions {
       streamSizes: [if (audioSize > 0) audioSize],
     ));
 
-    final mp3Bytes = duration > 0 ? duration * 32000 : 0; // ~256 kbit/s VBR
-    out.add(FormatChoice(
-      id: 'audio_mp3',
-      label: 'MP3 (converted)',
-      subtitle: 'Plays everywhere · ${_approx(mp3Bytes)}',
-      isAudio: true,
-      selector: audioSelector,
-      audioFormat: 'mp3',
-      qualityLabel: 'MP3',
-      estimatedBytes: mp3Bytes > 0 ? mp3Bytes : null,
-      streamSizes: [if (audioSize > 0) audioSize],
-    ));
+    // Original Opus too, when the site has it next to an M4A (YouTube):
+    // smaller at the same quality, no conversion either.
+    if (audio != null && audio.ext != 'webm') {
+      final opus = _bestAudioOfExt(formats, 'webm');
+      if (opus != null) {
+        final size = sizeOf(opus, duration);
+        final kbps = opus.abr > 0 ? opus.abr.round() : 0;
+        out.add(FormatChoice(
+          id: 'audio_opus',
+          label: 'Original · Opus${kbps > 0 ? ' (~$kbps kbps)' : ''}',
+          subtitle: 'No conversion · ${_approx(size)}',
+          isAudio: true,
+          selector: originalAudioSelector('webm'),
+          qualityLabel: kbps > 0 ? 'Opus $kbps kbps' : 'Opus',
+          estimatedBytes: size > 0 ? size : null,
+          streamSizes: [if (size > 0) size],
+        ));
+      }
+    }
+
+    for (final kbps in AudioConversion.mp3Bitrates) {
+      final bytes = duration > 0 ? duration * kbps * 125 : 0;
+      out.add(FormatChoice(
+        id: 'audio_mp3_$kbps',
+        label: 'MP3 · $kbps kbps',
+        subtitle: 'Plays everywhere · ${_approx(bytes)}',
+        isAudio: true,
+        selector: audioSelector,
+        audioFormat: AudioConversion.mp3(kbps),
+        qualityLabel: 'MP3 $kbps kbps',
+        estimatedBytes: bytes > 0 ? bytes : null,
+        streamSizes: [if (audioSize > 0) audioSize],
+      ));
+    }
 
     return out;
   }
+}
+
+
+/// The audio conversion a download asks yt-dlp for, stored on the download
+/// row as `audioFormat`: a plain codec ("mp3": best VBR, rows from older
+/// versions) or codec and bitrate ("mp3-320"). Only the fixed values below
+/// ever reach yt-dlp; anything else is dropped (the Android side checks again).
+class AudioConversion {
+  final String codec;
+
+  /// yt-dlp `--audio-quality` value: "0" (best VBR) or e.g. "320K".
+  final String quality;
+
+  const AudioConversion._(this.codec, this.quality);
+
+  static const List<int> mp3Bitrates = [320, 256, 192, 128];
+  static const Set<String> codecs = {'mp3', 'm4a', 'opus', 'aac', 'flac', 'wav'};
+  static const Set<String> qualities = {'0', '320K', '256K', '192K', '128K'};
+
+  /// Stored form for an MP3 at [kbps] (one of [mp3Bitrates]).
+  static String mp3(int kbps) {
+    assert(mp3Bitrates.contains(kbps));
+    return 'mp3-$kbps';
+  }
+
+  /// [stored] read back; null when it is empty or not a whitelisted value.
+  static AudioConversion? parse(String? stored) {
+    final s = (stored ?? '').trim().toLowerCase();
+    if (s.isEmpty) return null;
+    final dash = s.indexOf('-');
+    final codec = dash < 0 ? s : s.substring(0, dash);
+    if (!codecs.contains(codec)) return null;
+    if (dash < 0) return AudioConversion._(codec, '0');
+    final kbps = int.tryParse(s.substring(dash + 1));
+    if (kbps == null || !mp3Bitrates.contains(kbps) || codec != 'mp3') return null;
+    return AudioConversion._(codec, '${kbps}K');
+  }
+
+  /// The yt-dlp options this conversion adds.
+  List<String> get ytDlpArgs => ['-x', '--audio-format', codec, '--audio-quality', quality];
 }

@@ -77,8 +77,14 @@ void main() {
   });
 
   /// The app's routes that matter here: a library tab and the Downloads tab.
-  Future<void> pump(WidgetTester tester, String start) async {
-    tester.view.physicalSize = const Size(360, 800) * 3;
+  Future<void> pump(
+    WidgetTester tester,
+    String start, {
+    Size size = const Size(360, 800),
+    ThemeData? theme,
+    double textScale = 1.0,
+  }) async {
+    tester.view.physicalSize = size * 3;
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
     final router = GoRouter(
@@ -99,13 +105,84 @@ void main() {
           currentMediaItemProvider.overrideWith((ref) => null),
           allVideoProgressStreamProvider.overrideWith((ref) => Stream.value(const [])),
         ],
-        child: MaterialApp.router(theme: AppTheme.darkTheme, routerConfig: router),
+        child: MaterialApp.router(
+          theme: theme ?? AppTheme.darkTheme,
+          routerConfig: router,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
+        ),
       ),
     );
     for (var i = 0; i < 5; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
   }
+
+  testWidgets('Videos fits 360 x 690 at 1.3x text in dark and light', (tester) async {
+    for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+      await pump(tester, '/videos', size: const Size(360, 690), theme: theme, textScale: 1.3);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+      expect(find.text('Videos'), findsWidgets);
+    }
+  });
+
+  group('Sindur v2 Videos', () {
+    final clips = [
+      for (var i = 0; i < 5; i++)
+        MediaItem(
+          id: 'clip_$i',
+          uri: 'content://media/external/video/media/${200 + i}',
+          mediaType: MediaType.video,
+          title: 'Clip number $i.mp4',
+          durationMs: 90000,
+          sizeBytes: 1,
+          dateAdded: DateTime(2026),
+          source: i.isEven ? 'download' : 'device',
+        ),
+    ];
+
+    void withClips() {
+      when(() => repo.watchMediaItems(
+            mediaType: MediaType.video,
+            searchQuery: any(named: 'searchQuery'),
+            sortBy: any(named: 'sortBy'),
+            ascending: any(named: 'ascending'),
+          )).thenAnswer((_) => Stream.value(clips));
+    }
+
+    testWidgets('a two-column grid of 16:9 cards under filter chips', (tester) async {
+      withClips();
+      await pump(tester, '/videos', size: const Size(360, 1400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('All'), findsOneWidget);
+      expect(find.text('Downloaded'), findsOneWidget);
+      expect(find.text('On this phone'), findsOneWidget);
+      final a = tester.getRect(find.bySemanticsLabel(RegExp(r'^Video: Clip number 0')));
+      final b = tester.getRect(find.bySemanticsLabel(RegExp(r'^Video: Clip number 1')));
+      expect(a.top, moreOrLessEquals(b.top, epsilon: 0.5), reason: 'two across');
+      expect(b.left, greaterThan(a.right));
+      await tester.tap(find.text('Downloaded'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.bySemanticsLabel(RegExp(r'^Video: Clip number 1')), findsNothing);
+      expect(find.bySemanticsLabel(RegExp(r'^Video: Clip number 2')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the grid fits 360 x 690 at 1.3x text in dark and light', (tester) async {
+      withClips();
+      for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+        await pump(tester, '/videos', size: const Size(360, 690), theme: theme, textScale: 1.3);
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(tester.takeException(), isNull);
+        await tester.drag(find.byType(CustomScrollView), const Offset(0, -600));
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(tester.takeException(), isNull);
+      }
+    });
+  });
 
   /// Taps the [label] chip; [from] is a chip on screen now.
   Future<void> openChip(WidgetTester tester, String label, {String from = 'Songs'}) async {

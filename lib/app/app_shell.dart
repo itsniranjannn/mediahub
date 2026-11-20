@@ -73,6 +73,9 @@ class AppShell extends StatelessWidget {
             bottomNavigationBar: inPip
                 ? null
                 : InkDock(
+                    // Square corners on Online: the YouTube page must never
+                    // show through the rounded corner gaps.
+                    squareCorners: navigationShell.currentIndex == onlineBranchIndex,
                     // Persistent mini-player above the bottom nav, except on
                     // the Videos and Online tabs (see [hidesMiniPlayer]).
                     miniPlayer: _MiniPlayerSlot(
@@ -244,11 +247,17 @@ class _InkNavBar extends StatelessWidget {
   static const double indicatorTop = 6;
   static const double labelGap = 4;
 
+  /// Largest text scale the nav labels follow.
+  static const double maxLabelScale = 1.3;
+
+  /// Below this label size (dp) the bar shows icons only.
+  static const double minLabelSize = 6;
+
   @override
   Widget build(BuildContext context) {
     final items = _navItems;
     final palette = context.palette;
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final bottomInset = InkDock.systemBottomInset(context);
     final selected = currentIndex.clamp(0, items.length - 1);
 
     return Padding(
@@ -266,7 +275,11 @@ class _InkNavBar extends StatelessWidget {
               labels: [for (final item in items) item.label],
               style: context.typography.label,
               maxWidth: slot - AppSpacing.xs4,
-            );
+              // Dock labels grow to 1.3x at most, so the bar stays a bar.
+            ).clamp(maxScaleFactor: maxLabelScale);
+            // Too narrow for readable labels (tiny phones at huge text):
+            // icons only; each tab still reads "<label> Tab".
+            final showLabels = labelScaler.scale(12) >= minLabelSize;
             return Stack(
               children: [
                 AnimatedPositioned(
@@ -294,6 +307,7 @@ class _InkNavBar extends StatelessWidget {
                             item: items[i],
                             selected: i == selected,
                             labelScaler: labelScaler,
+                            showLabel: showLabels,
                             onTap: () => onTap(i),
                           ),
                         ),
@@ -313,12 +327,14 @@ class _NavDestination extends StatelessWidget {
   final _NavItemData item;
   final bool selected;
   final TextScaler labelScaler;
+  final bool showLabel;
   final VoidCallback onTap;
 
   const _NavDestination({
     required this.item,
     required this.selected,
     required this.labelScaler,
+    this.showLabel = true,
     required this.onTap,
   });
 
@@ -364,6 +380,7 @@ class _NavDestination extends StatelessWidget {
                   ],
                 ),
               ),
+              if (showLabel) ...[
               const SizedBox(height: _InkNavBar.labelGap),
               // One line at every text size, at the size all five labels
               // share ([labelScaler]); the FittedBox only guards against
@@ -380,6 +397,7 @@ class _NavDestination extends StatelessWidget {
                   ),
                 ),
               ),
+              ],
             ],
           ),
         ),

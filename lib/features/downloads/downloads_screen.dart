@@ -237,7 +237,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
         ),
       if (ytdlpSupported && !ytdlpOn)
         TextButton.icon(
-          icon: const Icon(Icons.settings_outlined),
+          icon: const Icon(Icons.settings_rounded),
           label: const Text('Enable downloader'),
           onPressed: () => context.push('/settings'),
         ),
@@ -318,12 +318,13 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                     active: activeCount,
                     saved: savedCount,
                     freeBytes: storageAsync.asData?.value.freeBytes,
-                  ),
-                  _UrlCard(
-                    controller: _urlController,
-                    handedLink: _handedLink,
-                    busy: _linkFlowBusy,
-                    onChooseQuality: (uri) => _openQualityChoice(uri),
+                    // The paste-link field is the hero's main element.
+                    child: _UrlCard(
+                      controller: _urlController,
+                      handedLink: _handedLink,
+                      busy: _linkFlowBusy,
+                      onChooseQuality: (uri) => _openQualityChoice(uri),
+                    ),
                   ),
                   if (inspection.errorMessage != null && !inspection.isInspecting) ...[
                     const SizedBox(height: AppSpacing.md12),
@@ -340,7 +341,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                   if (_notificationPermissionDenied) ...[
                     const SizedBox(height: AppSpacing.md12),
                     const _Callout(
-                      icon: Icons.notifications_off_outlined,
+                      icon: Icons.notifications_off_rounded,
                       tone: _Tone.warning,
                       text:
                           'Notifications are disabled. Downloads still run in the background, but progress will not show in the status bar.',
@@ -516,7 +517,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           ),
           const SizedBox(height: AppSpacing.sm8),
           _DetailLine(
-            icon: Icons.description_outlined,
+            icon: Icons.description_rounded,
             text: 'Content Type: ${info.contentType ?? "Unknown"}',
           ),
           _DetailLine(
@@ -1241,7 +1242,10 @@ class _Header extends StatelessWidget {
   /// Free space on the phone; null until it is known.
   final int? freeBytes;
 
-  const _Header({required this.active, required this.saved, this.freeBytes});
+  /// The link field and its action, inside the hero.
+  final Widget? child;
+
+  const _Header({required this.active, required this.saved, this.freeBytes, this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -1263,10 +1267,15 @@ class _Header extends StatelessWidget {
     ];
 
     return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.xl20, bottom: AppSpacing.lg16),
-      child: Column(
+      padding: const EdgeInsets.only(top: AppSpacing.md12, bottom: AppSpacing.lg16),
+      child: EntranceFade(
+        child: HeroBand(
+          glow: true,
+          child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const SparkMark(height: 4),
+          const SizedBox(height: AppSpacing.md12),
           // One line, scaled down rather than clipped at large text sizes.
           Semantics(
             header: true,
@@ -1284,7 +1293,13 @@ class _Header extends StatelessWidget {
               style: type.overline.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
             ),
           ],
+          if (child != null) ...[
+            const SizedBox(height: AppSpacing.md12),
+            child!,
+          ],
         ],
+          ),
+        ),
       ),
     );
   }
@@ -1583,7 +1598,7 @@ class _StorageStats extends StatelessWidget {
           runSpacing: AppSpacing.xs4,
           children: [
             _Stat(icon: Icons.download_done_rounded, value: '$usedMb MB', label: 'used'),
-            if (freeGb != null) _Stat(icon: Icons.sd_storage_outlined, value: '$freeGb GB', label: 'free'),
+            if (freeGb != null) _Stat(icon: Icons.sd_storage_rounded, value: '$freeGb GB', label: 'free'),
           ],
         ),
       ),
@@ -2112,13 +2127,14 @@ class _DownloadCard extends ConsumerWidget {
           ),
           if (showProgress) ...[
             const SizedBox(height: AppSpacing.md12),
-            // 4 dp primary on surfacePressed (the progress theme); a paused
-            // or waiting bar is muted, and its word says why.
+            // Sindur v2: a bold 8 dp bar in the slider colour (amber on ink,
+            // wine on sand); a paused or waiting bar is muted, and its word
+            // says why.
             LinearProgressIndicator(
               value: knownTotal ? progressVal : (isActive ? null : 0),
-              minHeight: 4,
-              borderRadius: BorderRadius.circular(2),
-              color: isActive ? palette.primary : palette.textMuted,
+              minHeight: 8,
+              borderRadius: BorderRadius.circular(4),
+              color: isActive ? palette.sliderActive : palette.textMuted,
               backgroundColor: palette.surfacePressed,
             ),
           ],

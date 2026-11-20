@@ -97,7 +97,7 @@ void main() {
     });
 
     test('sound only: no format sort, and MP3 stays a conversion', () async {
-      final id = await enqueue('audio_mp3');
+      final id = await enqueue('audio_mp3_320');
       await runner.run(id);
       expect(backend.downloadCalls.single['formatSelector'], 'ba/b');
       expect(backend.downloadCalls.single['formatSort'], isNull);
@@ -223,7 +223,7 @@ void main() {
       final id = await r.enqueue(
         meta: FakeExtractorBackend.sampleMetadata(),
         pageUrl: 'https://youtu.be/RpkAZYU8AAA',
-        choice: choice('audio_mp3'),
+        choice: choice('audio_mp3_320'),
       );
       await r.run(id);
       expect(f.rows, hasLength(1));
@@ -424,7 +424,7 @@ void main() {
     });
 
     test('sound only keeps its chip', () async {
-      expect(await labelAfter('audio_mp3', 360), 'MP3');
+      expect(await labelAfter('audio_mp3_320', 360), 'MP3 320 kbps');
     });
 
     test('the rule, and the same words as the YouTube fallback', () {
@@ -480,7 +480,7 @@ void main() {
 
     test('sound asked for stays in Music even when the phone reports a picture track', () async {
       backend.outputHasVideo = true;
-      final id = await enqueue('audio_mp3');
+      final id = await enqueue('audio_mp3_320');
       await runner.run(id);
       final row = (await rowOf(id))!;
       expect(row.kind, 'audio');
@@ -556,6 +556,7 @@ class _Ordered extends FakeExtractorBackend {
     String? formatSort,
     String? extractorArgs,
     String? audioFormat,
+    String? audioQuality,
     void Function(double progress, int eta)? onProgress,
     void Function(String line)? onLine,
   }) async {
@@ -573,6 +574,7 @@ class _Ordered extends FakeExtractorBackend {
       formatSort: formatSort,
       extractorArgs: extractorArgs,
       audioFormat: audioFormat,
+      audioQuality: audioQuality,
       onProgress: onProgress,
       onLine: onLine,
     );

@@ -182,8 +182,8 @@ MusicAudioHandler makeHandler() {
 }
 
 Future<void> loadFonts() async {
-  // Every family of pubspec.yaml's fonts block (Unbounded, AnekWide,
-  // AtkinsonNext, Mukta, DMMono).
+  // Every family of pubspec.yaml's fonts block (Fraunces, Poppins,
+  // DMMono).
   await loadAppFonts();
   final icons = FontLoader('MaterialIcons');
   final b = File('${flutterRoot()}/bin/cache/artifacts/material_fonts/materialicons-regular.otf')
@@ -281,7 +281,7 @@ void clearDeviceArt() {
 // Data
 
 // Nepali titles (docs/DESIGN.md 10.6) and a file-style name sit among Latin
-// ones: Anek / Mukta must draw every matra and conjunct without clipping.
+// ones: Poppins must draw every matra and conjunct without clipping.
 const _songData = [
   ('रेशम फिरिरी (Folk Medley)', 'Himal Sessions', 'Songs of the Hills', 245000),
   ('Sunrise Over Phewa Lake', 'Bipana Gurung', 'Pokhara Mornings', 213000),

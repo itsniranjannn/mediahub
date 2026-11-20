@@ -1,12 +1,46 @@
-# MediaHub design system: "Bijuli · Volt on Ink"
+# MediaHub design system: "Sindur"
 
 Status: final spec for the full redesign (Android + iOS, dark + light, theme follows the phone).
 Written 2026-11-17. Replaces "Midnight Violet" (`AppColors` near-black blue + violet + teal, Inter everywhere).
 
-Visual specimen with both themes side by side (open in a browser; fonts load from GitHub):
+Rebrand 2026-11-20: the default dark and light themes are now **Sindur** (crimson, wine and lavender on near-black
+and on white). The original "Bijuli · Volt on Ink" dark theme lives on as the optional **Bijuli Classic** (Settings →
+Appearance); its values are `AppPalette.classic`. Widget and token names keep the Volt / Ink Dock words: "Volt" means
+the brand sticker fill, crimson in Sindur and lime in Bijuli Classic. Sections 5-9 describe the Sindur fonts and
+components (Fraunces, Poppins, DM Mono; crimson glows on ink, soft shadows on paper).
+
+**Sindur v2 (2026-11-20, later the same day).** Palette and pages revised for a more distinctive look:
+
+- Dark: true black canvas (`#000000`, surfaces `#0A0A0A` / `#141216` / `#1E1A22`), dark red as the brand (wine
+  `#81021F` in the hero and print shadow, crimson `#CC324C` as the loud fill), dark purple as the second voice (plum
+  `#381932` and indigo `#32396F`: hero, tonal containers, dock tint), **amber `#F69E1C` as the spark** (selected nav
+  pill, sliders and progress, focus ring, resume lines, section marks), milk `#FFF3E6` text, blush / periwinkle tints.
+  `primary` as text is a lighter crimson step, `#FF7A92` (raw crimson is 4.0:1 on black, under the 4.5 floor).
+- Light: sand canvas `#F6EBCF` (surfaces `#FBF4E2`, `#FFFAF0`, pressed `#EFE2C2`), wine `#81021F` as primary and as
+  the brand fill with milk labels, lavender `#AAA6E3` / periwinkle `#C6CBE8` / `#E7EEFE` for containers and the hero,
+  plum `#381932` ink and indigo `#32396F` accent. Derived steps (raw colours failed as text): textSecondary
+  `#56404F`, textMuted `#5E4A58`, success `#0A6A40`, warning `#5A4F00`, error `#A8231C`, favourite `#9C1458` (dark:
+  `#FFA0B8`, moved off pink so it stays 6+ CIEDE2000 from lavender under protan vision).
+- No ink edge on paper any more (`voltEdge` none in both): the wine fill clears 3:1 on sand by itself, and no single
+  edge colour could reach 3:1 against both sand and wine. The sheen (`primaryGradient`) is `#C42A46 → #A8203A`,
+  dark enough for milk labels (5.1:1).
+- Pages: Home, Videos and Downloads redesigned (sections 7.18-7.20). The checker that produced the values is
+  re-implemented from `palette_contrast_test` / `card_contrast_test`: 490 pairs, 0 below their floor.
+
+Visual specimen (still showing the Bijuli look) with both themes side by side (open in a browser; fonts load from GitHub):
 `docs/design-specimen.html`.
 
 ---
+
+## Sindur notes (2026-11-20)
+
+- Ink Dock: always an opaque fill behind its 24 dp top corners (page colour; dock colour on Online, so it reads
+  square there). Nav labels follow text size up to 1.3x, then shrink together; icons only as a last resort.
+- Home bento: `VoltTile` shine (diagonal, 14% onVoltFill, 1.4 s every 6 s, none with reduced motion), press 0.97,
+  `PressGlyph` (-0.03 turn, 1.12 scale) on press; small tiles glow in their icon colour on ink only.
+- Settings rows: 32 dp icon slot, 13/18 subtitles, 48 dp minimum.
+- Quality sheet: segmented Video | Audio at the top.
+- Notification placeholder: #4A0A1A to #2A0F26 field, #CC324C to #E89A2C note.
 
 ## 0. Decision record
 
@@ -50,15 +84,16 @@ pink error next to pink favourite, Latin-only display face) are fixed below. Wha
 
 ## 1. Name and concept
 
-**Bijuli (बिजुली, "electricity") · Volt on Ink.** One loud colour, Volt lime `#CCFF3A`, sits on a deep ultraviolet ink
-`#180A2E`. Lime and violet are complementary, so the app reads like a gig poster rather than a dashboard, and no
-competitor owns either half. Spotify is a darker green at hue 141 on neutral black, YouTube and Apple Music are red,
-VLC and SoundCloud orange, Amazon cyan.
-In the light theme the canvas becomes warm ivory paper `#F7F2E8`. Text is ink, the reading accent becomes
-Ultraviolet `#5A32D6`, and Volt turns into a highlighter **sticker**: Volt fill, ink label, 1.5dp ink edge. The signature
-**Ink Dock** (mini player + bottom navigation) and the playback **stage** (Now Playing, video player) stay ink in both
-themes, so the place the family spends most time looks the same on every phone. Type has four voices with clear
-jobs:
+**Sindur (सिन्दूर)**, the crimson-vermilion powder of Nepali tika and weddings. Crimson `#CC324C` is the brand fill
+(the "Volt" sticker role: Play all, play discs, Download, selected chip) on a near-black canvas `#0B0B0D` stepping up to
+`#222226`. Text is milk `#FFF3E6`, the reading accent is a crimson tint (rose `#FF6E86`), lavender `#B98FFF` is the
+second accent and blush `#F9E8F2` the light tint. Amber `#F69E1C` is only a small spark (warning, snackbar action).
+In the light theme the canvas is white `#FFFFFF` with blush steps, text is near-black `#121214`, the reading accent is
+wine `#81021F` and the crimson fill becomes an ink-edged **sticker**. The **Ink Dock** (mini player + bottom navigation)
+and the playback **stage** (Now Playing, video player) use the dark palette in both themes.
+
+**Bijuli Classic** keeps the original Volt lime `#CCFF3A` on ultraviolet ink `#180A2E` as a third, always-dark choice;
+while it is chosen the dock and the stage use it too (`InkTheme`). Type has four voices with clear jobs:
 
 - **Unbounded**, wide and poster-like, writes the app's own headings.
 - **Anek Devanagari Wide** writes every name of a thing (रेशम फिरिरी and "Audit_Long_Tone_5min" in the same voice).
@@ -98,8 +133,9 @@ extension PaletteX on BuildContext {
 - `AppPalette.primary` is always safe as text and icon colour in both themes (Volt on ink, Ultraviolet on paper). The
   89 existing `AppColors.primary` call sites can therefore be migrated mechanically, and stay readable in light without
   hand classification. Only brand fills move to `voltFill`, through the `ui_kit` widgets in section 7.
-- Ink Dock, Now Playing and the video player wrap themselves in `Theme(data: AppTheme.darkTheme, child: ...)`, so
-  `context.palette` inside them is always the dark palette.
+- Ink Dock, Now Playing and the video player wrap themselves in `Theme(data: InkTheme.of(context), child: ...)`, so
+  `context.palette` inside them is always a dark palette: `AppPalette.dark`, or `AppPalette.classic` while Bijuli
+  Classic is chosen (`MediaHubApp` installs the `InkTheme` above the router).
 
 ### 2.2 Token table
 
@@ -109,104 +145,104 @@ extension PaletteX on BuildContext {
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| background | `#180A2E` | `#F7F2E8` | Scaffold canvas. Also the brand **ink**: every label on Volt, light-theme text, the icon's deep stop. |
-| surface | `#22123E` | `#FFFCF6` | Cards, sheets, list groups, search field (light: white). |
-| surfaceElevated | `#2B1A50` | `#FFFFFF` | Dialogs, menus, chips (dark), input fill, dark snackbar. |
-| surfacePressed | `#382664` | `#ECE4D3` | Pressed rows/cards, progress tracks, the floor every text colour is tested on. |
+| background | `#000000` | `#F6EBCF` | Scaffold canvas (dark: true black; light: sand). |
+| surface | `#0A0A0A` | `#FBF4E2` | Cards, sheets, list groups, search field (light: lighter sand). |
+| surfaceElevated | `#141216` | `#FFFAF0` | Dialogs, menus, chips (dark), input fill, dark snackbar. |
+| surfacePressed | `#1E1A22` | `#EFE2C2` | Pressed rows/cards, progress tracks, the floor every text colour is tested on. |
 
 **Brand (scheme roles)**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| primary | `#CCFF3A` Volt | `#5A32D6` Ultraviolet | Text/icon accent: links, "See all", active toggles, now-playing title and bar, slider, progress, focus, FilledButton fill. Safe as text in both. |
-| primaryBase | `#B8F000` | `#6A45E6` | Base for tints: ripple/highlight at 12%, empty-state halo at 28%. Never text. |
-| primaryPressed | `#A9DC14` | `#4723B5` | Pressed fill for anything filled with `primary`. |
-| onPrimary | `#180A2E` | `#FFFFFF` | Label/glyph on `primary` fills. |
-| primaryContainer | `#33225E` | `#EAE1FF` | Tonal brand fill: tonal buttons, Downloads type tiles, selected list row tint. |
-| onPrimaryContainer | `#D9FF73` | `#38189A` | Label on primaryContainer. |
-| secondary | `#78C4FF` | `#00658A` | = accent (M3 `secondary`). |
-| onSecondary | `#180A2E` | `#FFFFFF` | Label on accent fills. |
-| secondaryContainer | `#33225E` | `#EAE1FF` | Same as primaryContainer. `FilledButton.tonal` reads this slot. |
-| onSecondaryContainer | `#D9FF73` | `#38189A` | Tonal button label. |
+| primary | `#FF7A92` | `#81021F` | Text/icon accent: links, "See all", active toggles, now-playing title and bar, slider, progress, focus, FilledButton fill. Safe as text in both. |
+| primaryBase | `#CC324C` | `#9E0A2C` | Base for tints: ripple/highlight at 12%, empty-state halo at 28%. Never text. |
+| primaryPressed | `#E8667E` | `#5E0016` | Pressed fill for anything filled with `primary`. |
+| onPrimary | `#000000` | `#FFF3E6` | Label/glyph on `primary` fills. |
+| primaryContainer | `#3D0612` | `#C6CBE8` | Tonal brand fill: tonal buttons, Downloads type tiles, selected list row tint. |
+| onPrimaryContainer | `#F9E8F2` | `#381932` | Label on primaryContainer. |
+| secondary | `#AAA6E3` | `#32396F` | = accent (M3 `secondary`). |
+| onSecondary | `#000000` | `#FFF3E6` | Label on accent fills. |
+| secondaryContainer | `#32396F` | `#AAA6E3` | Same as primaryContainer. `FilledButton.tonal` reads this slot. |
+| onSecondaryContainer | `#E7EEFE` | `#381932` | Tonal button label. |
 
 **Volt sticker (brand fills; only through `VoltButton`, `VoltDisc`, `VoltSlab`, `chipTheme`)**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| voltFill | `#CCFF3A` | `#CCFF3A` | The loud brand fill: Play all, play discs, Download, Continue card, selected chip, nav indicator. Never text or icon colour on paper (1.05:1). |
-| voltPressed | `#A9DC14` | `#A9DC14` | Pressed Volt fill. |
-| onVoltFill | `#180A2E` | `#180A2E` | Ink label and glyph on Volt. |
-| onVoltMuted | `#4A3B66` | `#4A3B66` | Secondary text on Volt (Continue card artist, kicker). |
-| voltEdge | none (`#00000000`) | `#180A2E` | 1.5dp outline around every Volt fill on paper. |
-| voltGlow | `#47CCFF3A` | none | Volt at 28%, blur 24, under the 72dp stage play disc only. |
+| voltFill | `#CC324C` | `#81021F` | The loud brand fill: Play all, play discs, Download, Continue card, selected chip (Crimson). Not a text colour: use primary. |
+| voltPressed | `#B32A42` | `#5E0016` | Pressed Volt fill. |
+| onVoltFill | `#FFF3E6` | same | Milk label and glyph on the crimson (dark) / wine (light) fill. |
+| onVoltMuted | `#FFF3E6` | `#F9E8F2` | Secondary text on Volt (Continue card artist, kicker). |
+| voltEdge | none (`#00000000`) | same | Sindur v2: no edge in either theme (wine clears 3:1 on sand). A non-transparent value would draw a 1.5dp outline. |
+| voltGlow | `#47CC324C` | none | Volt at 28%, blur 24, under the 72dp stage play disc only. |
 
 **Accent, favourite, text**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| accent | `#78C4FF` Ice | `#00658A` Deep ice | Video kind, "Downloaded" glyph, info, downloads count dot. Small roles only, never a large fill. |
-| onAccent | `#180A2E` | `#FFFFFF` | On accent fills (count dot). |
-| favorite | `#FF66B8` Flare | `#B5166B` | Hearts only (filled heart = on). |
-| textPrimary | `#F6F2FF` | `#180A2E` | Titles, body. |
-| textSecondary | `#C6BBDF` | `#4C4358` | Metadata, secondary icons, all text on artwork tints and the stage. |
-| textMuted | `#A698C4` | `#655B71` | Captions, hints, durations in rows, unselected labels. Never on artwork tints or the stage. |
+| accent | `#AAA6E3` | `#32396F` | Video kind, "Downloaded" glyph, info, downloads count dot. Small roles only, never a large fill. |
+| onAccent | `#000000` | `#FFF3E6` | On accent fills (count dot). |
+| favorite | `#FFA0B8` | `#9C1458` | Hearts only (filled heart = on). |
+| textPrimary | `#FFF3E6` | `#381932` | Titles, body. |
+| textSecondary | `#D9CEC4` | `#56404F` | Metadata, secondary icons, all text on artwork tints and the stage. |
+| textMuted | `#ABA3AD` | `#5E4A58` | Captions, hints, durations in rows, unselected labels. Never on artwork tints or the stage. |
 
 **Lines and focus**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| divider | `#382A5C` | `#E4DACA` | Decorative hairlines, card edges (1dp). Never the only boundary of a control. |
-| outlineVariant | `#382A5C` | `#E4DACA` | = divider (M3 slot). |
-| outline | `#8E7EB4` | `#8A7F6B` | Control borders (outlined button, unselected light chip, switch off), drag handles, section rules. 3:1 or more on every surface. |
-| rule | `#8E7EB4` | `#8A7F6B` | The 2dp rule above section kickers (= outline). |
-| focusRing | `#CCFF3A` | `#5A32D6` | 2dp keyboard/D-pad focus outline. |
-| dragHandle | `#8E7EB4` | `#8A7F6B` | Sheet handle, queue reorder handle. |
+| divider | `#26222A` | `#E6D7B2` | Decorative hairlines, card edges (1dp). Never the only boundary of a control. |
+| outlineVariant | `#26222A` | `#E6D7B2` | = divider (M3 slot). |
+| outline | `#857F8C` | `#857565` | Control borders (outlined button, unselected light chip, switch off), drag handles, section rules. 3:1 or more on every surface. |
+| rule | `#857F8C` | `#857565` | The 2dp rule above section kickers (= outline). |
+| focusRing | `#F69E1C` | `#81021F` | 2dp keyboard/D-pad focus outline. |
+| dragHandle | `#857F8C` | `#857565` | Sheet handle, queue reorder handle. |
 
 **States**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| success | `#5CF0A8` | `#0B7446` | Saved / complete. Always with a check icon. |
-| warning | `#FFC44D` | `#8A5500` | Queued, low storage, slow network. Always with an icon. |
-| error | `#FF8A5C` coral | `#BE1E3E` crimson | Failed, destructive rows, field errors. Always icon + text. |
-| onError | `#180A2E` | `#FFFFFF` | On error fills. |
-| errorContainer | `#40192C` | `#FBE3E6` | Error banners, destructive tonal buttons. |
-| onErrorContainer | `#FFDCCF` | `#5E0A1E` | Text on errorContainer. |
-| liveFill | `#BE1E3E` | `#BE1E3E` | Solid LIVE chip (replaces the red dot, which measured 2.89 on the chip). |
-| onLive | `#FFFFFF` | `#FFFFFF` | "LIVE" label. |
+| success | `#4FD8C4` | `#0A6A40` | Saved / complete. Always with a check icon. |
+| warning | `#F69E1C` | `#5A4F00` | Queued, low storage, slow network. Always with an icon. |
+| error | `#FF9466` | `#A8231C` | Failed, destructive rows, field errors. Always icon + text. |
+| onError | `#000000` | `#FFF3E6` | On error fills. |
+| errorContainer | `#3A1A16` | `#FCE4DC` | Error banners, destructive tonal buttons. |
+| onErrorContainer | `#FFDCCF` | `#5E1608` | Text on errorContainer. |
+| liveFill | `#B3132F` | same | Solid LIVE chip (replaces the red dot, which measured 2.89 on the chip). |
+| onLive | `#FFFFFF` | same | "LIVE" label. |
 
 **Scrims, glass and overlays**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| scrim | `#CC09050F` | `#99180A2E` | Behind sheets and dialogs. Stage veil uses the dark value. |
-| glass | `#E022123E` | `#E0FFFCF6` | Scrolled-under app bars (blur 24); light YouTube toolbar. |
-| overlay | `#B8180A2E` | same | Ink at 72% behind badges on images and video frames. |
+| scrim | `#CC000000` | `#99381932` | Behind sheets and dialogs. Stage veil uses the dark value. |
+| glass | `#EB0A0A0A` | `#E0FBF4E2` | Scrolled-under app bars (blur 24); light YouTube toolbar. |
+| overlay | `#B8000000` | same | Ink at 72% behind badges on images and video frames. |
 | onOverlay | `#FFFFFF` | same | Text on overlay chips. |
 
 **Ink Dock (identical in both themes)**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| dock | `#F01C0E36` | same | Mini player + nav fill (94%), backdrop blur 24. |
-| onDock | `#F6F2FF` | same | Dock titles, selected nav label, controls. |
-| onDockMuted | `#B4A8CF` | same | Artist line, unselected nav icon and label. |
-| dockLine | `#3E2E62` | same | 1dp top line, mini-player progress track. |
-| navIndicator | `#CCFF3A` | same | 56x32 selected-tab pill. |
-| onNavIndicator | `#180A2E` | same | Filled icon in the pill. |
+| dock | `#F00C0A10` | same | Mini player + nav fill (94%), backdrop blur 24. |
+| onDock | `#FFF3E6` | same | Dock titles, selected nav label, controls. |
+| onDockMuted | `#B7AFBE` | same | Artist line, unselected nav icon and label. |
+| dockLine | `#2E2638` | same | 1dp top line, mini-player progress track. |
+| navIndicator | `#F69E1C` | same | 56x32 selected-tab pill; the amber spark (section marks, resume lines). |
+| onNavIndicator | `#000000` | same | Filled icon in the pill. |
 
 **Controls and depth**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| sliderActive | `#CCFF3A` | `#5A32D6` | Active track (6dp). |
-| sliderInactive | `#382664` | `#DDD3C0` | Inactive track (4dp). |
-| sliderThumb | `#F6F2FF` | `#5A32D6` | 14dp thumb (20dp while dragging). |
-| snackbar | `#2B1A50` | `#180A2E` | Snackbar and tooltip fill (light: ink, matching the dock). |
-| onSnackbar | `#F6F2FF` | `#F6F2FF` | Snackbar text. |
-| snackbarAction | `#CCFF3A` | `#CCFF3A` | Snackbar action (both sit on a dark fill). |
-| shadow | none | `#1A180A2E` | Light only: sheets, dialogs, menus, snackbars (0 8 24). |
-| printShadow | `#CCFF3A` | `#180A2E` | Hard 6x6dp offset, no blur, under hero and stage covers. |
+| sliderActive | `#F69E1C` | `#81021F` | Active track (6dp). |
+| sliderInactive | `#2E2836` | `#E2D2A8` | Inactive track (4dp). |
+| sliderThumb | `#FFF3E6` | `#81021F` | 14dp thumb (20dp while dragging). |
+| snackbar | `#141216` | `#381932` | Snackbar and tooltip fill (light: ink, matching the dock). |
+| onSnackbar | `#FFF3E6` | same | Snackbar text. |
+| snackbarAction | `#F69E1C` | same | Snackbar action (both sit on a dark fill). |
+| shadow | none (`#00000000`) | `#1A381932` | Light only: sheets, dialogs, menus, snackbars (0 8 24). |
+| printShadow | `#81021F` | `#381932` | Hard 6x6dp offset, no blur, under hero and stage covers. |
 
 ### 2.3 ColorScheme mapping (both themes, from the palette)
 
@@ -216,14 +252,14 @@ extension PaletteX on BuildContext {
 | primary, onPrimary, primaryContainer, onPrimaryContainer | same-named roles |
 | secondary, onSecondary | accent, onAccent |
 | secondaryContainer, onSecondaryContainer | same-named roles |
-| tertiary, onTertiary | favorite; `#180A2E` (dark) / `#FFFFFF` (light) |
+| tertiary, onTertiary | favorite; palette `onTertiary`: `#0B0B0D` (dark) / `#FFFFFF` (light) |
 | error, onError, errorContainer, onErrorContainer | same-named roles |
 | surface, onSurface, onSurfaceVariant | surface, textPrimary, textSecondary |
 | surfaceContainerLowest / Low / (default) / High / Highest | background / surface / surface / surfaceElevated / surfaceElevated (as today) |
 | surfaceTint | `Colors.transparent` |
 | outline, outlineVariant | outline, outlineVariant |
-| shadow, scrim | `#000000` (dark) / `#180A2E` (light); scrim |
-| inverseSurface, onInverseSurface, inversePrimary | dark: `#F6F2FF`, `#180A2E`, `#5A32D6` · light: `#180A2E`, `#F6F2FF`, `#CCFF3A` |
+| shadow, scrim | palette `schemeShadow`: `#000000` (dark) / `#121214` (light); scrim |
+| inverseSurface, onInverseSurface, inversePrimary | palette roles. dark: `#FFF3E6`, `#0B0B0D`, `#81021F` · light: `#121214`, `#FFF3E6`, `#FF6E86` · Bijuli Classic: `#F6F2FF`, `#180A2E`, `#5A32D6` |
 
 ---
 
@@ -235,32 +271,33 @@ All gradients run `topLeft → bottomRight` unless stated.
 
 | | Stops | Notes |
 |---|---|---|
-| Dark | `#421E78 → #25133F → #180A2E` | Ultraviolet bloom melting into ink. Brightest stop still gives textMuted 4.68. |
-| Light | `#E6DAFF → #F1EAF2 → #F7F2E8` | Lavender wash fading into paper (replaces the proposal's lime wash, which read sallow). |
+| Dark | `#5A0418 → #2A1230 → #000000` | Deep wine through plum into the black canvas. `HeroBand(glow: true)` adds a soft crimson orb (top end) and an indigo one (bottom start), decorative only. |
+| Light | `#C6CBE8 → #E7EEFE → #F6EBCF` | Periwinkle wash fading into sand. |
 
 Items **with** a real cover use the brand hero. Items **without** a cover tint the hero and the stage with their own
 artwork pair (see `ArtworkTint` below), so per-song colour survives.
 
-**primaryGradient**: same in both themes, `#DAFF63 → #B4EE14`, a subtle Volt sheen for `VoltButton` and `VoltSlab`. Ink
-label 16.46 / 13.53. On paper it always carries the 1.5dp ink edge.
+**primaryGradient**: same in both themes, `#C42A46 → #A8203A` running `topCenter → bottomCenter`, a subtle crimson sheen for `VoltButton`, `VoltSlab` and `VoltTile`, milk label.
+Sindur v2 draws no edge around it on paper. Bijuli Classic keeps its Volt sheen (lime, in `AppPalette.classic`).
 
-**Artwork gradients**: 8 pairs, picked per item by uri hash as today. White glyph at 85%. The top stop is identical in
-both themes so an item keeps its colour when the phone switches theme; on paper the deep stop is lifted one step so tiles
-look like objects, not holes.
+**Artwork gradients**: 8 pairs, picked per item by uri hash. White glyph at 85%. The top stop is identical in both
+themes so an item keeps its colour when the phone switches theme; on paper the deep stop is lifted one step so tiles
+look like objects, not holes. Bijuli Classic keeps its original eight (ultraviolet, ice, flare, moss, ember, cobalt,
+orchid, jade).
 
 | # | Name | Top stop (both) | Deep stop, dark | Deep stop, light |
 |---|---|---|---|---|
-| 1 | ultraviolet | `#7A4BF0` | `#240F5C` | `#3A1E86` |
-| 2 | ice | `#1C86B0` | `#0A2848` | `#0E3F6A` |
-| 3 | flare | `#C93A8C` | `#460E38` | `#6A1654` |
-| 4 | moss | `#567A0C` | `#192506` | `#2A3C08` |
-| 5 | ember | `#C8502F` | `#4A1320` | `#6E1D2C` |
-| 6 | cobalt | `#4363E0` | `#131D58` | `#1F2C82` |
-| 7 | orchid | `#A042C4` | `#33104C` | `#4E1A72` |
-| 8 | jade | `#12806E` | `#062E2B` | `#0A4842` |
+| 1 | crimson | `#CC324C` | `#4A0A1A` | `#7A1028` |
+| 2 | wine | `#9A0A2C` | `#3A0010` | `#5E0016` |
+| 3 | plum | `#7A3A6E` | `#2A0F26` | `#4A1A40` |
+| 4 | indigo | `#4A54A8` | `#161A40` | `#252C6A` |
+| 5 | amber | `#B5600A` | `#4A2204` | `#6E3606` |
+| 6 | graphite | `#55525E` | `#0A0A0A` | `#2C2A32` |
+| 7 | lavender | `#7E6FD0` | `#241A50` | `#3E3488` |
+| 8 | rose | `#B0407A` | `#40102C` | `#6A1A48` |
 
-White glyph at 85%: top stops 3.44 (ice) to 4.19, floor 3. Midpoints 6.18 to 7.21 in dark and 5.32 to 6.22 in light,
-floor 4.5. Full white on deep stops 10.40 or more. Volt itself is never a cover colour (a white glyph on lime fails).
+The floors (85% glyph 3:1 on top stops, 4.5:1 on midpoints, white 4.5:1 on deep stops) are checked by
+`test/unit/palette_contrast_test.dart`.
 
 **ArtworkTint.surfaceGradient** (cards and headers that carry text, cover-less items):
 
@@ -276,591 +313,280 @@ floor 4.5. Full white on deep stops 10.40 or more. Volt itself is never a cover 
 
 ## 4. Verified contrast
 
-First computed with the designer's one-off script; the same checks now run in `flutter test` as
-`test/unit/palette_contrast_test.dart` and `test/unit/card_contrast_test.dart`, which fail if a pair drops below its target.
+**`test/unit/palette_contrast_test.dart` is the source of truth** (with `test/unit/card_contrast_test.dart`): it checks
+every pair against its floor for the dark, light and Bijuli Classic palettes and fails if one drops. No figures are
+copied here, so they cannot go stale.
 
 - Method: WCAG 2.x relative luminance. Alpha colours are composited over the named backdrop first. Flutter's
-  `Color.lerp` is reproduced for tints. Colour vision uses Machado 2009 at full severity, compared in CIEDE2000.
+  `Color.lerp` is reproduced for tints.
 - Floors: text 4.5:1 on every surface it can sit on; large text, icons and control boundaries 3:1; labels on fills 4.5:1.
-- **Result: 0 failures in either theme.**
-- The scratch folder can be cleared, so port these checks into `test/unit/palette_contrast_test.dart` (section 10).
-
-| Pair | Need | Dark | Light |
-|---|---|---|---|
-| textPrimary on background / surface / surfaceElevated / surfacePressed | 4.5 | 17.00 / 15.57 / 13.95 / 11.70 | 16.78 / 18.28 / 18.72 / 14.80 |
-| textPrimary on glass over a white / black page | 4.5 | 10.98 / 16.12 | 18.29 / 13.82 |
-| textSecondary on the four surfaces | 4.5 | 10.32 / 9.46 / 8.47 / 7.10 | 8.36 / 9.11 / 9.33 / 7.38 |
-| textSecondary on glass over white / black | 4.5 | 6.67 / 9.79 | 9.12 / 6.89 |
-| textMuted on the four surfaces | 4.5 | 7.05 / 6.46 / 5.79 / 4.85 | 5.72 / 6.24 / 6.39 / 5.05 |
-| textMuted on glass over white / black | 4.5 | 4.56 / 6.69 | 6.24 / 4.71 |
-| primary on the four surfaces | 4.5 | 15.99 / 14.65 / 13.12 / 11.01 | 6.58 / 7.17 / 7.34 / 5.80 |
-| primary on glass over white / black | 4.5 | 10.33 / 15.16 | 7.17 / 5.42 |
-| accent as text on the four surfaces | 4.5 | 9.93 / 9.10 / 8.15 / 6.84 | 5.83 / 6.35 / 6.50 / 5.14 |
-| favorite as text on the four surfaces | 4.5 | 6.99 / 6.41 / 5.74 / 4.81 | 5.72 / 6.23 / 6.38 / 5.04 |
-| success as text on the four surfaces | 4.5 | 12.91 / 11.83 / 10.60 / 8.89 | 5.23 / 5.70 / 5.83 / 4.61 |
-| warning as text on the four surfaces | 4.5 | 11.82 / 10.83 / 9.70 / 8.13 | 5.57 / 6.07 / 6.21 / 4.91 |
-| error as text on the four surfaces | 4.5 | 8.06 / 7.39 / 6.62 / 5.55 | 5.46 / 5.95 / 6.10 / 4.82 |
-| onPrimary on primary / primaryPressed | 4.5 | 15.99 / 11.53 | 7.34 / 9.65 |
-| onVoltFill on voltFill / voltPressed / primaryGradient[0] / [1] | 4.5 | 15.99 / 11.53 / 16.46 / 13.53 | same |
-| onVoltMuted on voltFill / voltPressed / primaryGradient[1] | 4.5 | 8.50 / 6.13 / 7.20 | same |
-| Volt glyph on the ink disc (Continue card) | 4.5 | 15.99 | 15.99 |
-| onSecondaryContainer on secondaryContainer (tonal) | 4.5 | 12.08 | 9.47 |
-| primary on primaryContainer | 4.5 | 11.71 | 5.84 |
-| onAccent on accent | 4.5 | 9.93 | 6.50 |
-| onError on error | 4.5 | 8.06 | 6.10 |
-| onErrorContainer / error on errorContainer | 4.5 | 11.76 / 6.49 | 11.20 / 5.00 |
-| onLive on liveFill | 4.5 | 6.10 | 6.10 |
-| onSnackbar / snackbarAction on snackbar | 4.5 | 13.95 / 13.12 | 17.00 / 15.99 |
-| PillTag text on its own colour at 14% (surface / elevated): primary | 4.5 | 10.42 / 9.22 | 5.68 / 5.83 |
-| ... accent | 4.5 | 6.94 / 6.13 | 5.14 / 5.24 |
-| ... favorite | 4.5 | 5.15 / 4.58 | 4.93 / 5.02 |
-| ... success | 4.5 | 8.81 / 7.80 | 4.66 / 4.75 |
-| ... warning | 4.5 | 8.06 / 7.14 | 4.93 / 5.06 |
-| ... error | 4.5 | 5.86 / 5.21 | 4.73 / 4.82 |
-| outline on the four surfaces | 3 | 5.16 / 4.73 / 4.24 / 3.56 | 3.53 / 3.85 / 3.94 / 3.12 |
-| focusRing on the four surfaces | 3 | 15.99 / 14.65 / 13.12 / 11.01 | 6.58 / 7.17 / 7.34 / 5.80 |
-| sliderActive vs sliderInactive / thumb vs surface | 3 | 11.01 / 15.57 | 4.95 / 7.17 |
-| Volt fill as a shape on background / surface / elevated (dark) | 3 | 15.99 / 14.65 / 13.12 | - |
-| voltEdge (ink) on background / surface / white / Volt (light) | 3 | - | 16.78 / 18.28 / 18.72 / 15.99 |
-| primary / accent glyph on the tonal tile | 3 | 11.71 / 7.27 | 5.84 / 5.18 |
-| empty-state icon on its 28% halo | 3 | 7.39 | 4.17 |
-| textPrimary on hero stops [0] / [1] / [2] | 4.5 | 11.29 / 15.33 / 17.00 | 14.12 / 15.86 / 16.78 |
-| textSecondary on hero stops | 4.5 | 6.85 / 9.31 / 10.32 | 7.04 / 7.90 / 8.36 |
-| textMuted on hero stops | 4.5 | 4.68 / 6.36 / 7.05 | 4.82 / 5.41 / 5.72 |
-| primary on hero stops | 4.5 | 10.62 / 14.42 / 15.99 | 5.53 / 6.22 / 6.58 |
-| onDock on dock over a white page / black page / background | 4.5 | 14.24 / 16.59 / 16.36 | 14.24 / 16.59 / 14.39 |
-| onDockMuted on dock (same backdrops) | 4.5 | 7.05 / 8.22 / 8.10 | 7.05 / 8.22 / 7.13 |
-| Volt indicator / play disc vs dock (same backdrops) | 3 | 13.39 / 15.60 / 15.39 | 13.39 / 15.60 / 13.53 |
-| Ice count dot vs dock / ink count on the dot | 3 / 4.5 | 8.32 or more / 9.93 | same |
-| Volt progress vs dockLine | 3 | 10.12 | 10.12 |
-| Stage textPrimary / textSecondary on the veil over a white glow (worst case) | 4.5 | 10.60 / 6.44 | same (stage is dark) |
-| Stage Volt (seek, play disc) on the veil over white | 3 | 9.97 | same |
-| onOverlay on overlay over a white / Volt / yellow / black frame | 4.5 | 7.76 / 8.66 / 8.31 / 19.51 | same |
-| Ice glyph (MediaBadge) on overlay, same frames | 3 | 4.12 / 4.59 / 4.41 / 10.35 | same |
-| Volt resume line on its overlay track over white / black | 3 | 6.63 / 16.66 | same |
-| White glyph 85% on artwork top stops (8) | 3 | min 3.44 | min 3.44 |
-| White glyph 85% on artwork midpoints (8) | 4.5 | min 6.18 | min 5.32 |
-| textPrimary / textSecondary / textMuted / primary on surfaceGradient s0, s1 (8 hues) | 4.5 | min 14.77 / 8.97 / 6.13 / 13.89 | min 13.67 / 6.81 / 4.66 / 5.36 |
-
-Not pass/fail, but worth knowing:
-
-- **Volt fill on paper is 1.05:1**, hence the mandatory ink edge.
-- **Tonal fills against the canvas** are 1.37 (dark) and 1.13 (light). They are identified by their label, as every M3
-  tonal button is.
-- **The inactive slider track** is 1.33 against its canvas. The active part is 2dp taller (6 vs 4), and time labels mark both ends.
-
-**Colour-vision separation** (smallest CIEDE2000 between any two of primary, accent, favourite, success, warning, error):
-
-| | Normal | Deutan | Protan | Tritan |
-|---|---|---|---|---|
-| Dark | 22.0 (primary/success) | 6.3 (primary/warning) | 10.8 (primary/warning) | 6.5 (favourite/error) |
-| Light | 14.2 (favourite/error) | 7.2 (warning/error) | 8.5 (accent/favourite) | 6.2 (accent/success) |
-
-Key pairs (normal / deutan / protan / tritan):
-
-- Dark favourite/error: 32.3 / 30.6 / 40.2 / 6.5 (was 13.1 / - / - / 4.0).
-- Light primary/warning: 56.1 / 61.7 / 59.2 / 42.4 (Moss was 27.9 / 3.0 / 3.2 / 37.7).
-- Light primary/error: 36.0 / 54.9 / 40.1 / 51.9 (Moss was 7.1 under deuteranopia).
-
-Every remaining close pair is covered by the rule "state = icon + text, never colour alone".
-
-**Brand distance** (OKLab dE x100, nearest competitor):
-
-- Volt: Spotify in-app green 18.7.
-- Ice: Amazon Music 8.9, so small roles only.
-- Ultraviolet `#5A32D6`: Deezer 14.6.
-- Flare: Apple Music 14.9, hearts only.
-- Icon field `#421E78`: Deezer 28.5.
-- Canvas vs black: 20.2 (Spotify's `#121212`: 18.2).
+- Colour vision: primary, accent, favourite, success, warning and error stay 6 or more CIEDE2000 apart under normal,
+  deutan and protan vision (Machado 2009, full severity) in both Sindur themes. Every state still carries an icon and a
+  word, never colour alone.
 
 ---
 
 ## 5. Fonts
 
-All five families are SIL OFL 1.1 with no Reserved Font Name (checked in each `OFL.txt` header). All are bundled, with
-no runtime fetching. Every URL below answered **HTTP 200** to `curl -I` on 2026-11-17 (sizes are the reported
-`Content-Length`).
+Sindur bundles three families, all SIL OFL 1.1 with **no Reserved Font Name** (checked in each `OFL.txt` header: only
+a copyright line, no "with Reserved Font Name" clause). All are bundled, with no runtime fetching. The licences are in
+`assets/fonts/licenses/`, embedded verbatim in `lib/app/theme/font_licenses.dart` (test/unit/font_licenses_test.dart
+keeps them equal) and registered on the licences page.
 
-| Family (pubspec name) | Role | Files to put in `assets/fonts/` | Source (HTTP 200, bytes) | Static or variable |
+| Family (pubspec name) | Role | Files in `assets/fonts/` | Source | Licence file |
 |---|---|---|---|---|
-| **Unbounded** (`Unbounded`) | App-authored headings: `display`, `sectionTitle` | `Unbounded-SemiBold.ttf` (600), `Unbounded-Bold.ttf` (700) | `https://raw.githubusercontent.com/googlefonts/unbounded/main/fonts/ttf/Unbounded-SemiBold.ttf` (501,444); `.../Unbounded-Bold.ttf` (507,828) | Static. No FontVariation. |
-| **Anek Devanagari**, pinned to SemiExpanded (`AnekWide`) | Every user-content title (`greeting`, `screenTitle`, `playerTitle`, `cardTitle`); Devanagari fallback of Unbounded | `AnekDevanagariWide-SemiBold.ttf` (600), `AnekDevanagariWide-Bold.ttf` (700) | Variable source `https://raw.githubusercontent.com/google/fonts/main/ofl/anekdevanagari/AnekDevanagari%5Bwdth,wght%5D.ttf` (2,190,532; axes wdth 75-125, wght 100-800; subsets devanagari, latin, latin-ext) | Static instances built once (below) and committed. No FontVariation. |
-| **Atkinson Hyperlegible Next** (`AtkinsonNext`) | All reading text: `body`, `bodyStrong`, `metadata`, `label`, `chipLabel`, `button`, `caption`. Replaces Inter. | `AtkinsonHyperlegibleNext-Regular.ttf` (400), `-Medium.ttf` (500), `-SemiBold.ttf` (600), `-Bold.ttf` (700) | `https://raw.githubusercontent.com/googlefonts/atkinson-hyperlegible-next/main/fonts/ttf/AtkinsonHyperlegibleNext-Regular.ttf` (65,068), `...-Medium.ttf` (67,080), `...-SemiBold.ttf` (66,680), `...-Bold.ttf` (66,792) | Static. No FontVariation. |
-| **Mukta** (`Mukta`) | Devanagari fallback for AtkinsonNext and DMMono | `Mukta-Regular.ttf` (400), `Mukta-Medium.ttf` (500), `Mukta-SemiBold.ttf` (600), `Mukta-Bold.ttf` (700) | `https://raw.githubusercontent.com/google/fonts/main/ofl/mukta/Mukta-Regular.ttf` (432,248), `.../Mukta-Medium.ttf` (419,736), `.../Mukta-SemiBold.ttf` (411,160), `.../Mukta-Bold.ttf` (418,416) | Static. No FontVariation. |
-| **DM Mono** (`DMMono`) | `tabularFigures`, `index`, `overline`, `badge`, `figureLarge`; Diagnostics log text (replaces the `monospace` family in `diagnostics_screen.dart`) | `DMMono-Regular.ttf` (400), `DMMono-Medium.ttf` (500) | `https://raw.githubusercontent.com/google/fonts/main/ofl/dmmono/DMMono-Regular.ttf` (49,744), `.../DMMono-Medium.ttf` (50,360) | Static. No FontVariation. |
+| **Fraunces** (`Fraunces`) | App-written headings only: `display`, `sectionTitle`. A warm, soft old-style serif that suits the crimson and wine brand. Latin only. | `Fraunces-SemiBold.ttf` (600), `Fraunces-Bold.ttf` (700), 73 KB each | Static instances of `https://raw.githubusercontent.com/google/fonts/main/ofl/fraunces/Fraunces%5BSOFT,WONK,opsz,wght%5D.ttf` at opsz 72, SOFT 50, WONK 0 | `Fraunces-OFL.txt` ("Copyright 2018 The Fraunces Project Authors") |
+| **Poppins** (`Poppins`) | Every name of a thing and every line people read: `greeting`, `screenTitle`, `playerTitle`, `cardTitle`, `body`, `bodyStrong`, `metadata`, `label`, `chipLabel`, `button`, `caption`. Draws Latin **and Devanagari** in one design. | `Poppins-Regular.ttf` (400), `-Medium.ttf` (500), `-SemiBold.ttf` (600), `-Bold.ttf` (700), 155-160 KB each | `https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-{Regular,Medium,SemiBold,Bold}.ttf` (static, unmodified) | `Poppins-OFL.txt` ("Copyright 2020 The Poppins Project Authors") |
+| **DM Mono** (`DMMono`) | `tabularFigures`, `index`, `overline`, `badge`, `figureLarge`; Diagnostics log text | `DMMono-Regular.ttf` (400), `DMMono-Medium.ttf` (500) | `https://raw.githubusercontent.com/google/fonts/main/ofl/dmmono/` (unchanged) | `DMMono-OFL.txt` |
 
-Licences go to `assets/fonts/licenses/`, one per family:
+Total payload about 0.9 MB (was 2.9 MB with Unbounded, Anek Devanagari, Atkinson Hyperlegible Next and Mukta, which
+are gone with their licences). Rebuild steps are in `tools/fonts/README.md`.
 
-| File | Source (HTTP 200) |
-|---|---|
-| `Unbounded-OFL.txt` | `https://raw.githubusercontent.com/google/fonts/main/ofl/unbounded/OFL.txt` |
-| `AnekDevanagari-OFL.txt` | `https://raw.githubusercontent.com/google/fonts/main/ofl/anekdevanagari/OFL.txt` |
-| `AtkinsonHyperlegibleNext-OFL.txt` | `https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegiblenext/OFL.txt` |
-| `Mukta-OFL.txt` | `https://raw.githubusercontent.com/google/fonts/main/ofl/mukta/OFL.txt` |
-| `DMMono-OFL.txt` | `https://raw.githubusercontent.com/google/fonts/main/ofl/dmmono/OFL.txt` |
-
-Register each in `main()` with `LicenseRegistry.addLicense` so they appear on the licences page. Then delete
-`Inter-*.otf` and Inter's `OFL.txt`.
-
-Variable alternatives, if ever wanted (all HTTP 200):
-
-- `https://raw.githubusercontent.com/google/fonts/main/ofl/unbounded/Unbounded%5Bwght%5D.ttf` (778,272)
-- `https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegiblenext/AtkinsonHyperlegibleNext%5Bwght%5D.ttf` (114,552)
-
-Flutter's `fontWeight` does not drive a variable font's `wght` axis. A variable file needs
-`fontVariations: [FontVariation.weight(n)]` (and `FontVariation('wdth', 112.5)` for Anek) on every style. Those
-variations also apply to the fallback fonts of that style, which is why this spec ships static files only.
-
-**Building the Anek statics** (once, on any machine with Python; commit the outputs and this command in
-`tools/fonts/README.md`):
-
-```sh
-pip install fonttools
-fonttools varLib.instancer "AnekDevanagari[wdth,wght].ttf" wdth=112.5 wght=600 -o AnekDevanagariWide-SemiBold.ttf
-fonttools varLib.instancer "AnekDevanagari[wdth,wght].ttf" wdth=112.5 wght=700 -o AnekDevanagariWide-Bold.ttf
-```
-
-`--update-name-table` is optional. Flutter registers fonts by the pubspec family, not the internal name, so omit the flag
-if it complains about a missing STAT entry. Measure the output sizes and record them in `DECISIONS.md`; they were not
-measured here (estimate 0.5-0.9 MB each).
-
-**Optional size cuts** (pyftsubset ships with fonttools; write to a build folder, then copy over):
-
-- Unbounded to Latin, about 500 KB down to about 80 KB each:
-  `pyftsubset Unbounded-Bold.ttf --unicodes="U+0000-024F,U+2000-206F,U+20B9,U+2122,U+2190-2199,U+2212" --layout-features='*' --output-file=out/Unbounded-Bold.ttf`
-- Mukta to Devanagari plus ASCII (Latin comes from Atkinson), about 40% smaller:
-  `pyftsubset Mukta-Regular.ttf --unicodes="U+0020-007E,U+00A0,U+0900-097F,U+1CD0-1CFF,U+200B-200D,U+20B9,U+25CC,U+A8E0-A8FF" --layout-features='*' --output-file=out/Mukta-Regular.ttf`
-- Leave Anek as instanced: it carries only Latin and Devanagari, and both are needed.
-
-Payload, measured where the file exists and estimated for Anek:
-
-| | Before subsetting | After subsetting |
-|---|---|---|
-| Unbounded (2 files) | 1.01 MB | about 0.16 MB |
-| Anek instances (2 files) | estimate 1.0-1.8 MB (0.5-0.9 MB each) | same |
-| Mukta (4 files) | 1.68 MB | about 1.0 MB |
-| Atkinson (4 files) | 0.27 MB | 0.27 MB |
-| DM Mono (2 files) | 0.10 MB | 0.10 MB |
-| **Total** | **about 4-5 MB** | **about 2.5-3.3 MB** |
-
-Removing Inter's OTFs offsets part of this.
+Flutter's `fontWeight` does not drive a variable font's `wght` axis, and `fontVariations` would also apply to the
+fallback fonts, so only static files ship.
 
 **Devanagari strategy**
 
-1. User-content titles use Anek, which draws Latin and Devanagari in one design, so a Nepali title never switches font
-   mid-heading.
-2. App-authored headings use Unbounded with `fontFamilyFallback: ['AnekWide']`. Anek is the same width class, so a
-   Nepali word inside a static heading (the Home greeting, a translated label later) still matches.
-3. Reading text uses Atkinson with `fontFamilyFallback: ['Mukta']`. Mukta was chosen over Anek here because it is
-   built for text sizes and is widely used on Nepali sites.
-4. DM Mono also falls back to Mukta.
-5. Every style sets `leadingDistribution: TextLeadingDistribution.even`.
-6. User-content styles use `letterSpacing: 0`, because tracking breaks the shirorekha (headline bar) and collides
+1. Everything that can carry user content (song, artist, album and video names, body text, chips) is Poppins, which
+   has its own Devanagari (94 glyphs in U+0900-097F plus conjunct forms), so a Nepali title never switches font
+   mid-line. These styles have no fallback list.
+2. App-written headings use Fraunces with `fontFamilyFallback: ['Poppins']`, so a Nepali word inside a static heading
+   still draws.
+3. DM Mono falls back to Poppins. `ThemeData(fontFamily: 'Poppins', fontFamilyFallback: ['Poppins'])`.
+4. Every style sets `leadingDistribution: TextLeadingDistribution.even`.
+5. User-content styles use `letterSpacing: 0`, because tracking breaks the shirorekha (headline bar) and collides
    conjuncts.
-7. Line heights stay at 1.33 or more wherever Devanagari can appear.
-8. File-style names go through the existing `breakableTitle()` (`lib/core/utils/formatters.dart`) for display, so
+6. Line heights stay at 1.33 or more wherever Devanagari can appear.
+7. File-style names go through `breakableTitle()` (`lib/core/utils/formatters.dart`) for display, so
    `Audit_Long_Tone_5min` wraps at underscores. Semantics labels keep the original.
-
-**pubspec.yaml**
-
-```yaml
-  fonts:
-    - family: Unbounded
-      fonts:
-        - { asset: assets/fonts/Unbounded-SemiBold.ttf, weight: 600 }
-        - { asset: assets/fonts/Unbounded-Bold.ttf, weight: 700 }
-    - family: AnekWide
-      fonts:
-        - { asset: assets/fonts/AnekDevanagariWide-SemiBold.ttf, weight: 600 }
-        - { asset: assets/fonts/AnekDevanagariWide-Bold.ttf, weight: 700 }
-    - family: AtkinsonNext
-      fonts:
-        - { asset: assets/fonts/AtkinsonHyperlegibleNext-Regular.ttf, weight: 400 }
-        - { asset: assets/fonts/AtkinsonHyperlegibleNext-Medium.ttf, weight: 500 }
-        - { asset: assets/fonts/AtkinsonHyperlegibleNext-SemiBold.ttf, weight: 600 }
-        - { asset: assets/fonts/AtkinsonHyperlegibleNext-Bold.ttf, weight: 700 }
-    - family: Mukta
-      fonts:
-        - { asset: assets/fonts/Mukta-Regular.ttf, weight: 400 }
-        - { asset: assets/fonts/Mukta-Medium.ttf, weight: 500 }
-        - { asset: assets/fonts/Mukta-SemiBold.ttf, weight: 600 }
-        - { asset: assets/fonts/Mukta-Bold.ttf, weight: 700 }
-    - family: DMMono
-      fonts:
-        - { asset: assets/fonts/DMMono-Regular.ttf, weight: 400 }
-        - { asset: assets/fonts/DMMono-Medium.ttf, weight: 500 }
-```
-
-`ThemeData(fontFamily: 'AtkinsonNext', fontFamilyFallback: const ['Mukta'], ...)`.
 
 ---
 
 ## 6. Type scale
 
 `AppTypography.of(AppPalette p)` builds every style with the palette's colours; `AppTypography.textTheme(p)` maps them
-onto M3. Height is Flutter's multiplier (line px / size). U = Unbounded (fallback AnekWide), A = AnekWide (fallback
-AtkinsonNext), T = AtkinsonNext (fallback Mukta), M = DMMono (fallback Mukta).
+onto M3. Height is Flutter's multiplier (line px / size). F = Fraunces (fallback Poppins), P = Poppins (no fallback),
+M = DMMono (fallback Poppins).
 
-| Role | Family | Size / line | Weight | letterSpacing | height | Case | Default colour | M3 slot | Used for |
-|---|---|---|---|---|---|---|---|---|---|
-| display | U | 32 / 40 | 700 | -0.5 | 1.25 | Sentence | textPrimary | displaySmall | Tab mastheads only: "Music", "Videos", "Online", "Downloads", "Settings". App strings, one line. |
-| greeting (new) | A | 30 / 42 | 700 | 0 | 1.40 | As written | textPrimary | headlineLarge | Home: "नमस्ते" (always), with "Good evening" etc. under it in `body`/textSecondary. |
-| screenTitle | A | 24 / 34 | 700 | 0 | 1.4167 | As written | textPrimary | headlineMedium | App bar titles, album/artist/playlist headers, video title on the watch screen. Max 2 lines. |
-| playerTitle | A | 22 / 30 | 600 | 0 | 1.3636 | As written | textPrimary | titleMedium | Now Playing title, video player title. Max 2 lines + ellipsis, through `breakableTitle()`. |
-| cardTitle (new) | A | 20 / 28 | 700 | 0 | 1.40 | As written | onVoltFill / textPrimary | headlineSmall | Continue-listening slab, hero tiles. 1-2 lines. |
-| sectionTitle | U | 18 / 26 | 600 | 0 | 1.4444 | Sentence | textPrimary | titleLarge | "Recently played", sheet and dialog titles (app strings only; put user content in the body). |
-| body | T | 16 / 24 | 400 | 0 | 1.50 | Sentence | textPrimary | bodyLarge | Paragraphs, sheet rows, dialog body, inputs. (Was 15.) |
-| bodyStrong | T | 16 / 24 | 600 | 0 | 1.50 | As written | textPrimary | titleSmall | Song/video titles in rows. Mini player uses 15/20. |
-| metadata | T | 14 / 20 | 400 | 0 | 1.4286 | As written | textSecondary | bodyMedium | "Artist · Album", "Channel · 1.2 GB". (Was 13.) |
-| label | T | 12 / 16 | 600 | 0.2 | 1.3333 | Sentence | textMuted | labelMedium | Nav labels, form labels. App strings only. |
-| chipLabel (new) | T | 14 / 20 | 600 | 0 | 1.4286 | As written | textPrimary | (chipTheme) | Chips (may carry artist names). |
-| button | T | 15 / 20 | 700 | 0.15 | 1.3333 | Sentence, never caps | from button | labelLarge | Every button label. |
-| caption | T | 12 / 16 | 400 | 0 | 1.3333 | Sentence | textMuted | bodySmall | Helper, error and empty-state fine print, tooltips. (Was 11.) |
-| tabularFigures | M | 13 / 18 | 500 | 0 | 1.3846 | - | textSecondary | - | Seek times "1:23" / "-2:41", durations, sizes, %, speeds. `fontFeatures: [FontFeature.tabularFigures()]`. In a meta line, use a `TextSpan` at 14. |
-| index (new) | M | 13 / 18 | 500 | 0 | 1.3846 | - | textMuted | - | Track numbers "01 02 03"; the playing row shows `primary`. |
-| overline (new) | M | 11 / 16 | 500 | 1.1 | 1.4545 | UPPERCASE | textSecondary or primary | labelSmall | Kickers: "NOW PLAYING · 3 / 24", "FROM YOUR LIBRARY", "3 ACTIVE · 1.2 GB FREE". App strings only, never user content. |
-| badge (new) | M | 12 / 16 | 500 | 0.2 | 1.3333 | Codes in caps | onOverlay | - | Duration badge, "1080P", "MP3", "LIVE", PillTag. Replaces `_overlayTextStyle`. |
-| figureLarge (new) | M | 28 / 32 | 500 | -0.5 | 1.1429 | Digits only | textPrimary | - | Download %, storage totals, sleep-timer countdown. |
+| Role | Family | Size / line | Weight | letterSpacing | Default colour | M3 slot | Used for |
+|---|---|---|---|---|---|---|---|
+| display | F | 32 / 40 | 700 | -0.5 | textPrimary | displaySmall | Tab mastheads only ("Music", "Videos", "Online", "Downloads", "Settings"). One line. |
+| greeting | P | 30 / 42 | 700 | 0 | textPrimary | headlineLarge | Home: "नमस्ते". |
+| screenTitle | P | 24 / 34 | 700 | 0 | textPrimary | headlineMedium | App bar titles, album / artist / playlist headers, the watch-screen title. Max 2 lines. |
+| playerTitle | P | 22 / 30 | 600 | 0 | textPrimary | titleMedium | Now Playing and video player titles. Max 2 lines. |
+| cardTitle | P | 20 / 28 | 700 | 0 | onVoltFill / textPrimary | headlineSmall | Continue-listening slab, hero tiles. |
+| sectionTitle | F | 18 / 26 | 600 | 0 | textPrimary | titleLarge | "Recently played", sheet and dialog titles (app strings only). |
+| body | P | 16 / 24 | 400 | 0 | textPrimary | bodyLarge | Paragraphs, sheet rows, dialog body, inputs. |
+| bodyStrong | P | 16 / 24 | 600 | 0 | textPrimary | titleSmall | Song / video titles in rows, list-tile titles. Mini player 15/20. |
+| metadata | P | 14 / 20 | 400 | 0 | textSecondary | bodyMedium | "Artist · Album", "Channel · 1.2 GB". |
+| label | P | 12 / 16 | 600 | 0.2 | textMuted | labelMedium | Nav and form labels (app strings only). |
+| chipLabel | P | 14 / 20 | 600 | 0 | textPrimary | (chipTheme) | Chips (may carry artist names). |
+| button | P | 15 / 20 | 600 | 0 | from button | labelLarge | Every button label, sentence case. |
+| caption | P | 12 / 16 | 400 | 0 | textMuted | bodySmall | Helper, error and empty-state fine print, tooltips. |
+| tabularFigures | M | 13 / 18 | 500 | 0 | textSecondary | - | Seek times, durations, sizes, %. Tabular figures. |
+| index | M | 13 / 18 | 500 | 0 | textMuted | - | Track numbers "01 02 03". |
+| overline | M | 11 / 16 | 500 | 1.1 | textSecondary or primary | labelSmall | UPPERCASE kickers (app strings only). |
+| badge | M | 12 / 16 | 500 | 0.2 | onOverlay | - | Duration badge, "1080P", "LIVE", PillTag. |
+| figureLarge | M | 28 / 32 | 500 | -0.5 | textPrimary | - | Download %, storage totals, sleep-timer countdown. |
 
 Rules:
 
-- **Unbounded** is never used below 18, in list rows, or for any string that came from a file, tag, URL or person.
-  **Anek** is never used below 20.
+- **Fraunces** is never used below 18, in list rows, or for any string that came from a file, tag, URL or person.
+- Reading text is 16 (body) and never below 15 in rows that elders read; 12-14 only for metadata, labels and captions.
 - **Text scale.** Layouts must hold at `textScaler` 1.3 on a 320 and a 360dp phone without clipping. Rows use
-  `minHeight`, not a fixed height, so they grow beyond 1.3. Keep the existing `line(style)` height helpers; they read
-  these styles.
-- **Atkinson Hyperlegible Next** keeps I / l / 1 and O / 0 apart. Do not swap it for a "nicer" geometric sans in rows.
+  `minHeight`, not a fixed height.
 
 ---
 
 ## 7. Components
 
+### 7.18 Home (Sindur v2)
+
+- Hero: `HeroBand(glow: true)` with a short amber `SparkMark`, "नमस्ते" in the greeting voice and the time of day.
+- The Volt "Continue listening" slab (unchanged behaviour and labels).
+- Bento quick actions: a tall `VoltTile` "Shuffle all" (as tall as the two tiles beside it), Liked and Online stacked
+  on `surfaceElevated`, then a full-width tonal (`secondaryContainer`) Downloads strip. Without songs the Shuffle
+  block goes; while songs load a skeleton holds its place.
+- Cover rails (136 dp covers, radius 24, title + artist): Recently played, Most played, Recently added, Liked (See
+  all opens Liked songs), then the Recent videos rail. Each heading is Fraunces with an amber `SparkMark`.
+
+### 7.19 Videos (Sindur v2)
+
+- Glowing hero with the count, refresh and sort; search field.
+- Featured "Continue watching" card: full-width 16:9 still with a 4 dp amber resume line, kicker, title, time left
+  and a play disc. More part-watched videos follow in a rail.
+- Filter chips: All / Downloaded / On this phone, then a two-column grid of 16:9 cards (duration badge, amber
+  resume line, two title lines; long press opens the media sheet). Cell height grows with the text scale.
+- Empty and permission states unchanged.
+
+### 7.20 Downloads (Sindur v2)
+
+- The link field and its main action live inside the glowing hero, under the title and the active / free summary.
+- Download cards: 8 dp progress bar in `sliderActive` (amber on ink, wine on sand), muted when paused or waiting.
+- Saved list keeps the 5 newest + "Show all N saved" toggle, kind chips and kind icons; settings area unchanged.
+
 ### 7.1 Shape, spacing, depth, motion (both themes)
 
 - **Grid:** 4dp. Phone gutter 16, tablet (600dp or wider) 24. Section header padding 24 top / 8 bottom. Card padding 16.
-  Row gap between art and text 12; between stacked text lines 2. Chip gaps 8. Scrolling content ends with a bottom
-  padding of Ink Dock height (64 mini + 64 nav + system inset) + 16.
-- **Radii** (`AppSpacing`):
-
-  | Radius | Applies to |
-  |---|---|
-  | `radiusBadge` 6 | Overlay chips, PillTag |
-  | `radiusArtSmall` 10 | Art 56dp and smaller |
-  | `radiusThumb` 14 | Thumbnails, tiles, grid covers |
-  | `cardRadius` 20 (was 18) | Cards, Continue slab |
-  | `radiusMenu` 16 | Popup menus, form fields, snackbars |
-  | `radiusSheet` 28 | Sheets (top corners), dialogs |
-  | `radiusCover` 24 | Now Playing cover |
-  | Stadium | Every button, chip, search field, nav indicator and play disc. `buttonRadius` is retired. |
-- **Touch:** 48dp minimum target everywhere, including 36dp chips (`materialTapTargetSize: padded`). Icons are Material
-  Symbols Rounded at 24dp, filled when selected or on.
+  Scrolling content ends with a bottom padding of Ink Dock height (64 mini + 64 nav + system inset) + 16.
+- **Radii** (`AppSpacing`): `radiusBadge` 6 (overlay chips, PillTag) · `radiusArtSmall` 10 · `radiusThumb` 14 ·
+  `cardRadius` 20 (cards, Continue slab) · `radiusMenu` 16 (menus, text fields, snackbars, list-tile ink) ·
+  `radiusSheet` 28 (sheet top corners, dialogs) · `radiusCover` 24 · stadium for every button, chip, nav indicator and
+  disc; circle for icon buttons.
+- **Touch:** 48dp minimum target everywhere (`materialTapTargetSize: padded`).
 - **Depth:**
-  - Dark: tone steps plus 1dp `divider` card edges. No shadows, no glows except `voltGlow` under the 72dp stage play
-    disc.
-  - Light: 1dp `divider` hairline on cards, and `shadow` (0 8 24, `#1A180A2E`) only on sheets, dialogs, menus and
-    snackbars.
-  - Both: the signature **print offset**, a hard `BoxShadow(offset: Offset(6, 6), blurRadius: 0, color: printShadow)`
-    with the cover's radius. It is used only under the detail-header cover and the Now Playing cover (Volt on ink,
-    ink on paper).
-- **Motion** (`MotionTokens`, everything through `MotionTokens.duration`, so reduced motion means 0ms):
+  - Dark: tone steps plus 1dp `divider` hairlines on cards, dialogs, sheets and snackbars. The only soft light is the
+    crimson `voltGlow`: under enabled VoltButtons (blur 18, offset 0/6, tightening to 8 / 0/2 while pressed), under the
+    72dp stage disc, around slider thumbs, and as a glint across the middle of the Ink Dock's top edge.
+  - Light: no glows anywhere (`voltGlow` is transparent). Cards get a soft two-layer ink shadow
+    (`SurfaceCard.shadowsFor`, `cardTheme.elevation` 2); sheets, dialogs, menus and snackbars elevation 6.
+  - Both: the hard **print offset** under the detail-header and Now Playing covers.
+- **Motion** (`MotionTokens`, always through `MotionTokens.duration`, so reduced motion means 0ms):
 
   | Duration | What |
   |---|---|
-  | 120ms `easeOut` | Press feedback (Volt widgets scale to 0.97) |
+  | 120ms `easeOut` | Press feedback: VoltButton, VoltDisc, VoltSlab and TonalIconButton scale to 0.97 |
   | 160ms | Play/pause icon morph |
-  | 240ms | Page transitions (FadeForwards on Android, Cupertino on iOS); nav indicator slide with new `MotionTokens.emphasized = Cubic(0.05, 0.7, 0.1, 1.0)` |
-  | 280ms | Sheets; mini player → Now Playing container transform |
+  | 240ms | Page transitions; nav indicator slide (`MotionTokens.emphasized`) |
+  | 280ms | Sheets |
   | 600ms | Tint drift (`ambient`) |
-
-  The equaliser animates only while playing. Nothing pulses.
 
 ### 7.2 Buttons
 
-**Theme rule:** `filledButtonTheme` sets shape, size and text style but **no colours**. FilledButton then takes
-`primary`/`onPrimary` and FilledButton.tonal takes `secondaryContainer`/`onSecondaryContainer`, as the current comment in
-`app_theme.dart` requires.
+`filledButtonTheme` sets shape, size, text style and elevation 0 but **no colours**, so FilledButton takes
+`primary`/`onPrimary` and FilledButton.tonal takes `secondaryContainer`/`onSecondaryContainer`. Every Material button
+gets the same press / focus / hover wash: `primaryBase` (crimson) at 16 / 14 / 8 %.
 
-| Kind | Dark | Light | Shape and size |
+| Kind | Dark | Light | Shape, size, states |
 |---|---|---|---|
-| **VoltButton** (new `ui_kit`). The "play" and "get" actions: Play all, Download, Save offline, Fetch link. | primaryGradient fill, ink label, no edge | Same fill + 1.5dp ink `voltEdge` | Stadium, 52dp (40dp `compact` in toolbars), 20dp leading icon, `button` text, 24 horizontal padding. Pressed: `voltPressed` + scale 0.97. Disabled: surfacePressed fill, textMuted label (light keeps an `outline` edge). |
-| FilledButton (other primary actions: Save, Retry, dialog confirm) | Volt fill, ink label | Ultraviolet fill, white label | Stadium, 48dp, M3 state layer for pressed. |
-| FilledButton.tonal (Shuffle, Add to queue, Listen) | `#33225E` / `#D9FF73` | `#EAE1FF` / `#38189A` | Stadium, 48dp. |
-| OutlinedButton (Add to playlist, Copy link, PiP) | 1.5dp `outline`, textPrimary label | same roles | Stadium, 48dp (40 compact). |
-| TextButton (See all, Cancel) | `primary` label | `primary` label | Stadium, 12 horizontal padding (`SectionHeader.actionStyle`). |
-| Destructive | TextButton in `error`, or tonal `errorContainer`/`onErrorContainer`. Always followed by a confirm dialog. | same | - |
-| IconButton | 48dp target, 24 glyph, textPrimary (secondary actions textSecondary), highlight `primaryBase` 12% | same | Circle. |
-| **VoltDisc** (new `ui_kit`) | Volt circle, ink glyph | + ink edge | Sizes: 44 (mini player, 24 glyph), 56 (detail hero, 28), 72 (stage, 36 glyph + `voltGlow`). |
-
-**Toggles** (shuffle, repeat, background play):
-
-- On = `primary` glyph plus a 4dp `primary` dot 2dp below it. Off = textPrimary glyph, no dot. Repeat-one uses the
-  `repeat_one` glyph.
-- **Favourite:** outline heart (textSecondary) becomes a filled heart in `favorite`, and the label/semantics toggle.
+| **VoltButton** (play / get: Play all, Download, Save offline, Fetch link) | Crimson sheen (`primaryGradient`, top to bottom), white label, soft crimson glow | Same sheen, no glow, no edge (Sindur v2) | Stadium, 52dp (40 `compact`, 12dp side padding), 20dp icon. Pressed: `voltPressed`, scale 0.97, tighter glow. Disabled: `surfacePressed` fill, textMuted label, no glow (light keeps an `outline` edge). Focus: 2dp `onVoltFill` ring. |
+| FilledButton (Save, Retry, dialog confirm) | Rose fill, ink label | Wine fill, white label | Stadium, 48dp. |
+| FilledButton.tonal | `secondaryContainer` / `onSecondaryContainer` | same roles | Stadium, 48dp. |
+| ElevatedButton | `primary` / `onPrimary`; disabled textPrimary 12 % fill, 38 % label | same | Stadium, 48dp, no elevation. |
+| OutlinedButton | 1.5dp `outline`, textPrimary label; the edge turns `primary` while pressed or focused | same roles | Stadium, 48dp. Disabled edge and label at 38 %. |
+| TextButton (See all, Cancel) | `primary` label | same | Stadium, 12 horizontal padding. |
+| IconButton | 48dp, textPrimary glyph, crimson wash | same | Circle. Disabled 38 %. |
+| **TonalIconButton** (new) | `secondaryContainer` disc, `onSecondaryContainer` glyph | same roles | Circle, 48dp, crimson wash, scale 0.97 while pressed. |
+| **VoltDisc** | Crimson circle, white glyph; 72dp adds `voltGlow` (blur 24, 12 while pressed) | + ink edge | 44 / 56 / 72. |
+| Destructive | TextButton in `error`, or tonal `errorContainer`. Always confirmed. | same | - |
 
 ### 7.3 Chips
 
-- Size: 36dp tall inside a 48dp target. Stadium, 14 horizontal padding, `chipLabel`.
-- Unselected: dark `surfaceElevated` with no border; light `surface` with a 1dp `outline` border.
-- **Selected (both themes): Volt fill, ink label, 18dp ink check** (`showCheckmark: true`, so state never depends on
-  colour). Light adds the 1.5dp ink edge (`side` via `WidgetStateBorderSide`).
-- Set it in `chipTheme` with a `WidgetStateColor` label colour.
-- Filter rows scroll horizontally with 16 gutters.
+- 36dp tall inside a 48dp target, stadium, 12dp side padding, `chipLabel`.
+- Unselected: `surfaceElevated` (dark) / `surface` (light) with an outline: 1dp `outlineVariant` hairline on ink, 1dp
+  `outline` on paper. Pressed: `surfacePressed`.
+- **Selected: crimson `voltFill`, white label and an 18dp white check** (state never depends on colour alone); paper adds
+  the 1.5dp ink edge. Disabled at 38 %.
 
 ### 7.4 Cards
 
-- **SurfaceCard:** `surface` fill, radius 20, 1dp `divider` edge, padding 16. Pressed: `surfacePressed` (InkWell
-  highlight). Tinted cards take `ArtworkTint.surfaceGradient` (section 3).
-- **VoltSlab, the Continue-listening card** (new `ui_kit`, Home top). It is the one loud brand block on the home screen.
-
-  | Part | Spec |
-  |---|---|
-  | Fill | primaryGradient, radius 20, padding 16; light adds the ink edge |
-  | Overline | "CONTINUE LISTENING", `overline` in onVoltMuted |
-  | Title | `cardTitle` in ink, 1 line (2 at large text), through `breakableTitle()` |
-  | Artist / time left | `metadata` in onVoltMuted |
-  | Play button | Trailing 48dp ink disc with a Volt play glyph |
-  | Progress | 3dp ink line on ink-20% track, 8dp above the bottom edge |
-  | Gestures | Tap = resume; long-press = media sheet |
+- **SurfaceCard:** `surface`, radius 20, 1dp `divider` edge, padding 16. Pressed: `surfacePressed` highlight with a 10 %
+  crimson splash. Light adds the soft ink shadow; dark has none.
+- **cardTheme:** dark hairline `divider`, elevation 0; light no edge, elevation 2 with an 18 % ink shadow.
+- **VoltSlab** (Continue listening): crimson sheen, radius 20, padding 16 (paper adds the ink edge); `overline` kicker
+  and `metadata` in onVoltMuted; `cardTitle` in onVoltFill; trailing 48dp disc; 3dp progress line 8dp above the
+  bottom; scale 0.97 while pressed.
 
 ### 7.5 Section headers
 
-`SectionHeader` gains an optional `kicker`, top to bottom:
+`SectionHeader` with a `kicker`, top to bottom: a 2dp rule across the gutter, **led by a 28dp `primaryBase` segment**
+(`ruleAccentWidth`), 12dp, the kicker in `overline` / `primary`, 4dp, then the `sectionTitle` row with the trailing
+"See all" TextButton. Rule only on screen-level sections.
 
-1. A 2dp `rule` line across the gutter.
-2. 12dp gap.
-3. The kicker in `overline`, coloured `primary`.
-4. 4dp gap.
-5. The title in `sectionTitle`, with the trailing "See all" TextButton.
-
-Use the rule only on screen-level sections, never inside sheets or cards.
+Screen mastheads (Home greeting, Music, Videos, Downloads, Settings) sit in a `HeroBand`: a radius-20 card filled
+with `heroGradient`, 20dp padding, the title in `display` / `greeting`. Mastheads, Settings cards and empty states
+enter with `EntranceFade` (fade + 8dp lift, `MotionTokens.page`, 40ms stagger capped at 6), instant with reduced motion.
 
 ### 7.6 List rows
 
-- **Song row**, 64dp minimum height:
-  - Leading: 48dp art at radius 10, or a 32dp `index` column ("01") in album/playlist lists.
-  - Middle: `bodyStrong` title (1 line, Mukta for Nepali), then a `metadata` line "Artist · 4:05" with the duration as a
-    `tabularFigures` `TextSpan` at 14.
-  - Trailing: a 48dp `more_vert` that opens the media sheet.
-- **Now-playing row.** Not colour alone, and semantics say "Now playing":
-  - A 3dp `primary` bar on the leading edge (12dp inset top and bottom, radius 2).
-  - A 3-bar equaliser in Volt on an `overlay` veil over the art. Index lists show it in place of the number.
-  - The title in `primary`.
-- **Downloaded marker:** a 16dp `download_done` glyph in `accent` before the meta line.
-- **Pressed:** surfacePressed. **Selected** (multi-select): primaryContainer fill with a leading check circle.
+- **Song row**, 64dp minimum: 48dp art (radius 10) or a 32dp `index` column; `bodyStrong` title; `metadata` line with the
+  duration as `tabularFigures`; trailing 48dp `more_vert`.
+- **Now-playing row:** a 3dp `primary` bar on the leading edge, the equaliser over the art, the title in `primary`.
+- **ListTile theme:** `bodyStrong` titles, `metadata` subtitles, radius-16 ink, selected = `primary` content on
+  `primaryBase` at 10 %.
 
 ### 7.7 Ink Dock: nav bar + mini player (dark in both themes)
 
-- **Container:** wrap in `Theme(data: AppTheme.darkTheme)` and an `AnnotatedRegion<SystemUiOverlayStyle>` (section
-  8.2). Fill `dock` with `BackdropFilter` blur 24, top corners radius 24, a 1dp `dockLine` top line, and the system
-  bottom inset below the nav.
-- **Mini player** (top row, 64dp, padding 12 start / 4 end):
-  - Art: 44dp at radius 10.
-  - Text: title `bodyStrong` 15/20 in onDock, artist 13/18 in onDockMuted, 1 line each.
-  - Controls:
-    - Previous: 48dp target, 28 glyph.
-    - Play/pause: a 44dp **VoltDisc**.
-    - Next: 48dp target, 28 glyph.
-    - At a queue end with repeat off, previous/next show at 38% and are disabled for semantics.
-  - Progress: a 2dp Volt line along the top edge over `dockLine`.
-  - Gestures: swipe left/right = next/previous (with `HapticFeedback.selectionClick`), tap or swipe up = Now Playing,
-    long-press = media sheet.
-  - When the Online tab is playing in the background, the mini player shows the YouTube title, a small accent PillTag
-    "YOUTUBE", and play/pause (next only if the page exposes one).
-  - Hidden on the Videos and Online tabs: the row folds down behind the nav in 240ms (`MotionTokens.emphasized`;
-    instant with reduced motion) and comes back on the other tabs. Playback and the notification are untouched.
-- **Nav** (`NavigationBar`, 64dp + inset, transparent background, `labelBehavior: alwaysShow`):
-  - Destinations: Home, Music, Videos, **Online** (replaces "Explore"), Downloads. Settings opens from a Home app-bar
-    icon.
-  - Selected: a 56x32 Volt `navIndicator` pill with a filled ink icon, and the `label` in onDock.
-  - Unselected: outline icon and label in onDockMuted.
-  - The indicator slides in 240ms with `MotionTokens.emphasized`.
-  - Downloads badge: a 16dp Ice dot with an ink DM Mono count (11/16), shown while downloads are active.
+- **Container:** `InkTheme.of(context)`, `AppTheme.barsOnInk`, `dock` fill over a 24 blur, 24dp top corners, a 1dp
+  `dockLine` top edge with a crimson glint fading out to the corners (the palette's `voltGlow`).
+- **Mini player** (64dp): 44dp art at radius 10; title `bodyStrong` 15/20 in onDock, artist 13/18 in onDockMuted; a 44dp
+  VoltDisc between 48dp previous / next; a 2dp `primary` progress line along the top edge.
+- **Nav:** `NavigationBar` 64dp, transparent; selected = a rose `navIndicator` pill with an ink icon and the label in
+  onDock; unselected onDockMuted; the indicator slides in 240ms.
 
 ### 7.8 Now Playing (the stage, identical in both themes)
 
-- `Theme(data: AppTheme.darkTheme)`, status bar icons light.
-- **Background:** ink plus the item's ArtworkTint backdrop and the existing veil. A real cover gives the neutral
-  ultraviolet glow (`#421E78`); a cover-less item gives its own pair. Cross-fade 600ms.
-- **Top bar:** chevron-down (48), the kicker "NOW PLAYING · 3 / 24" in `overline`/textSecondary (never textMuted on the
-  stage), and `more_vert` (media sheet).
-- **Cover:** square, screen width - 32 (max 360), radius 24, with the hard **6x6 Volt print offset**. No soft shadow.
-- **Text:** `playerTitle` (2 lines), artist in `body`/textSecondary (1 line), and a 48dp heart (Flare when on).
-- **Seek bar** (`SliderTheme`):
-  - Track: height 4 (`RoundedRectSliderTrackShape` draws the active part 2dp taller); active Volt, inactive
-    `#382664`.
-  - Thumb: 14dp `#F6F2FF`, growing to 20dp while dragging, with an 18% Volt overlay.
-  - Times: `tabularFigures` in textSecondary, elapsed at the left, remaining "-2:41" at the right.
-- **Transport:** shuffle 48 (toggle + dot), previous 56 (36 glyph), **VoltDisc 72** with `voltGlow`, next 56, repeat 48.
-- **Footer:** Up next (queue sheet), sleep timer (countdown in `figureLarge` in its sheet; while active, an overline chip
-  "SLEEP 12:30" under the title), output/speed, ⋮.
-- **Light mode:** nothing changes. The stage is the deliberate always-dark signature. Theme mode only changes the
-  sheets that open from it (the queue sheet and media sheet use the app theme).
+Dark theme always. Cover radius 24 with the print offset. Seek bar: track 4 (active 6), `sliderActive` on
+`sliderInactive`, round thumb in `sliderThumb`, 14dp growing to 20dp while dragged, over a soft crimson halo
+(`VoltSliderThumbShape.glowColor` = `voltGlow`, blur 8). Transport: VoltDisc 72 with its glow.
 
 ### 7.9 Video cards and badges
 
-- **Thumbnail:** 16:9 at radius 14.
-- **Overlay badges** (`radiusBadge` 6 chips on `overlay`, `badge` type, onOverlay):
-  - DurationBadge "12:48" at the bottom right.
-  - MediaBadge "Downloaded" with a 16dp Ice glyph at the top left.
-  - **LIVE** is a solid `liveFill` chip with white "LIVE". The dot is removed.
-- **Resume:** a 3dp Volt line on a 3dp `overlay` track along the thumbnail's bottom edge.
-- **Below:** `bodyStrong` title (2 lines), then a `metadata` line (source · size · date) with an accent "VIDEO" PillTag
-  only in mixed lists, and a 48dp ⋮.
-- **PillTag:** tinted = colour text on colour at 14%, radius 6, `badge` type. Filled = on-colour pairs only:
-  voltFill/onVoltFill, accent/onAccent, liveFill/onLive, primary/onPrimary. PillTag gets an `onColor` parameter instead
-  of always using onPrimary.
-- **Video player:** pure `#000000` stage, controls white on `overlay`, Volt scrubber, PiP and audio-only buttons as today.
+Thumbnails 16:9 at radius 14. Overlay badges on `overlay`: DurationBadge, MediaBadge (lavender glyph), LIVE in
+`liveFill`. PillTag: tinted (colour text on colour at 14 %) or filled with on-colour pairs only.
 
-### 7.10 Sheets ("media dropdown"), menus, dialogs, snackbars
+### 7.10 Sheets, menus, dialogs, snackbars
 
-- **Media sheet**: every ⋮ and long-press on a phone opens a modal bottom sheet.
-  - Shell: `surface` fill, top radius 28, a 36x4 `dragHandle` handle, and `scrim` behind; light adds `shadow`.
-    Maximum height 90%, scrollable.
-  - Header: 56dp art (radius 10), `bodyStrong` title (2 lines, `breakableTitle()`) and a `metadata` line, then a
-    `divider`.
-  - Rows: 56dp, 24dp textSecondary icon, `body` label.
-  - Songs: Play next · Add to queue · Add to playlist… · Favourite (filled Flare heart, label "Remove from
-    favourites") · Go to album · Go to artist · Share · Details · divider · **Delete from phone** (`error` icon and
-    label, then a confirm dialog).
-  - Videos: Play · Play as audio · Picture-in-picture · Save offline (if online) · Share · Details · Delete.
-  - Online items: Download · Copy link · Open in Online.
-- **Width 600dp or more, or landscape:** a `PopupMenu` anchored to the ⋮ replaces the sheet. `surfaceElevated`,
-  radius 16, 1dp `outlineVariant` border, 48dp rows, light `shadow`.
-- **Queue sheet**: the same shell. Rows show `index` and a 24dp `dragHandle` reorder grip; the current row gets the 3dp
-  `primary` bar.
-- **Dialogs:**
-  - Shell: `surfaceElevated`, radius 28, padding 24.
-  - Title: `sectionTitle`, app strings only, such as "Delete download?".
-  - Body: `body`/textSecondary, where user content goes (through `breakableTitle()`).
-  - Actions: a TextButton plus a FilledButton confirm, or a TextButton in `error` for destructive confirms.
-- **Snackbars:**
-  - Floating, radius 16, height 48, 16 start padding.
-  - `snackbar` fill with `onSnackbar` body 15/20 text and a `snackbarAction` (Volt) action.
-  - Dark adds a 1dp `divider` edge; light adds `shadow`.
-  - Bottom margin = Ink Dock height + 8, so they never cover the controls.
-- **Tooltips:** `snackbar`/`onSnackbar` fill, `caption` text, radius 8.
+- **Bottom sheets:** `surface`, top radius 28, 36x4 `dragHandle`, `scrim` behind; a 1dp `divider` edge on ink, elevation
+  6 shadow on paper.
+- **Menus:** `surfaceElevated`, radius 16, 1dp `outlineVariant` border, `body` items.
+- **Dialogs:** `surfaceElevated`, radius 28, `sectionTitle` title, `body` / textSecondary content; hairline on ink,
+  shadow on paper.
+- **Snackbars:** floating, radius 16, 16dp side insets, `snackbar` / `onSnackbar` body 15/20, `snackbarAction`; hairline
+  on ink, shadow on paper.
+- **Tooltips:** `snackbar` fill, `caption` text, radius 8.
 
 ### 7.11 Inputs and controls
 
-- **Search field:**
-  - Stadium, 48dp. Fill `surfaceElevated` (dark) or `#FFFFFF` with a 1dp `outline` (light).
-  - Leading search glyph in textSecondary; hint `body` in textMuted.
-  - Focus: a 2dp `focusRing` border. Cursor and selection handles `primary`; selection highlight `primary` at 30%.
-- **Form fields:** radius 16, same fill. Error: a 1.5dp `error` border plus a `caption` error line with a 16dp error
-  icon.
-- **Switch:**
+- **Text fields:** filled (`surfaceElevated` on ink, `surface` on paper), radius 16, 16dp padding; enabled edge 1dp
+  `divider` (ink) / `outline` (paper); **focus ring 2dp `primary`** (rose on ink, wine on paper); error 1.5dp / 2dp
+  `error`. Cursor and handles `primary`, selection `primary` at 30 %.
+- **Switch:** on = `primary` track, `onPrimary` thumb with a check; off = `sliderInactive` track, 1.5dp `outline`, textMuted
+  thumb. Disabled at 38 %.
+- **Checkbox:** radius 6, `primary` fill and 2dp edge when on, `onPrimary` check; 2dp `outline` when off; crimson wash.
+- **Radio:** `primary` when selected, `outline` otherwise, disabled at 38 %, crimson wash.
+- **Sliders:** as the seek bar (7.8): crimson / rose active track, round thumb with the glow on ink only.
 
-  | State | Dark | Light |
-  |---|---|---|
-  | On | Volt track, ink thumb with a check icon | Ultraviolet track, white thumb with a check icon |
-  | Off | `sliderInactive` track, 1.5dp `outline` border, textMuted thumb | same roles |
+### 7.12 Progress
 
-- **Checkbox / radio:** `primary` fill with an `onPrimary` mark.
-- **Sliders** (volume, speed): `sliderActive` / `sliderInactive` / `sliderThumb`, track 4 (active 6).
-
-### 7.12 Progress and seek bars
-
-- **Linear:** 4dp, stadium ends, `primary` on `surfacePressed`; download rows use the same.
-- **Page-load:** 2dp indeterminate `primary` line, no track (Online toolbar).
-- **Circular:** 3dp stroke, `primary`.
-- **Seek bars:** see Now Playing.
-- **Mini player:** 2dp Volt on `dockLine`.
-- **Continue slab:** 3dp ink on ink-20%.
+Linear 4dp `primary` on `surfacePressed`; page load 2dp; circular 3dp `primary`; mini player 2dp; Continue slab 3dp.
 
 ### 7.13 Online (YouTube) tab
 
-The app's own chrome around a WebView of `m.youtube.com`. Never recolour the page, never use YouTube's logo or red in
-our chrome.
-
-- **Toolbar background:** dark `background` with a 1dp `divider` bottom edge; light `glass` (blur 24) with a
-  `divider` edge. Both rows collapse when the page scrolls down and come back on scroll up (like Brave).
-- **Row 1, 56dp:**
-
-  | Slot | Spec |
-  |---|---|
-  | Back, forward | 48dp each. Disabled at 38% with no history. |
-  | Address pill | Flexible, 40dp tall, stadium. Fill `surfaceElevated` (dark) or `#FFFFFF` + 1dp `outline` (light). 20dp search glyph and the page title or host in `metadata` textSecondary, 1 line. Tap opens YouTube's own search box (focus the page's search field via JS) or our search sheet. |
-  | Reload | 48dp. Becomes "stop" (close glyph) while loading. |
-  | ⋮ | Reload · YouTube Music · Sign in to YouTube (opens Google's sign-in for YouTube in the tab) · Open Downloads · Background play (switch) · Auto picture-in-picture (switch) · Block ads (switch; a change opens the page again) · Clear site data (confirm dialog; it also signs you out). The sheet is as tall as its rows. |
-
-- **Row 2, the "watch strip"** (52dp), shown on `/watch`, `/shorts/` and `/live` URLs:
-  - It slides down in 240ms.
-  - It is a horizontal list with 16 gutters, 8 gaps, and a 24dp fade at the end hinting more.
-  - Items, in priority order:
-
-    | Item | Spec | Result |
-    |---|---|---|
-    | Download | **VoltButton compact** (40dp, download glyph + "Download") | Sends the canonical URL to Downloads (and the existing format sheet if needed), then snackbar "Sent to Downloads · View". |
-    | Copy link | OutlinedButton compact (link glyph + "Copy link") | Copies `https://youtu.be/<id>` (tracking parameters such as `si`, `pp`, `feature` stripped), then snackbar "Link copied". Skip the snackbar on Android 13+, where the system shows its own clipboard confirmation. |
-    | Picture-in-picture | OutlinedButton compact (PiP glyph + "PiP") | Enters PiP now. If PiP is off in system settings, snackbar "Picture-in-picture is off · Settings". |
-    | Background play | FilterChip toggle; selected = Volt sticker + check | Keeps audio playing with the screen off or the app in the background. |
-    | Auto PiP | FilterChip toggle; selected = Volt sticker + check | Enters PiP automatically when leaving the app during a video. |
-
-  - Both toggles are also in ⋮ and in Settings → Online. Defaults: Background play on, Auto PiP on.
-  - Block ads lives only in ⋮ and Settings → Online (not on the strip). Default on.
-- **Loading:** a 2dp `primary` load line under the toolbar.
-- **Offline:** an EmptyHint "You're offline" with a Retry button.
-- **Secure connection blocked** (a certificate the phone does not trust, for the page itself): an EmptyHint
-  "Can't connect securely" (`gpp_bad` icon), "This network is blocking a secure connection to YouTube. Try another
-  Wi-Fi or mobile data.", with a Retry button.
-- **Platform notes** (not visual, listed so the design works):
-
-  | Platform | Needs |
-  |---|---|
-  | Android | `android:supportsPictureInPicture="true"` on the activity; a `mediaPlayback` foreground service while background audio plays; `setAutoEnterEnabled` for Auto PiP on Android 12+ |
-  | iOS | `UIBackgroundModes: audio`; `AVAudioSession` category `.playback`; `WKWebViewConfiguration.allowsInlineMediaPlayback` and `allowsPictureInPictureMediaPlayback = true` |
-  | Both | The media session/notification shows the YouTube title with play/pause |
+The app's chrome around a WebView of `m.youtube.com`: never recolour the page or use YouTube's red or logo. Toolbar
+with back / forward, the address pill, reload and ⋮; the watch strip with a compact VoltButton "Download", outlined
+Copy link / PiP buttons, and FilterChip toggles for Background play and Auto PiP.
 
 ### 7.14 Downloads screen
 
-- **Header:** `display` "Downloads" plus an `overline` summary ("3 ACTIVE · 1.2 GB FREE").
-- **Link input:** a stadium search-style field with a paste IconButton, and a **VoltButton** "Download" under it at
-  full width.
-- **Rows** (SurfaceCard list):
-  - Leading: a 48dp `primaryContainer` tile (radius 14) with a `primary` music glyph or an `accent` video glyph.
-  - Title: `bodyStrong` file name through `breakableTitle()`.
-  - Progress: a 4dp `primary` bar on `surfacePressed`.
-  - Figures: % in `tabularFigures` (textPrimary); speed, size and ETA in `tabularFigures` at 12 (textMuted).
-- **Groups:** Active, Queued / Paused, Saved, Failed / Cancelled, each under an `overline` kicker with its full count.
-  Every row that needs the user (running, waiting, paused, failed, cancelled) always shows.
-- **Saved preview:** every saved file is also in Videos or Music, so the Saved group shows only the newest 5 for the
-  chosen kind chip, newest first by when each one finished. Under them a centred TextButton, "Show all 23 saved"
-  with a trailing `expand_more` glyph, opens the rest in place below it and becomes "Show less" (`expand_less`), so
-  the toggle never moves. Semantics: a button labelled "Show all 23 saved downloads" / "Show less saved downloads"
-  with an expanded state. Open or closed lasts for the app run only (no setting). Chip and header counts stay whole.
-- **States** (icon + text, never colour alone):
-
-  | State | Shown as |
-  |---|---|
-  | Queued | `warning` schedule icon + "Queued" |
-  | Paused | textSecondary pause icon + "Paused" |
-  | Saved | `success` check + "Saved" |
-  | Failed | `error` icon + "Failed" + a Retry TextButton |
+`display` header with an `overline` summary; the link field with a full-width VoltButton; SurfaceCard rows with a 4dp
+`primary` progress bar and `tabularFigures`; groups under `overline` kickers; states always icon + word.
 
 ### 7.15 Empty states
 
-- `EmptyHint` keeps its layout:
-  - An 84dp halo (`primaryBase` at 28% → 4%) holding a 38dp `primary` icon.
-  - A `sectionTitle` headline and a `body`/textSecondary message.
-  - One action: a VoltButton if the action plays or gets media, else a FilledButton.
-- Copy is short and friendly ("No songs yet", "Paste a link to save a video").
-- An optional `overline` kicker goes above the headline.
+`EmptyHint`: an 84dp halo (`primaryBase` 28 % to 4 % with a 1dp `primaryBase` 22 % ring) holding a 38dp `primary` icon,
+an optional `overline` kicker, a `sectionTitle` headline and a `body` / textSecondary message; one action at most (a
+VoltButton for play / get, else a FilledButton).
 
 ### 7.16 App icon and splash
 
-- **Adaptive icon:** background `#421E78` (pubspec `adaptive_icon_background: "#421E78"`, was `#0B0D12`). Foreground is
-  a Volt play-bolt (a play triangle cut by a lightning notch) with a 2dp ink keyline. The monochrome (themed) icon is
-  the same glyph silhouette.
-- **iOS icon:** a full-bleed `#421E78 → #180A2E` diagonal with the Volt glyph.
-- **Android 12+ splash:** `windowSplashScreenBackground #180A2E`, icon background `#421E78`, in both themes.
+The play-bolt: a rounded play triangle split by a lightning notch, crimson `#CC324C` with a 2dp near-black
+`#0B0B0D` keyline, a thin rose `#FF6E86` rim on its upper-left edges and a small milk `#FFF3E6` glint. Drawn by
+`assets/icon/draw_icon.py` (Pillow, 4x supersampled):
 
-### 7.17 Playback behaviour (the basics have to work)
+- `app_icon.png`: 1024 full bleed on a `#0B0B0D` (top left) to `#4A0F24` (bottom right) diagonal, no alpha (iOS, legacy).
+- `app_icon_foreground.png`: the glyph on transparent, inside the 66dp safe circle; `adaptive_icon_background` `#0B0B0D`.
+- `app_icon_monochrome.png`: the glyph silhouette in white for themed icons.
 
-- **Previous:** if position is over 3s, restart the track; otherwise go to the previous item.
-- **Next:** at the end of the queue with repeat off, disabled.
-- **Notification / lock screen / Bluetooth / headset** (`audio_service`): previous, play/pause and next, with compact
-  actions `[0, 1, 2]` on Android and `MPRemoteCommandCenter` on iOS. They mirror the mini player exactly.
-- **Haptics:** selection click on swipe-skip; light impact on favourite.
+Regenerate with `python -I assets/icon/draw_icon.py assets/icon` then `dart run flutter_launcher_icons`. The launch
+screen (`launch_background.xml`, iOS `LaunchScreen.storyboard`) and the Android 12+ splash are `#0B0B0D`
+(`mediahub_canvas`) in both system themes; the running window is white / `#0B0B0D` (`mediahub_window`). Settings →
+About shows the icon in miniature with the same diagonal and crimson glyph.
+
+### 7.17 Playback behaviour
+
+Previous restarts after 3s; next is disabled at the queue end with repeat off; the notification, lock screen and
+headset mirror the mini player; selection haptic on swipe-skip, light impact on favourite.
 
 ---
 
@@ -868,58 +594,21 @@ our chrome.
 
 ### 8.1 What changes besides colour
 
-| Thing | Dark | Light |
+| Thing | Dark (Sindur) | Light (Sindur paper) |
 |---|---|---|
-| Brand reading colour (`primary`) | Volt | Ultraviolet ink `#5A32D6` |
-| Volt fills | Plain | Always with the 1.5dp ink edge (the sticker) |
-| FilledButton | Volt / ink | Ultraviolet / white |
-| Depth | Tone steps, card hairlines, `voltGlow` under the stage play disc | Card hairlines + soft `shadow` on sheets, dialogs, menus, snackbars; no glows |
-| Print offset | Volt | Ink |
-| Hero | Ultraviolet bloom | Lavender wash |
-| Artwork deep stops | Melt into ink | Lifted one step |
-| ArtworkTint surface recipe | lerp deep → ink | lerp top → paper (section 3) |
-| Snackbar | `#2B1A50` | Ink `#180A2E` (matches the dock) |
-| YouTube toolbar | Solid ink | Glass paper |
+| Brand reading colour (`primary`) | Rose `#FF6E86` | Wine `#81021F` |
+| Volt fills | Crimson `#CC324C`, plain, with the crimson glow | Crimson with the 1.5dp ink edge, no glow |
+| FilledButton | Rose / ink | Wine / white |
+| Depth | Tone steps, hairlines, crimson glows | Soft ink shadows on cards, sheets, dialogs, menus, snackbars |
+| Text-field edge | `divider` hairline | `outline` |
 | Ink Dock, Now Playing, video player | Ink | **Ink (unchanged)** |
 
 ### 8.2 Theme mode and system bars
 
-- **Theme mode:** `MaterialApp(theme: AppTheme.lightTheme, darkTheme: AppTheme.darkTheme, themeMode: ThemeMode.system)`.
-  Settings → Appearance (System / Dark / Light, default System) is built: `themeMode` reads
-  `themeModeSettingProvider`, so a choice applies at once (section 10.1).
-- **Edge-to-edge:** at startup, `SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)` (enforced on Android 15
-  anyway).
-- **System bar styles.** Flutter reads the `AnnotatedRegion` at the top of the screen for the status bar and at the
-  bottom for the Android navigation bar, so wrapping the Ink Dock is enough to keep the gesture bar light over ink.
-
-```dart
-const _barsOnInk = SystemUiOverlayStyle(
-  statusBarColor: Colors.transparent,
-  statusBarIconBrightness: Brightness.light,   // Android: light icons
-  statusBarBrightness: Brightness.dark,        // iOS: light content
-  systemNavigationBarColor: Colors.transparent,
-  systemNavigationBarIconBrightness: Brightness.light,
-  systemNavigationBarContrastEnforced: false,
-);
-const _barsOnPaper = SystemUiOverlayStyle(
-  statusBarColor: Colors.transparent,
-  statusBarIconBrightness: Brightness.dark,
-  statusBarBrightness: Brightness.light,
-  systemNavigationBarColor: Colors.transparent,
-  systemNavigationBarIconBrightness: Brightness.dark,
-  systemNavigationBarContrastEnforced: false,
-);
-```
-
-Where each style applies:
-
-- `AppBarTheme.systemOverlayStyle`: `_barsOnInk` in the dark theme, `_barsOnPaper` in the light theme. Screens without
-  an AppBar wrap their body in `AnnotatedRegion` with the same value.
-- The Ink Dock wraps itself in `AnnotatedRegion(value: _barsOnInk)`, so the Android nav bar icons are light wherever
-  the dock is visible, in both themes. Full-screen light routes without the dock fall back to `_barsOnPaper`.
-- Now Playing and the video player use `_barsOnInk` in both themes. Fullscreen landscape video keeps today's
-  `immersiveSticky`.
-- iOS draws the home indicator itself, adapting to the content.
+- `MaterialApp(theme: AppTheme.lightTheme, darkTheme: AppTheme.darkTheme, themeMode: ...)`; Settings → Appearance
+  (System / Dark / Light / Bijuli Classic).
+- Edge-to-edge at startup. `AppBarTheme.systemOverlayStyle` is `AppTheme.barsOnInk` on ink and `AppTheme.barsOnPaper` on
+  paper; the Ink Dock, Now Playing and the video player always use `barsOnInk`.
 
 ---
 
@@ -927,25 +616,23 @@ Where each style applies:
 
 **Do**
 
-- Use `primary` for any brand-coloured text, icon, track or focus ring. It is readable in both themes.
-- Use `VoltButton`, `VoltDisc`, `VoltSlab` (or the chip theme) for every Volt fill. They draw the ink edge on paper.
-- Keep Volt for "play" and "get" actions (Play, Play all, Download, Save offline, Continue) and selection.
-- Set anything named by a file, tag, URL or person in Anek (`greeting`, `screenTitle`, `playerTitle`, `cardTitle`) or
-  Atkinson. Pass file-style names through `breakableTitle()`.
-- Pair every state with an icon and a word: check + "Saved", error icon + "Failed", dot + toggled glyph.
-- Use textSecondary (not textMuted) on artwork tints, heroes and the stage.
+- Use `primary` for brand text, icons, tracks and focus rings; it is readable in both themes.
+- Use `VoltButton`, `VoltDisc`, `VoltSlab` (or the chip theme) for every crimson fill; they draw the ink edge on paper
+  and the glow on ink. Use `TonalIconButton` for round secondary actions.
+- Keep crimson fills for "play" and "get" actions and selection.
+- Set anything named by a file, tag, URL or person in Poppins roles; pass file-style names through `breakableTitle()`.
+- Pair every state with an icon and a word.
+- Run every press animation through `MotionTokens.duration` so reduced motion is instant.
 - Test both palettes, at `textScaler` 1.3, on 320 and 360dp, with Nepali titles.
 
 **Don't**
 
-- Don't put Volt (`voltFill`) as text or icon colour on paper (1.05:1), or ship a Volt fill on paper without the edge.
-- Don't use Unbounded for user content, below 18sp, or in rows. Don't use Anek below 20sp.
-- Don't add `letterSpacing` to any style that can carry user content (it breaks Devanagari).
+- Don't ship a crimson fill on paper without the ink edge, or a glow on paper.
+- Don't use Fraunces for user content, below 18sp, or in rows (it has no Devanagari).
+- Don't add `letterSpacing` to any style that can carry user content.
 - Don't give `filledButtonTheme` colours (it would repaint every tonal button).
-- Don't use Ice as a large fill, nav indicator or big icon (it is near Amazon Music's cyan), or Flare for anything but
-  hearts (near Apple Music).
+- Don't add glows beyond `voltGlow` (VoltButton, the stage disc, slider thumbs, the dock glint), or any pulse.
 - Don't recolour the YouTube page or copy YouTube's red or logo into our chrome.
-- Don't add soft glows, pulses or coloured shadows. Depth is tone steps, hairlines and the one hard print offset.
 - Don't bring back `AppColors` `const` reads in new code.
 
 ---

@@ -21,6 +21,7 @@ import 'package:mediahub/app/app.dart';
 import 'package:mediahub/app/router.dart';
 import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
+import 'package:mediahub/app/theme/ink_theme.dart';
 import 'package:mediahub/core/logging/diagnostics_service.dart';
 import 'package:mediahub/core/storage/settings_store.dart';
 import 'package:mediahub/data/database/app_database.dart';
@@ -294,7 +295,7 @@ void main() {
   }
 
   group('Settings → Appearance', () {
-    setUp(() => SettingsStore.instance.setStringList(ThemeModeSettingNotifier.prefKey, const []));
+    setUp(() => SettingsStore.instance.setStringList(AppearanceSettingNotifier.prefKey, const []));
 
     Future<ProviderContainer> pump(WidgetTester tester) async {
       final handler = _handler();
@@ -312,19 +313,26 @@ void main() {
       return container;
     }
 
-    RadioListTile<ThemeMode> option(WidgetTester tester, ThemeMode mode) =>
-        tester.widget<RadioListTile<ThemeMode>>(find.byKey(ValueKey('appearance_${mode.name}')));
+    RadioListTile<AppearanceChoice> option(WidgetTester tester, AppearanceChoice choice) =>
+        tester.widget<RadioListTile<AppearanceChoice>>(find.byKey(ValueKey('appearance_${choice.name}')));
 
-    testWidgets('follows the phone by default', (tester) async {
+    RadioGroup<AppearanceChoice> group(WidgetTester tester) =>
+        tester.widget<RadioGroup<AppearanceChoice>>(find.byType(RadioGroup<AppearanceChoice>));
+
+    testWidgets('follows the phone by default; four choices, Bijuli Classic last', (tester) async {
       final c = await pump(tester);
+      expect(c.read(appearanceSettingProvider), AppearanceChoice.system);
       expect(c.read(themeModeSettingProvider), ThemeMode.system);
       expect(find.text('Appearance'), findsOneWidget);
-      for (final label in ['System', 'Dark', 'Light']) {
+      for (final label in ['System', 'Dark', 'Light', 'Bijuli Classic']) {
         expect(find.text(label), findsOneWidget);
       }
-      final group = tester.widget<RadioGroup<ThemeMode>>(find.byType(RadioGroup<ThemeMode>));
-      expect(group.groupValue, ThemeMode.system);
-      expect(option(tester, ThemeMode.system).value, ThemeMode.system);
+      expect(find.text('The original lime-on-violet look. Always dark.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('appearance_classic')), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const ValueKey('appearance_classic')), matching: find.byIcon(Icons.bolt_outlined)),
+          findsOneWidget);
+      expect(group(tester).groupValue, AppearanceChoice.system);
+      expect(option(tester, AppearanceChoice.system).value, AppearanceChoice.system);
     });
 
     testWidgets('a choice applies at once and is saved', (tester) async {
@@ -332,13 +340,20 @@ void main() {
       await tester.tap(find.text('Light'));
       await tester.pump();
       expect(c.read(themeModeSettingProvider), ThemeMode.light);
-      expect(SettingsStore.instance.getStringList(ThemeModeSettingNotifier.prefKey), ['light']);
-      expect(tester.widget<RadioGroup<ThemeMode>>(find.byType(RadioGroup<ThemeMode>)).groupValue, ThemeMode.light);
+      expect(SettingsStore.instance.getStringList(AppearanceSettingNotifier.prefKey), ['light']);
+      expect(group(tester).groupValue, AppearanceChoice.light);
 
       await tester.tap(find.text('Dark'));
       await tester.pump();
       expect(c.read(themeModeSettingProvider), ThemeMode.dark);
-      expect(SettingsStore.instance.getStringList(ThemeModeSettingNotifier.prefKey), ['dark']);
+      expect(SettingsStore.instance.getStringList(AppearanceSettingNotifier.prefKey), ['dark']);
+
+      await tester.tap(find.text('Bijuli Classic'));
+      await tester.pump();
+      expect(c.read(appearanceSettingProvider), AppearanceChoice.classic);
+      expect(c.read(themeModeSettingProvider), ThemeMode.dark, reason: 'Bijuli Classic is always dark');
+      expect(SettingsStore.instance.getStringList(AppearanceSettingNotifier.prefKey), ['classic']);
+      expect(group(tester).groupValue, AppearanceChoice.classic);
     });
 
     testWidgets('MediaHubApp hands the choice to MaterialApp.themeMode, and it applies at once', (tester) async {
@@ -359,28 +374,68 @@ void main() {
       expect(app().darkTheme, same(AppTheme.darkTheme));
       expect(shown(), Brightness.dark, reason: 'System follows the dark phone');
 
-      c.read(themeModeSettingProvider.notifier).set(ThemeMode.light);
+      c.read(appearanceSettingProvider.notifier).set(AppearanceChoice.light);
       await tester.pumpAndSettle();
       expect(app().themeMode, ThemeMode.light);
       expect(shown(), Brightness.light);
 
       tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
-      c.read(themeModeSettingProvider.notifier).set(ThemeMode.dark);
+      c.read(appearanceSettingProvider.notifier).set(AppearanceChoice.dark);
       await tester.pumpAndSettle();
       expect(app().themeMode, ThemeMode.dark);
       expect(shown(), Brightness.dark, reason: 'Dark holds on a light phone');
 
-      c.read(themeModeSettingProvider.notifier).set(ThemeMode.system);
+      c.read(appearanceSettingProvider.notifier).set(AppearanceChoice.system);
       await tester.pumpAndSettle();
       expect(shown(), Brightness.light, reason: 'System follows the phone again');
     });
 
+    testWidgets('Bijuli Classic: darkTheme is the classic theme, always dark, and InkTheme follows', (tester) async {
+      final router = GoRouter(routes: [GoRoute(path: '/', builder: (c, s) => const Scaffold(body: Text('page')))]);
+      addTearDown(router.dispose);
+      final c = ProviderContainer(overrides: [routerProvider.overrideWithValue(router)]);
+      addTearDown(c.dispose);
+      tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
+      addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+      await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const MediaHubApp()));
+      await tester.pumpAndSettle();
+
+      MaterialApp app() => tester.widget<MaterialApp>(find.byType(MaterialApp));
+      BuildContext page() => tester.element(find.text('page'));
+      expect(InkTheme.of(page()), same(AppTheme.darkTheme));
+
+      c.read(appearanceSettingProvider.notifier).set(AppearanceChoice.classic);
+      await tester.pumpAndSettle();
+      expect(app().themeMode, ThemeMode.dark);
+      expect(app().darkTheme, same(AppTheme.classicTheme));
+      expect(Theme.of(page()).extension<AppPalette>(), same(AppPalette.classic), reason: 'dark on a light phone');
+      expect(InkTheme.of(page()), same(AppTheme.classicTheme));
+      expect(InkTheme.paletteOf(page()), same(AppPalette.classic));
+
+      c.read(appearanceSettingProvider.notifier).set(AppearanceChoice.light);
+      await tester.pumpAndSettle();
+      expect(app().darkTheme, same(AppTheme.darkTheme));
+      expect(InkTheme.of(page()), same(AppTheme.darkTheme), reason: 'the dock is Sindur dark again');
+      expect(Theme.of(page()).extension<AppPalette>(), same(AppPalette.light));
+    });
+
     testWidgets('a saved choice is read back; anything unknown means System', (tester) async {
-      await SettingsStore.instance.setStringList(ThemeModeSettingNotifier.prefKey, ['dark']);
+      await SettingsStore.instance.setStringList(AppearanceSettingNotifier.prefKey, ['dark']);
       final c = await pump(tester);
       expect(c.read(themeModeSettingProvider), ThemeMode.dark);
-      expect(ThemeModeSettingNotifier.decode(['sepia']), ThemeMode.system);
-      expect(ThemeModeSettingNotifier.decode(const []), ThemeMode.system);
+      expect(AppearanceSettingNotifier.decode(['sepia']), AppearanceChoice.system);
+      expect(AppearanceSettingNotifier.decode(const []), AppearanceChoice.system);
+      expect(AppearanceSettingNotifier.decode(['system']), AppearanceChoice.system);
+      expect(AppearanceSettingNotifier.decode(['light']), AppearanceChoice.light);
+      expect(AppearanceSettingNotifier.decode(['classic']), AppearanceChoice.classic);
+    });
+
+    testWidgets('a saved Bijuli Classic choice persists across a restart', (tester) async {
+      await SettingsStore.instance.setStringList(AppearanceSettingNotifier.prefKey, ['classic']);
+      final c = await pump(tester);
+      expect(c.read(appearanceSettingProvider), AppearanceChoice.classic);
+      expect(c.read(themeModeSettingProvider), ThemeMode.dark);
+      expect(group(tester).groupValue, AppearanceChoice.classic);
     });
   });
 }

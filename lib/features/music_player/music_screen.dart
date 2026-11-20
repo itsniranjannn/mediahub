@@ -342,7 +342,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           SliverFillRemaining(
             hasScrollBody: false,
             child: EmptyStateWidget(
-              icon: Icons.music_off_outlined,
+              icon: Icons.music_off_rounded,
               title: searching ? 'No matching songs' : 'No songs yet',
               message: searching
                   ? 'No songs matching "${state.searchQuery}".'
@@ -626,7 +626,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
       key: ValueKey('liked$_retry'),
       stream: repo.watchFavorites(searchQuery: query),
       builder: (context, snapshot) {
-        if (snapshot.hasError) return _gridError('favorites', 'your liked songs');
+        if (snapshot.hasError) return _gridError('favorites', 'your favourites');
         if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
           return const _TabScrollView(storageKey: 'favorites', slivers: [_LoadingSliver()]);
         }
@@ -639,9 +639,9 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                 hasScrollBody: false,
                 child: EmptyHint(
                   icon: Icons.favorite_border_rounded,
-                  title: query.isNotEmpty ? 'No matching liked songs' : 'No liked songs yet',
+                  title: query.isNotEmpty ? 'No matching favourites' : 'No favourites yet',
                   message: query.isNotEmpty
-                      ? 'No liked songs matching "$query".'
+                      ? 'No favourites matching "$query".'
                       : 'Tap the heart on any song to keep it here.',
                 ),
               ),
@@ -656,7 +656,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           slivers: [
             SliverToBoxAdapter(
               child: _ListToolbar(
-                label: _count(liked.length, 'liked song', 'liked songs'),
+                label: _count(liked.length, 'favourite', 'favourites'),
                 actions: [
                   VoltButton.compact(
                     icon: Icons.play_arrow_rounded,
@@ -778,7 +778,7 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-/// The tab masthead: "Music" in `display` (Unbounded), a one-line subtitle
+/// The tab masthead: "Music" in `display` (Fraunces), a one-line subtitle
 /// and optional icon actions.
 class _MusicHeader extends StatelessWidget {
   final List<Widget> actions;
@@ -789,13 +789,16 @@ class _MusicHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final type = context.typography;
     return Padding(
-      padding: EdgeInsetsDirectional.fromSTEB(
-        AppSpacing.lg16,
-        AppSpacing.xl20,
-        actions.isEmpty ? AppSpacing.lg16 : AppSpacing.xs4,
-        AppSpacing.md12,
-      ),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.md12, AppSpacing.lg16, AppSpacing.md12),
+      child: EntranceFade(
+        child: HeroBand(
+          padding: EdgeInsetsDirectional.fromSTEB(
+            AppSpacing.xl20,
+            AppSpacing.lg16,
+            actions.isEmpty ? AppSpacing.xl20 : AppSpacing.xs4,
+            AppSpacing.lg16,
+          ),
+          child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
@@ -818,6 +821,8 @@ class _MusicHeader extends StatelessWidget {
           ),
           ...actions,
         ],
+          ),
+        ),
       ),
     );
   }
@@ -1287,7 +1292,7 @@ class _ArtistAvatar extends StatelessWidget {
       child: ExcludeSemantics(
         child: Text(
           initial,
-          // A letter of the artist's name: Anek draws Latin and Devanagari
+          // A letter of the artist's name: Poppins draws Latin and Devanagari
           // alike. White, like every glyph on a cover gradient.
           style: context.typography.greeting.copyWith(
             fontSize: size * 0.4,

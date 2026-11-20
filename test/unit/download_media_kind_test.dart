@@ -423,7 +423,7 @@ void main() {
 
     // Review finding: "Original audio" on a site with no sound-only file
     // (TikTok, many X, Facebook and Instagram links) saves a file with
-    // pictures; the repair moved such songs out of Music (and Liked songs).
+    // pictures; the repair moved such songs out of Music (and Favourites).
     test('a web-link download saved as sound stays in Music, even with a picture track', () async {
       final tiktok = write('dance.mp4', _mp4(['vide', 'soun']));
       await addMedia('dl_x1700000000431', tiktok.path, 'audio', engine: 'extractor', formatSelector: 'ba/b');

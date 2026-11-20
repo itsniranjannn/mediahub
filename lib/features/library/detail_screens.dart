@@ -299,7 +299,7 @@ class LikedSongsScreen extends ConsumerWidget {
                   hasScrollBody: false,
                   child: EmptyHint(
                     icon: Icons.favorite_border_rounded,
-                    title: 'No liked songs yet',
+                    title: 'No favourites yet',
                     message: 'Tap the heart on any song to keep it here.',
                   ),
                 ),
@@ -327,7 +327,7 @@ class LikedSongsScreen extends ConsumerWidget {
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => _loadError('your liked songs', () => ref.invalidate(_likedSongsProvider)),
+        error: (err, _) => _loadError('your favourites', () => ref.invalidate(_likedSongsProvider)),
       ),
     );
   }
@@ -822,7 +822,7 @@ class _AddSongsSheetState extends ConsumerState<_AddSongsSheet> {
                     if (songs == null) return const Center(child: CircularProgressIndicator());
                     if (songs.isEmpty) {
                       return EmptyHint(
-                        icon: Icons.music_off_outlined,
+                        icon: Icons.music_off_rounded,
                         title: _search.text.isEmpty ? 'No songs yet' : 'No matching songs',
                         message: _search.text.isNotEmpty
                             ? 'No songs matching "${_search.text}".'
@@ -1205,7 +1205,7 @@ class _DetailScaffoldState extends State<_DetailScaffold> {
                   curve: MotionTokens.easeOut,
                   child: Text(
                     widget.title,
-                    // The album, artist or playlist name: Anek, which draws
+                    // The album, artist or playlist name: Poppins, which draws
                     // Latin and Devanagari alike (DESIGN.md 0.5), at a size
                     // that suits the collapsed bar.
                     style: context.typography.cardTitle,

@@ -105,16 +105,17 @@ void main() {
     final id = await runner.enqueue(
       meta: FakeExtractorBackend.sampleMetadata(),
       pageUrl: 'https://music.youtube.com/watch?v=abc',
-      choice: choice('audio_mp3'),
+      choice: choice('audio_mp3_320'),
     );
     await runner.run(id);
 
     final row = await rowOf(id);
     expect(row.state, 'completed');
     expect(row.kind, 'audio');
-    expect(row.qualityLabel, 'MP3');
+    expect(row.qualityLabel, 'MP3 320 kbps');
     expect(row.mimeType, 'audio/mpeg');
     expect(backend.downloadCalls.single['audioFormat'], 'mp3');
+    expect(backend.downloadCalls.single['audioQuality'], '320K');
     final media = await (db.select(db.mediaItemsTable)..where((t) => t.id.equals(row.mediaId!))).getSingle();
     expect(media.mediaType, 'audio');
   });
