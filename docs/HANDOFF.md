@@ -1,6 +1,7 @@
 # Handoff: continue on another machine
 
-Last updated: 2026-11-19. Branch: `feat/post-6-1-fixes`, not merged into `main` yet. The 2026-11-19
+Last updated: 2026-11-20. `feat/post-6-1-fixes` was merged into `main` on 2026-11-20; start new work on
+a fresh branch from `main`. The 2026-11-19
 round (section A0) is committed on top of `cc43807` in five area commits.
 Read `docs/ROADMAP.md` for the goals checklist and security model, `docs/DESIGN.md` for the
 "Bijuli" design system, `docs/IOS.md` for the iPhone, and `docs/DECISIONS.md` (items 15–19) for why
@@ -22,7 +23,7 @@ and D).
 
 ## Set up a new machine
 
-1. `git clone https://github.com/itsniranjannn/mediahub.git`, then `git checkout feat/post-6-1-fixes`.
+1. `git clone https://github.com/itsniranjannn/mediahub.git` (everything is on `main`).
 2. Flutter 3.47.x (Dart 3.13.7+): `flutter pub get`, then `dart analyze lib test` and `flutter test`.
    Node 18+ for the bridge tests: `node --test "test/js/*_test.js"`.
 3. Android: SDK platform 37, build-tools, a JDK (Gradle downloads its own toolchain if needed).
@@ -331,7 +332,7 @@ From earlier rounds:
 2. `tools/device/build_apks.sh family` gives the release APK signed with the family key, which updates
    the real app in place. If the phone has an older build signed with a different key, Android asks to
    uninstall first, and that deletes the app's data.
-3. When the phone check passes: open a PR `feat/post-6-1-fixes` → `main` and merge.
+3. Done: `feat/post-6-1-fixes` was merged into `main` on 2026-11-20.
 
 The 2026-11-19 builds are in the git-ignored `build/` folder: `MediaHub-Test-arm64.apk`
 (`com.mediahub.app.audit`) and `MediaHub-Family-arm64.apk` (`com.mediahub.app`), both release builds

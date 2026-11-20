@@ -1,6 +1,6 @@
 # MediaHub on iPhone
 
-Last updated: 2026-11-19. Branch: `feat/post-6-1-fixes`.
+Last updated: 2026-11-20. Branch: `main`.
 
 **Read this first.** The iPhone app has never been built or run, because building it needs a Mac.
 Everything below comes from reading MediaHub's code and the plugins' own iPhone code, plus tests that
@@ -155,7 +155,7 @@ All of these are in the code with tests that act as an iPhone. None has run on a
 3. **CocoaPods**: `brew install cocoapods` (or `sudo gem install cocoapods`). It is needed even though
    the project also uses Swift Package Manager: `flutter_inappwebview_ios` (the Online tab) ships only a
    CocoaPods recipe.
-4. `git clone https://github.com/itsniranjannn/mediahub.git`, `git checkout feat/post-6-1-fixes`, then
+4. `git clone https://github.com/itsniranjannn/mediahub.git`, then
    `flutter pub get`.
 5. **Do not start with `cd ios && pod install`.** There is no `ios/Podfile` yet; Flutter writes it on
    the first build. Run `flutter build ios --release` (or, with the iPhone plugged in,

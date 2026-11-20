@@ -4,8 +4,7 @@ Status: final spec for the full redesign (Android + iOS, dark + light, theme fol
 Written 2026-11-17. Replaces "Midnight Violet" (`AppColors` near-black blue + violet + teal, Inter everywhere).
 
 Visual specimen with both themes side by side (open in a browser; fonts load from GitHub):
-`C:/Users/NIRANJ~1.KAT/AppData/Local/Temp/claude/74ef1ad76cd92579/a5efaf5b-88c3-4c58-bb08-e9db94fe4afd/scratchpad/design_dir/specimen.html`
-(a scratch folder, so copy it somewhere permanent if you want to keep it).
+`docs/design-specimen.html`.
 
 ---
 
@@ -277,8 +276,8 @@ floor 4.5. Full white on deep stops 10.40 or more. Volt itself is never a cover 
 
 ## 4. Verified contrast
 
-Computed with `C:/Users/NIRANJ~1.KAT/AppData/Local/Temp/claude/74ef1ad76cd92579/a5efaf5b-88c3-4c58-bb08-e9db94fe4afd/scratchpad/design_dir/final/contrast_final.py`
-(palette in `palette_final.py`, full output in `contrast_final_report.md` in that folder; run with `python -I contrast_final.py`).
+First computed with the designer's one-off script; the same checks now run in `flutter test` as
+`test/unit/palette_contrast_test.dart` and `test/unit/card_contrast_test.dart`, which fail if a pair drops below its target.
 
 - Method: WCAG 2.x relative luminance. Alpha colours are composited over the named backdrop first. Flutter's
   `Color.lerp` is reproduced for tints. Colour vision uses Machado 2009 at full severity, compared in CIEDE2000.
