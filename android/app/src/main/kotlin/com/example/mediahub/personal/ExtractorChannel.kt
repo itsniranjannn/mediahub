@@ -99,6 +99,21 @@ class ExtractorChannel(
         // each try is a full yt-dlp run, and many runs in a row make YouTube limit the phone.
         private const val MAX_CLIENT_TRIES = 3
 
+        // The yt-dlp inside youtubedl-android 0.18.1 (used when no version was ever recorded).
+        private const val LIBRARY_YTDLP_VERSION = "2025.11.12"
+        private val YTDLP_VERSION_REGEX = Regex("^\\d{4}\\.\\d{1,2}\\.\\d{1,2}(\\.\\d+)?$")
+
+        /** yt-dlp versions ("2026.10.26", "2026.10.26.1") compared part by part. */
+        fun compareYtDlpVersions(a: String, b: String): Int {
+            val pa = a.split('.').map { it.toIntOrNull() ?: 0 }
+            val pb = b.split('.').map { it.toIntOrNull() ?: 0 }
+            for (i in 0 until maxOf(pa.size, pb.size)) {
+                val c = (pa.getOrElse(i) { 0 }).compareTo(pb.getOrElse(i) { 0 })
+                if (c != 0) return c
+            }
+            return 0
+        }
+
         // Address-family probe before a yt-dlp run (see addressFamilyOption).
         private const val FAMILY_PROBE_MS = 1500
         private const val FAMILY_CACHE_MS = 5 * 60 * 1000L
@@ -262,6 +277,7 @@ class ExtractorChannel(
     private fun handleInit(result: MethodChannel.Result) {
         executor.execute {
             // Init unpacks yt-dlp when it is missing: never in the middle of an update.
+            installShippedYtDlpOnce()
             val readLock = engineLock.readLock()
             readLock.lock()
             try {
@@ -279,6 +295,7 @@ class ExtractorChannel(
 
     private fun handleVersion(result: MethodChannel.Result) {
         executor.execute {
+            installShippedYtDlpOnce()
             val readLock = engineLock.readLock()
             readLock.lock()
             try {
@@ -339,6 +356,7 @@ class ExtractorChannel(
             }
             try {
                 ensureInitialized()
+                installShippedYtDlpLocked()
                 val status = YoutubeDL.getInstance().updateYoutubeDL(
                     context.applicationContext,
                     YoutubeDL.UpdateChannel._STABLE
@@ -381,9 +399,11 @@ class ExtractorChannel(
                     .remove("dlpVersion")
                     .remove("dlpVersionName")
                     .apply()
-                // Unpacks the bundled copy again (it only does so when the file is missing).
+                // Unpacks the library's copy again (it only does so when the file is missing),
+                // then MediaHub's newer shipped copy replaces it.
                 YoutubeDL.getInstance().init_ytdlp(app, ytdlpDir)
                 bundledVersion = null
+                installShippedYtDlpLocked()
                 mainHandler.post { result.success(true) }
             } catch (e: Exception) {
                 mainHandler.post {
@@ -547,6 +567,7 @@ class ExtractorChannel(
         }
 
         executor.execute {
+            installShippedYtDlpOnce()
             val readLock = engineLock.readLock()
             readLock.lock()
             try {
@@ -779,6 +800,7 @@ class ExtractorChannel(
         }
 
         executor.execute {
+            installShippedYtDlpOnce()
             val readLock = engineLock.readLock()
             readLock.lock()
             try {
@@ -938,6 +960,68 @@ class ExtractorChannel(
         } catch (e: Exception) {
             result.error("CANCEL_FAILED", e.localizedMessage ?: "Could not cancel task", null)
         }
+    }
+
+    // --- yt-dlp shipped with MediaHub -----------------------------------------------------
+    // youtubedl-android 0.18.1 carries yt-dlp 2025.11.12, which YouTube no longer serves well
+    // (1080p files fail part-way with HTTP 403). MediaHub ships a newer one in assets/ytdlp
+    // (made by tools/device/update_ytdlp_asset.py from yt-dlp's PyPI package) and puts it in
+    // place of the phone's copy when it is newer (a self-update that is newer still is kept).
+    // The file is only replaced under the engine write lock (Python reads modules from the zip
+    // while it runs), through a temporary file and a rename, and the version is recorded where
+    // the library's updater keeps it, so Update compares against it.
+    @Volatile
+    private var shippedYtDlpChecked = false
+
+    /** Before a run takes the read lock: installs the shipped yt-dlp once per process if newer. */
+    private fun installShippedYtDlpOnce() {
+        if (shippedYtDlpChecked) return
+        val writeLock = engineLock.writeLock()
+        // yt-dlp runs right now: the next run tries again.
+        if (!writeLock.tryLock()) return
+        try {
+            if (!shippedYtDlpChecked) {
+                installShippedYtDlpLocked()
+                shippedYtDlpChecked = true
+            }
+        } catch (e: Exception) {
+            // Never in the way of a run: the copy already there still works.
+            shippedYtDlpChecked = true
+        } finally {
+            writeLock.unlock()
+        }
+    }
+
+    /** With the engine write lock held. True when the shipped copy was put in place. */
+    private fun installShippedYtDlpLocked(): Boolean {
+        val app = context.applicationContext
+        val shipped = try {
+            app.assets.open("ytdlp/version.txt").bufferedReader().use { it.readText().trim() }
+        } catch (e: Exception) {
+            return false
+        }
+        if (!YTDLP_VERSION_REGEX.matches(shipped)) return false
+        ensureInitialized()
+        val prefs = app.getSharedPreferences("youtubedl-android", Context.MODE_PRIVATE)
+        val current = prefs.getString("dlpVersion", null)?.takeIf { YTDLP_VERSION_REGEX.matches(it) }
+            ?: LIBRARY_YTDLP_VERSION
+        if (compareYtDlpVersions(shipped, current) <= 0) return false
+        val dir = File(File(app.noBackupFilesDir, "youtubedl-android"), "yt-dlp")
+        dir.mkdirs()
+        val target = File(dir, "yt-dlp")
+        val tmp = File(dir, "yt-dlp.shipped.tmp")
+        try {
+            app.assets.open("ytdlp/yt-dlp").use { input -> tmp.outputStream().use { input.copyTo(it) } }
+            if (!tmp.renameTo(target)) return false
+        } finally {
+            if (tmp.exists()) tmp.delete()
+        }
+        prefs.edit()
+            .putString("dlpVersion", shipped)
+            .putString("dlpVersionName", "yt-dlp $shipped (shipped with MediaHub)")
+            .apply()
+        bundledVersion = null
+        return true
     }
 
     @Synchronized
