@@ -626,7 +626,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
       key: ValueKey('liked$_retry'),
       stream: repo.watchFavorites(searchQuery: query),
       builder: (context, snapshot) {
-        if (snapshot.hasError) return _gridError('favorites', 'your liked songs');
+        if (snapshot.hasError) return _gridError('favorites', 'your favourites');
         if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting) {
           return const _TabScrollView(storageKey: 'favorites', slivers: [_LoadingSliver()]);
         }
@@ -639,9 +639,9 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                 hasScrollBody: false,
                 child: EmptyHint(
                   icon: Icons.favorite_border_rounded,
-                  title: query.isNotEmpty ? 'No matching liked songs' : 'No liked songs yet',
+                  title: query.isNotEmpty ? 'No matching favourites' : 'No favourites yet',
                   message: query.isNotEmpty
-                      ? 'No liked songs matching "$query".'
+                      ? 'No favourites matching "$query".'
                       : 'Tap the heart on any song to keep it here.',
                 ),
               ),
@@ -656,7 +656,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
           slivers: [
             SliverToBoxAdapter(
               child: _ListToolbar(
-                label: _count(liked.length, 'liked song', 'liked songs'),
+                label: _count(liked.length, 'favourite', 'favourites'),
                 actions: [
                   VoltButton.compact(
                     icon: Icons.play_arrow_rounded,

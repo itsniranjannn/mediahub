@@ -32,6 +32,16 @@ Visual specimen (still showing the Bijuli look) with both themes side by side (o
 
 ---
 
+## Sindur notes (2026-11-20)
+
+- Ink Dock: always an opaque fill behind its 24 dp top corners (page colour; dock colour on Online, so it reads
+  square there). Nav labels follow text size up to 1.3x, then shrink together; icons only as a last resort.
+- Home bento: `VoltTile` shine (diagonal, 14% onVoltFill, 1.4 s every 6 s, none with reduced motion), press 0.97,
+  `PressGlyph` (-0.03 turn, 1.12 scale) on press; small tiles glow in their icon colour on ink only.
+- Settings rows: 32 dp icon slot, 13/18 subtitles, 48 dp minimum.
+- Quality sheet: segmented Video | Audio at the top.
+- Notification placeholder: #4A0A1A to #2A0F26 field, #CC324C to #E89A2C note.
+
 ## 0. Decision record
 
 Three directions were scored by three judges (brand distinctiveness, accessibility, Flutter feasibility):

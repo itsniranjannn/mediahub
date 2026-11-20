@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/theme/motion_tokens.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
@@ -163,11 +164,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ..._railSection('Most played', 'On repeat', _Feed.mostPlayed),
           ..._railSection('Recently added', 'New on this phone', _Feed.recentlyAdded),
           ..._railSection(
-            'Liked',
+            'Favourites',
             'Your hearts',
             _Feed.liked,
             actionLabel: 'See all',
-            actionSemanticLabel: 'See all liked songs',
+            actionSemanticLabel: 'See all Favourites',
             onAction: _openLiked,
           ),
           ..._videoSection(context),
@@ -695,8 +696,8 @@ class _QuickActions extends StatelessWidget {
     final small = tileHeight(context);
     final liked = _BentoTile(
       icon: Icons.favorite_rounded,
-      label: 'Liked',
-      semanticLabel: 'Open Liked songs',
+      label: 'Favourites',
+      semanticLabel: 'Open Favourites',
       fill: palette.surfaceElevated,
       iconColor: palette.favorite,
       labelColor: palette.textPrimary,
@@ -771,6 +772,7 @@ class _QuickActions extends StatelessWidget {
               labelColor: palette.onSecondaryContainer,
               height: small,
               trailing: true,
+              gradient: true,
               onTap: () => context.go('/downloads'),
             ),
           ],
@@ -782,7 +784,11 @@ class _QuickActions extends StatelessWidget {
 
 /// One bento tile: a rounded fill with an icon and a one-line label (the big
 /// tile stacks a large icon over a Fraunces label).
-class _BentoTile extends StatelessWidget {
+///
+/// A press scales it to 0.97 with a ripple and gives the icon a small turn;
+/// on ink a soft glow in the icon's colour sits under it. [gradient] lays a
+/// subtle sheen over the fill (the Downloads strip).
+class _BentoTile extends StatefulWidget {
   final IconData icon;
   final String label;
   final String semanticLabel;
@@ -791,6 +797,7 @@ class _BentoTile extends StatelessWidget {
   final Color labelColor;
   final double height;
   final bool trailing;
+  final bool gradient;
   final VoidCallback onTap;
 
   const _BentoTile({
@@ -803,41 +810,85 @@ class _BentoTile extends StatelessWidget {
     required this.height,
     required this.onTap,
     this.trailing = false,
+    this.gradient = false,
   });
 
   @override
+  State<_BentoTile> createState() => _BentoTileState();
+}
+
+class _BentoTileState extends State<_BentoTile> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (value != _pressed) setState(() => _pressed = value);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final type = context.typography;
     final radius = BorderRadius.circular(AppSpacing.cardRadius);
     final text = Text(
-      label,
-      style: type.button.copyWith(color: labelColor),
+      widget.label,
+      style: type.button.copyWith(color: widget.labelColor),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
     final Widget body = Row(
       children: [
-        Icon(icon, size: 22, color: iconColor),
+        PressGlyph(pressed: _pressed, child: Icon(widget.icon, size: 22, color: widget.iconColor)),
         const SizedBox(width: AppSpacing.sm8),
         Expanded(child: text),
-        if (trailing) Icon(Icons.chevron_right_rounded, color: iconColor),
+        if (widget.trailing) Icon(Icons.chevron_right_rounded, color: widget.iconColor),
       ],
     );
+    // Only a whisper of the icon colour, so the label keeps its contrast.
+    final sheen = widget.gradient
+        ? LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: [widget.fill, Color.alphaBlend(widget.iconColor.withValues(alpha: 0.08), widget.fill)],
+          )
+        : null;
+    final glow = palette.isDark
+        ? [
+            BoxShadow(
+              color: widget.iconColor.withValues(alpha: _pressed ? 0.10 : 0.18),
+              blurRadius: _pressed ? 8 : 16,
+              offset: Offset(0, _pressed ? 2 : 6),
+              spreadRadius: -4,
+            ),
+          ]
+        : const <BoxShadow>[];
     return Semantics(
       button: true,
-      label: semanticLabel,
-      onTap: onTap,
+      label: widget.semanticLabel,
+      onTap: widget.onTap,
       excludeSemantics: true,
-      child: Material(
-        color: fill,
-        borderRadius: radius,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: SizedBox(
-            height: height,
-            width: double.infinity,
-            child: Padding(padding: const EdgeInsets.all(AppSpacing.md12), child: body),
+      child: AnimatedScale(
+        key: const ValueKey('bento_press_scale'),
+        scale: _pressed ? MotionTokens.pressedScale : 1,
+        duration: MotionTokens.duration(context, MotionTokens.micro),
+        curve: MotionTokens.easeOut,
+        child: DecoratedBox(
+          decoration: BoxDecoration(borderRadius: radius, boxShadow: glow),
+          child: Material(
+            color: widget.fill,
+            borderRadius: radius,
+            clipBehavior: Clip.antiAlias,
+            child: Ink(
+              decoration: BoxDecoration(gradient: sheen),
+              child: InkWell(
+                onTap: widget.onTap,
+                onHighlightChanged: _setPressed,
+                child: SizedBox(
+                  height: widget.height,
+                  width: double.infinity,
+                  child: Padding(padding: const EdgeInsets.all(AppSpacing.md12), child: body),
+                ),
+              ),
+            ),
           ),
         ),
       ),

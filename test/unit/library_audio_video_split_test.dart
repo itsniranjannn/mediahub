@@ -1,7 +1,7 @@
 // Audio in Music, video in Videos (P3, task 4). The owner: "video downloads
 // stay in the video section and audio in the music section". One audio and
 // one video download with the same title and channel, both liked and played:
-// Songs, Albums, Artists, Liked songs, the playlist "Add songs" list and the
+// Songs, Albums, Artists, Favourites, the playlist "Add songs" list and the
 // Home song rails show only the song; the Videos tab and the Home video rail
 // show only the video. A phone scan does not mix them either.
 import 'package:drift/drift.dart' hide isNull, isNotNull;
@@ -92,7 +92,7 @@ void main() {
     final artists = await repo.watchArtists().first;
     expect([for (final a in artists) (a.artist, a.songCount)], [('Sajjan Raj Vaidya', 1)], reason: reason);
     expect(ids(await repo.watchArtistSongs('Sajjan Raj Vaidya').first), [song], reason: 'artist page: $reason');
-    expect(ids(await repo.watchFavorites().first), [song], reason: 'Liked songs: $reason');
+    expect(ids(await repo.watchFavorites().first), [song], reason: 'Favourites: $reason');
     expect(ids(await repo.watchFavorites(searchQuery: 'resham').first), [song], reason: reason);
 
     // The Videos tab.

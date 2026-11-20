@@ -77,7 +77,7 @@ void main() {
       expect(s.androidCompactActionIndices, [0, 1, 2], reason: 'the transport stays the compact view');
       final like = s.controls.firstWhere((c) => c.customAction?.name == MusicAudioHandler.actionToggleFavorite);
       expect(like.androidIcon, 'drawable/ic_action_favorite_off');
-      expect(like.label, 'Add to Liked songs');
+      expect(like.label, 'Add to Favourites');
     });
 
     test('the heart toggles the playing song and follows the library', () async {

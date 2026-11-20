@@ -93,7 +93,7 @@ class _FavoriteFeedbackButtonState extends ConsumerState<FavoriteFeedbackButton>
     messenger.showSnackBar(
       SnackBar(
         content: Text(
-          nextFavorite ? 'Added to Liked songs' : 'Removed from Liked songs',
+          nextFavorite ? 'Added to Favourites' : 'Removed from Favourites',
         ),
         behavior: SnackBarBehavior.floating,
         margin: EdgeInsets.only(left: 16, right: 16, bottom: widget.snackBottomMargin),
@@ -114,7 +114,7 @@ class _FavoriteFeedbackButtonState extends ConsumerState<FavoriteFeedbackButton>
   Widget build(BuildContext context) {
     final isFavorite =
         ref.watch(isFavoriteProvider(widget.itemId)).asData?.value ?? widget.isFavorite;
-    final label = isFavorite ? 'Remove from Liked songs' : 'Add to Liked songs';
+    final label = isFavorite ? 'Remove from Favourites' : 'Add to Favourites';
 
     return Semantics(
       label: label,

@@ -1028,7 +1028,7 @@ void main() {
           expect(r.right, lessThanOrEqualTo(clear), reason: '$k ends at ${r.right}, the fade starts at $clear');
         }
         // Save and Copy link are named for screen readers and in a tooltip.
-        expect(find.bySemanticsLabel('Save to Liked songs or a playlist'), findsOneWidget);
+        expect(find.bySemanticsLabel('Save to Favourites or a playlist'), findsOneWidget);
         expect(find.byTooltip('Copy link', skipOffstage: false), findsOneWidget);
         expect(find.byTooltip('Picture-in-picture'), findsOneWidget);
         expect(tester.takeException(), isNull);

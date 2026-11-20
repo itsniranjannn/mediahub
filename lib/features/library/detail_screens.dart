@@ -299,7 +299,7 @@ class LikedSongsScreen extends ConsumerWidget {
                   hasScrollBody: false,
                   child: EmptyHint(
                     icon: Icons.favorite_border_rounded,
-                    title: 'No liked songs yet',
+                    title: 'No favourites yet',
                     message: 'Tap the heart on any song to keep it here.',
                   ),
                 ),
@@ -327,7 +327,7 @@ class LikedSongsScreen extends ConsumerWidget {
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, _) => _loadError('your liked songs', () => ref.invalidate(_likedSongsProvider)),
+        error: (err, _) => _loadError('your favourites', () => ref.invalidate(_likedSongsProvider)),
       ),
     );
   }

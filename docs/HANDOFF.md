@@ -137,6 +137,22 @@ driven on the emulator (B.0), except Block ads (tests only). Nothing has run on 
   sit in a `HeroBand` (heroGradient) with an `EntranceFade` stagger (off with reduced motion); icons are the rounded
   set. App icon: crimson play-bolt on #0B0B0D to #4A0F24 (`assets/icon/draw_icon.py`), splash and launch screen #0B0B0D.
   The Bijuli notes below describe the earlier look.
+- **Owner's round on Sindur (2026-11-20, uncommitted on feat/rebrand)**:
+  - Quality sheet: a Video | Audio switch (Video first). Audio offers "Original · M4A (~N kbps)", "Original · Opus"
+    when the site has both (no re-encode), and MP3 320/256/192/128 kbps (sizes = duration x bitrate). MP3 is stored
+    as `audioFormat` "mp3-320" etc.; `AudioConversion.parse` whitelists codec + bitrate and the runner sends
+    `audioFormat` + `audioQuality` ("320K") to `ExtractorChannel.kt`, which checks `AUDIO_QUALITIES` again
+    (`-x --audio-format mp3 --audio-quality 320K`). Old rows with plain "mp3" keep best VBR ("0"). Audio still lands in Music.
+  - "Liked songs" / "Liked" read "Favourites" (British) in the UI, notification action, snackbars, Online Save;
+    providers, DB columns and the `liked:songs` cover seed are unchanged.
+  - Settings compact: 32 dp leading slots, 12 dp heading padding, rows ~10 dp vertical with density -2 (still >= 48 dp),
+    subtitles 13/18.
+  - Home bento: Shuffle block shine sweep every 6 s (off with reduced motion), Volt glow, press 0.97 + ripple + icon
+    turn (`PressGlyph`); small tiles glow in their icon colour on ink; Downloads strip has a faint sheen.
+  - Dock: opaque backing behind the rounded corners (scaffold colour; dock colour = square look on Online), WebView
+    clipped to its box, bottom inset = max(padding, viewPadding), nav labels capped at 1.3x (icons only if they would
+    drop under 6 dp). Still to check on the Samsung: corners on Online and labels with gesture and 3-button nav.
+  - Notification cover for songs without art: branded wine-to-plum field with a crimson-to-amber note.
 
 ## A. What changed in the previous round
 

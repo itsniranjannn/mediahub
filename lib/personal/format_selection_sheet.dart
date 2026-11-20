@@ -69,29 +69,11 @@ class FormatSelectionSheet extends StatelessWidget {
                 child: _Header(metadata: metadata),
               ),
               Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.lg16,
-                    0,
-                    AppSpacing.lg16,
-                    AppSpacing.lg16,
-                  ),
-                  children: [
-                    if (videoChoices.isNotEmpty) ...[
-                      const _SectionLabel('Video with sound'),
-                      ...videoChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
-                    ],
-                    if (audioChoices.isNotEmpty) ...[
-                      const _SectionLabel('Audio only'),
-                      ...audioChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
-                    ],
-                    if (footnote != null && footnote!.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: AppSpacing.sm8),
-                        child: Text(footnote!, style: AppTypography.of(palette).metadata),
-                      ),
-                  ],
+                child: _SectionedChoices(
+                  videoChoices: videoChoices,
+                  audioChoices: audioChoices,
+                  footnote: footnote,
+                  onSelect: onSelect,
                 ),
               ),
             ],
@@ -258,6 +240,79 @@ class _Header extends StatelessWidget {
   }
 }
 
+/// Which list the sheet shows.
+enum FormatSection { video, audio }
+
+/// "Video" / "Audio" switch at the top (Video first) and the options of the
+/// chosen one. With only one kind on offer, the switch is left out.
+class _SectionedChoices extends StatefulWidget {
+  final List<FormatChoice> videoChoices;
+  final List<FormatChoice> audioChoices;
+  final String? footnote;
+  final void Function(FormatChoice choice) onSelect;
+
+  const _SectionedChoices({
+    required this.videoChoices,
+    required this.audioChoices,
+    required this.footnote,
+    required this.onSelect,
+  });
+
+  @override
+  State<_SectionedChoices> createState() => _SectionedChoicesState();
+}
+
+class _SectionedChoicesState extends State<_SectionedChoices> {
+  late FormatSection _section =
+      widget.videoChoices.isEmpty ? FormatSection.audio : FormatSection.video;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final both = widget.videoChoices.isNotEmpty && widget.audioChoices.isNotEmpty;
+    final audio = _section == FormatSection.audio;
+    final shown = audio ? widget.audioChoices : widget.videoChoices;
+    final footnote = widget.footnote;
+    return ListView(
+      shrinkWrap: true,
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.lg16,
+        AppSpacing.md12,
+        AppSpacing.lg16,
+        AppSpacing.lg16,
+      ),
+      children: [
+        if (both)
+          SegmentedButton<FormatSection>(
+            key: const ValueKey('format-sections'),
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(
+                value: FormatSection.video,
+                label: Text('Video'),
+                icon: Icon(Icons.videocam_rounded),
+              ),
+              ButtonSegment(
+                value: FormatSection.audio,
+                label: Text('Audio'),
+                icon: Icon(Icons.music_note_rounded),
+              ),
+            ],
+            selected: {_section},
+            onSelectionChanged: (s) => setState(() => _section = s.first),
+          ),
+        _SectionLabel(audio ? 'Audio only · saved to Music' : 'Video with sound'),
+        ...shown.map((c) => _ChoiceTile(key: ValueKey('format-${c.id}'), choice: c, onSelect: widget.onSelect)),
+        if (footnote != null && footnote.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.sm8),
+            child: Text(footnote, style: AppTypography.of(palette).metadata),
+          ),
+      ],
+    );
+  }
+}
+
 /// Group kicker ("VIDEO WITH SOUND", "AUDIO ONLY") in the overline role.
 class _SectionLabel extends StatelessWidget {
   final String text;
@@ -304,7 +359,7 @@ class _ChoiceTile extends StatelessWidget {
   final FormatChoice choice;
   final void Function(FormatChoice choice) onSelect;
 
-  const _ChoiceTile({required this.choice, required this.onSelect});
+  const _ChoiceTile({super.key, required this.choice, required this.onSelect});
 
   @override
   Widget build(BuildContext context) {

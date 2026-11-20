@@ -298,11 +298,11 @@ void main() {
         await _pumpHome(tester, theme: theme, songs: songs, videos: [_video()]);
         expect(tester.widget<HeroBand>(find.byType(HeroBand)).glow, isTrue);
         expect(find.bySemanticsLabel('Shuffle all songs'), findsOneWidget);
-        expect(find.bySemanticsLabel('Open Liked songs'), findsOneWidget);
+        expect(find.bySemanticsLabel('Open Favourites'), findsOneWidget);
         expect(find.bySemanticsLabel('Open Online'), findsOneWidget);
         // The tall Shuffle block is as tall as Liked + gap + Online.
         final shuffle = tester.getRect(find.bySemanticsLabel('Shuffle all songs'));
-        final liked = tester.getRect(find.bySemanticsLabel('Open Liked songs'));
+        final liked = tester.getRect(find.bySemanticsLabel('Open Favourites'));
         final online = tester.getRect(find.bySemanticsLabel('Open Online'));
         expect(shuffle.height, moreOrLessEquals(online.bottom - liked.top, epsilon: 1));
         expect(find.text('Recently played'), findsOneWidget);

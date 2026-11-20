@@ -190,7 +190,7 @@ class MediaContextMenu {
   static const double menuRowHeight = 48;
 
   /// The name of the liked-songs list everywhere ("wishlist").
-  static const String likedSongs = 'Liked songs';
+  static const String likedSongs = 'Favourites';
 
   /// The title the sheet, its dialogs and snackbars show: a video without
   /// its file extension, as on the video cards it opens from.
@@ -1170,7 +1170,7 @@ class _LikedSongsRow extends ConsumerWidget {
       minTileHeight: 64,
       leading: const LikedSongsCover(size: 48, borderRadius: AppSpacing.radiusArtSmall),
       title: Text(MediaContextMenu.likedSongs, style: type.bodyStrong, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(liked ? 'Liked' : 'Tap to like', style: type.metadata),
+      subtitle: Text(liked ? 'Favourites' : 'Tap to like', style: type.metadata),
       trailing: _PickMark(selected: liked),
       onTap: () => onTap(liked),
     );

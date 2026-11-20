@@ -119,6 +119,8 @@ class ExtractorChannel(
         private const val FAMILY_CACHE_MS = 5 * 60 * 1000L
 
         private val AUDIO_FORMATS = setOf("mp3", "m4a", "opus", "aac", "flac", "wav")
+        /** yt-dlp --audio-quality values the app may ask for ("0" = best VBR). Nothing else is passed. */
+        private val AUDIO_QUALITIES = setOf("0", "320K", "256K", "192K", "128K")
 
         private val FINAL_EXTS = setOf(
             "mp4", "m4a", "webm", "mkv", "mp3", "opus", "ogg", "aac", "flac", "wav", "mov", "m4v"
@@ -255,12 +257,13 @@ class ExtractorChannel(
                 val outDir = call.argument<String>("outDir")
                 val extractorArgs = call.argument<String>("extractorArgs")
                 val audioFormat = call.argument<String>("audioFormat")
+                val audioQuality = call.argument<String>("audioQuality")?.takeIf { it in AUDIO_QUALITIES } ?: "0"
                 val formatSort = call.argument<String>("formatSort")
                 if (taskId == null || url == null || outDir == null) {
                     result.error("INVALID_ARGUMENT", "Missing required arguments", null)
                     return
                 }
-                handleDownload(taskId, url, formatSelector, formatSort, outDir, extractorArgs, audioFormat, result)
+                handleDownload(taskId, url, formatSelector, formatSort, outDir, extractorArgs, audioFormat, audioQuality, result)
             }
             "cancel" -> {
                 val taskId = call.argument<String>("taskId")
@@ -775,6 +778,7 @@ class ExtractorChannel(
         outDir: String,
         extractorArgs: String?,
         audioFormat: String?,
+        audioQuality: String,
         result: MethodChannel.Result
     ) {
         if (!isHostAllowed(url)) {
@@ -859,7 +863,7 @@ class ExtractorChannel(
                         if (audioFormat != null && audioFormat in AUDIO_FORMATS) {
                             addOption("-x")
                             addOption("--audio-format", audioFormat)
-                            addOption("--audio-quality", "0")
+                            addOption("--audio-quality", if (audioQuality in AUDIO_QUALITIES) audioQuality else "0")
                         } else {
                             // mp4 when the codecs fit it, otherwise mkv (VP9/AV1 + Opus for 1440p/4K).
                             addOption("--merge-output-format", "mp4/mkv")

@@ -781,7 +781,9 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
               Expanded(
                 child: Stack(
                   children: [
-                    Positioned.fill(child: web),
+                    // Clipped to its own box: the page ends above the dock
+                    // and never paints into the dock's corner area.
+                    Positioned.fill(child: ClipRect(child: web)),
                     if (_error != null)
                       Positioned.fill(
                         child: ColoredBox(
@@ -929,7 +931,7 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
         selected: background,
         onSelected: _setBackgroundPlay,
       ),
-      iconAction('online_save', Icons.library_add_rounded, 'Save to Liked songs or a playlist', _save),
+      iconAction('online_save', Icons.library_add_rounded, 'Save to Favourites or a playlist', _save),
       iconAction('online_copy_link', Icons.link_rounded, 'Copy link', _copyLink),
       FilterChip(
         key: const ValueKey('online_autopip_chip'),

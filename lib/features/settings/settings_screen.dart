@@ -22,20 +22,28 @@ import 'theme_mode_setting.dart';
 const String _appVersion = '1.0.0';
 
 /// Width of the leading slot on every row, so all row titles line up with the
-/// card heading text (16 gutter + 40 slot + 12 gap = 68).
-const double _leadingSlot = 40;
+/// card heading text (16 gutter + 32 slot + 12 gap = 60). Compact: 32 dp
+/// icons, rows stay at least 48 dp tall.
+const double _leadingSlot = 32;
 const double _rowTextInset = AppSpacing.lg16 + _leadingSlot + AppSpacing.md12;
 
-/// Corner radius of the 40 dp tiles (card headings, app identity): the tile
+/// Corner radius of the 32 dp tiles (card headings, app identity): the tile
 /// radius of DESIGN.md 7.1.
 const BorderRadius _tileRadius = BorderRadius.all(Radius.circular(AppSpacing.radiusThumb));
 
 /// Space between two cards. The card headings carry the hierarchy, so there
 /// are no separate group labels above the cards.
-const double _cardGap = AppSpacing.xl20;
+const double _cardGap = AppSpacing.lg16;
 
 /// Row titles: the body role a step heavier (app strings, so Poppins).
 TextStyle _rowTitleStyle(AppTextStyles type) => type.body.copyWith(fontWeight: FontWeight.w500);
+
+/// Row and heading explanations: the metadata role one size down (13).
+TextStyle _subtitleStyle(AppTextStyles type) => type.metadata.copyWith(fontSize: 13, height: 18 / 13);
+
+/// Rows: ~10 dp above and below the text, one density step tighter.
+const double _rowVerticalPadding = 10;
+const VisualDensity _rowDensity = VisualDensity(vertical: -2);
 
 /// Settings, opened from the gear in the Home header: one card each for
 /// appearance, playback, YouTube, downloads, privacy and app info.
@@ -205,13 +213,14 @@ class _AppearanceCard extends ConsumerWidget {
                   value: value,
                   controlAffinity: ListTileControlAffinity.trailing,
                   contentPadding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.md12, 0),
-                  minVerticalPadding: AppSpacing.md12,
+                  minVerticalPadding: _rowVerticalPadding,
+                  visualDensity: _rowDensity,
                   horizontalTitleGap: AppSpacing.md12,
                   secondary: _RowIcon(icon),
                   title: Text(title, style: _rowTitleStyle(type)),
                   subtitle: Padding(
                     padding: const EdgeInsets.only(top: 2),
-                    child: Text(subtitle, style: type.metadata),
+                    child: Text(subtitle, style: _subtitleStyle(type)),
                   ),
                 ),
               ],
@@ -383,7 +392,8 @@ class _PersonalToolsCard extends ConsumerWidget {
                   children: [
                     const _CardDivider.betweenRows(),
                     ListTile(
-                      minVerticalPadding: AppSpacing.md12,
+                      minVerticalPadding: _rowVerticalPadding,
+                  visualDensity: _rowDensity,
                       contentPadding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.md12, 0),
                       horizontalTitleGap: AppSpacing.md12,
                       leading: const _RowIcon(Icons.memory_rounded),
@@ -633,7 +643,7 @@ class _CardHeading extends StatelessWidget {
     final palette = context.palette;
     final type = AppTypography.of(palette);
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.lg16),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.md12, AppSpacing.lg16, AppSpacing.md12),
       child: Row(
         children: [
           _IconTile(icon: icon, color: accent ? palette.accent : palette.primary),
@@ -648,7 +658,7 @@ class _CardHeading extends StatelessWidget {
                   child: Text(title, style: type.sectionTitle),
                 ),
                 const SizedBox(height: 2),
-                Text(subtitle, style: type.metadata),
+                Text(subtitle, style: _subtitleStyle(type)),
               ],
             ),
           ),
@@ -658,7 +668,7 @@ class _CardHeading extends StatelessWidget {
   }
 }
 
-/// 40 dp tonal tile ([AppPalette.primaryContainer]) holding a [color] glyph.
+/// 32 dp tonal tile ([AppPalette.primaryContainer]) holding a [color] glyph.
 class _IconTile extends StatelessWidget {
   final IconData icon;
   final Color color;
@@ -674,12 +684,12 @@ class _IconTile extends StatelessWidget {
         color: context.palette.primaryContainer,
         borderRadius: _tileRadius,
       ),
-      child: Icon(icon, size: 22, color: color),
+      child: Icon(icon, size: 18, color: color),
     );
   }
 }
 
-/// Plain row icon centred in the same 40 dp slot as the heading tile.
+/// Plain row icon centred in the same 32 dp slot as the heading tile.
 class _RowIcon extends StatelessWidget {
   final IconData icon;
 
@@ -689,7 +699,7 @@ class _RowIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: _leadingSlot,
-      child: Center(child: Icon(icon, size: 22, color: context.palette.textSecondary)),
+      child: Center(child: Icon(icon, size: 20, color: context.palette.textSecondary)),
     );
   }
 }
@@ -737,14 +747,15 @@ class _SwitchRow extends StatelessWidget {
     final type = context.typography;
     return SwitchListTile(
       contentPadding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.md12, 0),
-      minVerticalPadding: AppSpacing.md12,
+      minVerticalPadding: _rowVerticalPadding,
+      visualDensity: _rowDensity,
       horizontalTitleGap: AppSpacing.md12,
       secondary: _RowIcon(icon),
       controlAffinity: ListTileControlAffinity.trailing,
       title: Text(title, style: _rowTitleStyle(type)),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 2),
-        child: Text(subtitle, style: type.metadata),
+        child: Text(subtitle, style: _subtitleStyle(type)),
       ),
       value: value,
       onChanged: onChanged,
@@ -772,13 +783,14 @@ class _NavRow extends StatelessWidget {
     final palette = context.palette;
     final type = AppTypography.of(palette);
     return ListTile(
-      minVerticalPadding: AppSpacing.md12,
+      minVerticalPadding: _rowVerticalPadding,
+      visualDensity: _rowDensity,
       horizontalTitleGap: AppSpacing.md12,
       leading: _RowIcon(icon),
       title: Text(title, style: _rowTitleStyle(type)),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 2),
-        child: Text(subtitle, style: type.metadata),
+        child: Text(subtitle, style: _subtitleStyle(type)),
       ),
       trailing: Icon(trailingIcon, color: palette.textMuted),
       onTap: onTap,
@@ -799,10 +811,11 @@ class _InfoRow extends StatelessWidget {
     final type = context.typography;
     return ListTile(
       minVerticalPadding: AppSpacing.sm8,
+      visualDensity: _rowDensity,
       horizontalTitleGap: AppSpacing.md12,
       leading: _RowIcon(icon),
       title: Text(title, style: _rowTitleStyle(type)),
-      subtitle: Text(body, style: type.metadata),
+      subtitle: Text(body, style: _subtitleStyle(type)),
     );
   }
 }
@@ -888,7 +901,7 @@ class _AppIdentity extends StatelessWidget {
                 gradient: _iconField,
                 borderRadius: _tileRadius,
               ),
-              child: const Icon(Icons.play_arrow_rounded, size: 26, color: _iconGlyph),
+              child: const Icon(Icons.play_arrow_rounded, size: 22, color: _iconGlyph),
             ),
             const SizedBox(width: AppSpacing.md12),
             // The name gets the whole width; the version and the pill share

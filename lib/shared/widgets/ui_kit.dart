@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -1309,7 +1310,11 @@ class HeroBand extends StatelessWidget {
 
 /// A large Volt block (Sindur v2 Home bento): a big glyph over a Fraunces
 /// label on the loud brand fill, the primary gradient sheen included.
-class VoltTile extends StatelessWidget {
+///
+/// Effects: a slow diagonal shine sweeps across it every [shineEvery] (none
+/// with reduced motion), the Volt glow sits under it on ink, and a press
+/// scales it to 0.97 with a ripple while the glyph gives a small turn.
+class VoltTile extends StatefulWidget {
   final IconData icon;
   final String label;
   final String semanticLabel;
@@ -1325,47 +1330,187 @@ class VoltTile extends StatelessWidget {
     required this.onTap,
   });
 
+  /// Time between two shine sweeps.
+  static const Duration shineEvery = Duration(seconds: 6);
+
+  /// Length of one sweep.
+  static const Duration shineSweep = Duration(milliseconds: 1400);
+
+  @override
+  State<VoltTile> createState() => _VoltTileState();
+}
+
+class _VoltTileState extends State<VoltTile> with SingleTickerProviderStateMixin {
+  late final AnimationController _shine = AnimationController(vsync: this, duration: VoltTile.shineSweep);
+  Timer? _timer;
+  bool _pressed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = MotionTokens.duration(context, MotionTokens.page) == Duration.zero;
+    if (reduced) {
+      _timer?.cancel();
+      _timer = null;
+      _shine.value = 0;
+    } else {
+      _timer ??= Timer.periodic(VoltTile.shineEvery, (_) {
+        if (mounted && TickerMode.valuesOf(context).enabled) _shine.forward(from: 0);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _shine.dispose();
+    super.dispose();
+  }
+
+  void _setPressed(bool value) {
+    if (value != _pressed) setState(() => _pressed = value);
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final type = context.typography;
     final radius = BorderRadius.circular(AppSpacing.cardRadius);
+    final press = MotionTokens.duration(context, MotionTokens.micro);
     return Semantics(
       button: true,
-      label: semanticLabel,
-      onTap: onTap,
+      label: widget.semanticLabel,
+      onTap: widget.onTap,
       excludeSemantics: true,
-      child: Material(
-        type: MaterialType.transparency,
-        child: Ink(
-          decoration: ShapeDecoration(
-            gradient: palette.primaryGradient,
-            shape: RoundedRectangleBorder(borderRadius: radius, side: _voltEdge(palette)),
+      child: AnimatedScale(
+        scale: _pressed ? MotionTokens.pressedScale : 1,
+        duration: press,
+        curve: MotionTokens.easeOut,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            boxShadow: voltGlowShadows(palette, pressed: _pressed),
           ),
-          child: InkWell(
-            customBorder: RoundedRectangleBorder(borderRadius: radius),
-            onTap: onTap,
-            child: SizedBox(
-              height: height,
-              width: double.infinity,
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.lg16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Icon(icon, size: 32, color: palette.onVoltFill),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: AlignmentDirectional.centerStart,
-                      child: Text(label, style: type.cardTitle.copyWith(color: palette.onVoltFill), maxLines: 1),
-                    ),
-                  ],
+          child: Material(
+            type: MaterialType.transparency,
+            child: Ink(
+              decoration: ShapeDecoration(
+                gradient: palette.primaryGradient,
+                shape: RoundedRectangleBorder(borderRadius: radius, side: _voltEdge(palette)),
+              ),
+              child: InkWell(
+                customBorder: RoundedRectangleBorder(borderRadius: radius),
+                onTap: widget.onTap,
+                onHighlightChanged: _setPressed,
+                child: SizedBox(
+                  height: widget.height,
+                  width: double.infinity,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: ClipRRect(
+                            borderRadius: radius,
+                            child: AnimatedBuilder(
+                              animation: _shine,
+                              builder: (context, _) => _shine.value == 0 || _shine.value == 1
+                                  ? const SizedBox.shrink()
+                                  : CustomPaint(
+                                      key: const ValueKey('volt_tile_shine'),
+                                      painter: _ShinePainter(_shine.value, palette.onVoltFill),
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(AppSpacing.lg16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            PressGlyph(
+                              pressed: _pressed,
+                              child: Icon(widget.icon, size: 32, color: palette.onVoltFill),
+                            ),
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: AlignmentDirectional.centerStart,
+                              child: Text(
+                                widget.label,
+                                style: type.cardTitle.copyWith(color: palette.onVoltFill),
+                                maxLines: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The shine band: a soft diagonal streak at [t] (0..1) of its way across.
+class _ShinePainter extends CustomPainter {
+  final double t;
+  final Color tint;
+
+  const _ShinePainter(this.t, this.tint);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final band = size.shortestSide * 0.9;
+    final travel = size.width + size.height + band * 2;
+    final x = -band - size.height + travel * Curves.easeInOut.transform(t);
+    final rect = Rect.fromLTWH(x, 0, band, size.height);
+    canvas
+      ..save()
+      ..translate(rect.center.dx, size.height / 2)
+      ..skew(-0.5, 0)
+      ..translate(-rect.center.dx, -size.height / 2)
+      ..drawRect(
+        rect,
+        Paint()
+          ..shader = LinearGradient(
+            colors: [tint.withValues(alpha: 0), tint.withValues(alpha: 0.14), tint.withValues(alpha: 0)],
+          ).createShader(rect),
+      )
+      ..restore();
+  }
+
+  @override
+  bool shouldRepaint(_ShinePainter oldDelegate) => oldDelegate.t != t || oldDelegate.tint != tint;
+}
+
+/// A glyph that gives a small turn and grows a touch while [pressed]
+/// (instant with reduced motion). Used by the Home bento tiles.
+class PressGlyph extends StatelessWidget {
+  final bool pressed;
+  final Widget child;
+
+  const PressGlyph({super.key, required this.pressed, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = MotionTokens.duration(context, MotionTokens.feedback);
+    return AnimatedRotation(
+      turns: pressed ? -0.03 : 0,
+      duration: duration,
+      curve: MotionTokens.easeOut,
+      child: AnimatedScale(
+        scale: pressed ? 1.12 : 1,
+        duration: duration,
+        curve: MotionTokens.easeOut,
+        child: child,
       ),
     );
   }

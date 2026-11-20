@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../../app/theme/app_palette.dart';
 import '../../core/services/artwork_service.dart';
 import '../../domain/models/media_item.dart';
 import '../../shared/widgets/artwork_placeholder.dart';
@@ -197,36 +196,37 @@ class NowPlayingArt {
   }
 }
 
-/// The [ArtworkPlaceholder] look for [seed] as a square PNG: the palette
-/// gradient of the ink theme, the soft top-left highlight, the two faint
-/// rings and a white note in the middle.
+/// The branded cover for songs without one, as a square PNG for the media
+/// notification and lock screen (Samsung's media panel shows it large): a
+/// dark wine-to-plum diagonal, a soft crimson glow behind the middle, two
+/// faint rings and a crimson-to-amber music glyph. The same for every song
+/// ([seed] only names the cached file), so the panel always looks on-brand.
 Future<Uint8List?> renderPlaceholderPng(String seed, {int size = NowPlayingArt.artSize}) async {
   final side = size.toDouble();
   final rect = Rect.fromLTWH(0, 0, side, side);
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder, rect);
-  final gradient = ArtworkPlaceholder.gradientFor(seed, AppPalette.dark);
   canvas
-    ..drawRect(rect, Paint()..shader = gradient.createShader(rect))
+    ..drawRect(rect, Paint()..shader = brandPlaceholderGradient.createShader(rect))
     ..drawRect(
       rect,
       Paint()
         ..shader = const RadialGradient(
-          center: Alignment.topLeft,
-          radius: 1.1,
-          colors: [Color(0x33FFFFFF), Color(0x00FFFFFF)],
+          radius: 0.62,
+          colors: [Color(0x55CC324C), Color(0x00CC324C)],
         ).createShader(rect),
     );
   final ring = Paint()
     ..style = PaintingStyle.stroke
-    ..strokeWidth = (side * 0.025).clamp(1.0, 12.0)
-    ..color = const Color(0x14FFFFFF);
-  for (final r in const [0.42, 0.74]) {
-    canvas.drawCircle(rect.bottomRight, side * r, ring);
+    ..strokeWidth = (side * 0.02).clamp(1.0, 12.0)
+    ..color = const Color(0x1AE89A2C);
+  for (final r in const [0.30, 0.40]) {
+    canvas.drawCircle(rect.center, side * r, ring);
   }
 
   const icon = Icons.music_note_rounded;
-  final glyph = side * ArtworkPlaceholder.glyphFraction;
+  final glyph = side * 0.46;
+  final glyphRect = Rect.fromCenter(center: rect.center, width: glyph, height: glyph);
   final painter = TextPainter(
     textDirection: TextDirection.ltr,
     text: TextSpan(
@@ -236,8 +236,8 @@ Future<Uint8List?> renderPlaceholderPng(String seed, {int size = NowPlayingArt.a
         package: icon.fontPackage,
         fontSize: glyph,
         height: 1,
-        color: Colors.white.withValues(alpha: ArtworkPlaceholder.glyphOpacity),
-        shadows: [Shadow(color: const Color(0x40000000), blurRadius: side / 48, offset: Offset(0, side / 96))],
+        foreground: Paint()..shader = brandPlaceholderGlyph.createShader(glyphRect),
+        shadows: [Shadow(color: const Color(0x66000000), blurRadius: side / 40, offset: Offset(0, side / 80))],
       ),
     ),
   )..layout();
@@ -257,3 +257,17 @@ Future<Uint8List?> renderPlaceholderPng(String seed, {int size = NowPlayingArt.a
     picture.dispose();
   }
 }
+
+/// Field of the branded notification cover: dark wine to plum.
+const LinearGradient brandPlaceholderGradient = LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: [Color(0xFF4A0A1A), Color(0xFF240A1C), Color(0xFF2A0F26)],
+);
+
+/// Glyph of the branded notification cover: crimson to amber.
+const LinearGradient brandPlaceholderGlyph = LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: [Color(0xFFCC324C), Color(0xFFE89A2C)],
+);

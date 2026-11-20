@@ -163,24 +163,24 @@ void main() {
       final handle = tester.ensureSemantics();
       await pumpRows(tester, [MediaSongRow(item: _song(1, title: _fileTitle))]);
 
-      final heart = find.semantics.byLabel('Add to Liked songs');
+      final heart = find.semantics.byLabel('Add to Favourites');
       expect(heart, findsOne);
       expect(heart, isSemantics(isButton: true, hasTapAction: true));
       expect(_data(heart).tooltip, isEmpty, reason: 'VoiceOver would read the label and the tooltip');
-      expect(find.semantics.byPredicate((n) => n.tooltip == 'Add to Liked songs'), findsNothing);
+      expect(find.semantics.byPredicate((n) => n.tooltip == 'Add to Favourites'), findsNothing);
 
       final more = find.semantics.byPredicate((n) => n.tooltip == 'More actions');
       expect(more, findsOne);
       expect(more, isSemantics(isButton: true, hasTapAction: true));
 
       expect(
-        find.semantics.byPredicate((n) => n.label.contains(_fileTitle) && n.label.contains('Add to Liked songs')),
+        find.semantics.byPredicate((n) => n.label.contains(_fileTitle) && n.label.contains('Add to Favourites')),
         findsNothing,
       );
       // The tooltip still shows to sighted users on a long press.
       await tester.longPress(find.byType(FavoriteFeedbackButton));
       await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text('Add to Liked songs'), findsOneWidget);
+      expect(find.text('Add to Favourites'), findsOneWidget);
       await tester.pumpAndSettle(const Duration(seconds: 2));
       handle.dispose();
     });
@@ -413,7 +413,7 @@ void main() {
       await pumpSheet(tester, queue);
 
       expect(
-        find.semantics.byPredicate((n) => n.label.contains(_fileTitle) && n.label.contains('Add to Liked songs')),
+        find.semantics.byPredicate((n) => n.label.contains(_fileTitle) && n.label.contains('Add to Favourites')),
         findsNothing,
       );
       expect(
@@ -438,7 +438,7 @@ void main() {
       final handle = tester.ensureSemantics();
       await pumpSheet(tester, [_song(1, title: _fileTitle), _song(2), _song(3)]);
 
-      final heart = find.semantics.byLabel('Add to Liked songs');
+      final heart = find.semantics.byLabel('Add to Favourites');
       expect(heart, findsOne);
       expect(heart, isSemantics(isButton: true, hasTapAction: true));
       expect(_data(heart).tooltip, isEmpty);
