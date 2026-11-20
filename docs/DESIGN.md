@@ -822,6 +822,13 @@ our chrome.
   - Title: `bodyStrong` file name through `breakableTitle()`.
   - Progress: a 4dp `primary` bar on `surfacePressed`.
   - Figures: % in `tabularFigures` (textPrimary); speed, size and ETA in `tabularFigures` at 12 (textMuted).
+- **Groups:** Active, Queued / Paused, Saved, Failed / Cancelled, each under an `overline` kicker with its full count.
+  Every row that needs the user (running, waiting, paused, failed, cancelled) always shows.
+- **Saved preview:** every saved file is also in Videos or Music, so the Saved group shows only the newest 5 for the
+  chosen kind chip, newest first by when each one finished. Under them a centred TextButton, "Show all 23 saved"
+  with a trailing `expand_more` glyph, opens the rest in place below it and becomes "Show less" (`expand_less`), so
+  the toggle never moves. Semantics: a button labelled "Show all 23 saved downloads" / "Show less saved downloads"
+  with an expanded state. Open or closed lasts for the app run only (no setting). Chip and header counts stay whole.
 - **States** (icon + text, never colour alone):
 
   | State | Shown as |

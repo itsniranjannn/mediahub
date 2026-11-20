@@ -53,6 +53,11 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   /// null = everything, 'video' or 'audio'
   String? _kindFilter;
 
+  /// The Saved group shows every saved download, not only the newest
+  /// [kSavedPreviewCount]. Kept for as long as the app runs (the tab stays
+  /// alive in the shell), never saved: the next start shows the short list.
+  bool _showAllSaved = false;
+
   /// A quality lookup / quality sheet / queueing step is running.
   bool _linkFlowBusy = false;
 
@@ -620,8 +625,8 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
         t.state == DownloadTaskState.queued.name ||
         t.state == DownloadTaskState.paused.name).toList();
 
-    final completed = tasks.where((t) =>
-        t.state == DownloadTaskState.completed.name).toList();
+    final completed = newestSavedFirst(tasks.where((t) =>
+        t.state == DownloadTaskState.completed.name));
 
     final failed = tasks.where((t) =>
         t.state == DownloadTaskState.failed.name ||
@@ -632,20 +637,39 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
     // element and state instead of rebuilding every card below it.
     final rows = <Object>[];
     final indexByKey = <Key, int>{};
-    void addGroup(String title, List<DownloadEntry> group) {
-      if (group.isEmpty) return;
-      final label = _GroupLabel(title, group.length);
+    void addLabel(String title, int count) {
+      final label = _GroupLabel(title, count);
       indexByKey[label.key] = rows.length;
       rows.add(label);
+    }
+
+    void addTasks(Iterable<DownloadEntry> group) {
       for (final task in group) {
         indexByKey[ValueKey<String>(task.id)] = rows.length;
         rows.add(task);
       }
     }
 
+    void addGroup(String title, List<DownloadEntry> group) {
+      if (group.isEmpty) return;
+      addLabel(title, group.length);
+      addTasks(group);
+    }
+
+    // Everything that needs the user (running, waiting, paused, failed) always
+    // shows. Saved files are also in Videos and Music, so the Saved group
+    // shows only the newest few; the rest open in place under the toggle.
     addGroup('Active', active);
     addGroup('Queued / Paused', queuedOrPaused);
-    addGroup('Saved', completed);
+    if (completed.isNotEmpty) {
+      addLabel('Saved', completed.length);
+      addTasks(completed.take(kSavedPreviewCount));
+      if (completed.length > kSavedPreviewCount) {
+        indexByKey[_SavedToggleRow.key] = rows.length;
+        rows.add(_SavedToggleRow(total: completed.length, expanded: _showAllSaved));
+        if (_showAllSaved) addTasks(completed.skip(kSavedPreviewCount));
+      }
+    }
     addGroup('Failed / Cancelled', failed);
 
     final isVideoFilter = _kindFilter == 'video';
@@ -679,6 +703,14 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
             final row = rows[index];
             if (row is _GroupLabel) {
               return _GroupHeader(key: row.key, title: row.title, count: row.count);
+            }
+            if (row is _SavedToggleRow) {
+              return _SavedToggle(
+                key: _SavedToggleRow.key,
+                total: row.total,
+                expanded: row.expanded,
+                onPressed: () => setState(() => _showAllSaved = !_showAllSaved),
+              );
             }
             final task = row as DownloadEntry;
             final isCompleted = task.state == DownloadTaskState.completed.name;
@@ -1007,6 +1039,29 @@ String? _kindOf(DownloadEntry task) {
   final mime = task.mimeType;
   if (mime == null) return null;
   return mime.startsWith('video') ? 'video' : 'audio';
+}
+
+/// How many saved downloads the Saved group shows before its "Show all"
+/// toggle (for the chosen kind chip). Every saved file is also listed in
+/// Videos or Music, so the Downloads tab needs only the latest few.
+@visibleForTesting
+const int kSavedPreviewCount = 5;
+
+/// [saved] newest first by when each one finished: a saved row's
+/// `updatedAt` is written when it completes and not after. A download that
+/// was started long ago and finished just now is then among the first ones,
+/// never hidden behind "Show all". Ties go by when it was added, then id, so
+/// the order never shuffles between rebuilds.
+@visibleForTesting
+List<DownloadEntry> newestSavedFirst(Iterable<DownloadEntry> saved) {
+  return saved.toList()
+    ..sort((a, b) {
+      final finished = b.updatedAt.compareTo(a.updatedAt);
+      if (finished != 0) return finished;
+      final added = b.createdAt.compareTo(a.createdAt);
+      if (added != 0) return added;
+      return b.id.compareTo(a.id);
+    });
 }
 
 /// The colour role of a note, a tile glyph or a row state, resolved against
@@ -1830,6 +1885,58 @@ class _GroupHeader extends StatelessWidget {
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The "Show all" toggle's place in the flattened download list.
+class _SavedToggleRow {
+  /// Saved downloads for the chosen kind chip, shown or not.
+  final int total;
+  final bool expanded;
+
+  const _SavedToggleRow({required this.total, required this.expanded});
+
+  /// Stable list key; prefixed so it never matches a task id or group key.
+  static const Key key = ValueKey<String>('t_saved_toggle');
+}
+
+/// Ends the short Saved group (DESIGN.md 7.14): "Show all 23 saved" opens
+/// the older saved downloads in place, under this row, and the row turns into
+/// "Show less", so it never moves while the list grows or shrinks below it.
+/// A text button with the expand glyph after its label; it tells a screen
+/// reader whether the list is open.
+class _SavedToggle extends StatelessWidget {
+  final int total;
+  final bool expanded;
+  final VoidCallback onPressed;
+
+  const _SavedToggle({
+    super.key,
+    required this.total,
+    required this.expanded,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final label = expanded ? 'Show less' : 'Show all $total saved';
+    final spoken = expanded ? 'Show less saved downloads' : 'Show all $total saved downloads';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm8),
+      child: Center(
+        child: TextButton.icon(
+          onPressed: onPressed,
+          iconAlignment: IconAlignment.end,
+          icon: Icon(expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded),
+          // Inside the button, so the open / closed state lands on the
+          // button's own node.
+          label: Semantics(
+            expanded: expanded,
+            child: Text(label, semanticsLabel: spoken),
           ),
         ),
       ),
