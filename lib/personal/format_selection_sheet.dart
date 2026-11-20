@@ -1,154 +1,390 @@
 import 'package:flutter/material.dart';
+import '../app/theme/app_palette.dart';
+import '../app/theme/app_spacing.dart';
+import '../app/theme/app_typography.dart';
+import '../core/utils/formatters.dart';
+import '../shared/widgets/artwork_placeholder.dart';
+import '../shared/widgets/ui_kit.dart';
 import 'extractor_backend.dart';
+import 'format_options.dart';
 
-class FormatPreset {
-  final String label;
-  final String formatSelector;
-  final String description;
-  final bool isAudio;
-
-  const FormatPreset({
-    required this.label,
-    required this.formatSelector,
-    required this.description,
-    required this.isAudio,
-  });
-}
-
+/// Bottom sheet listing every quality yt-dlp reported for a link, or (with
+/// [choices]) a ready-made list such as the files YouTube serves directly.
 class FormatSelectionSheet extends StatelessWidget {
   final ExtractorMetadata metadata;
-  final void Function(FormatPreset preset) onSelect;
+  final void Function(FormatChoice choice) onSelect;
+
+  /// The options to list. Null = built from [metadata]'s yt-dlp formats.
+  final List<FormatChoice>? choices;
+
+  /// Optional short note under the list (e.g. why only some qualities show).
+  final String? footnote;
 
   const FormatSelectionSheet({
     super.key,
     required this.metadata,
     required this.onSelect,
+    this.choices,
+    this.footnote,
   });
 
-  static List<FormatPreset> getPresets(ExtractorMetadata meta) {
-    return [
-      const FormatPreset(
-        label: 'Best Video & Audio (Auto)',
-        formatSelector: 'bestvideo+bestaudio/best',
-        description: 'Highest quality combined video and audio',
-        isAudio: false,
-      ),
-      const FormatPreset(
-        label: 'Balanced 720p',
-        formatSelector: 'bestvideo[height<=720]+bestaudio/best[height<=720]',
-        description: 'Standard HD video (faster download)',
-        isAudio: false,
-      ),
-      const FormatPreset(
-        label: 'Audio Only (Best Quality)',
-        formatSelector: 'bestaudio/best',
-        description: 'Extracts highest quality audio stream',
-        isAudio: true,
-      ),
-    ];
+  static List<FormatChoice> getPresets(ExtractorMetadata meta) => FormatOptions.build(meta);
+
+  /// Whether the modal route already reserves a drag-handle strip above this
+  /// sheet (the theme turns handles on). The caller opens the sheet with a
+  /// transparent background, so in that case the sheet paints that strip
+  /// itself; otherwise it draws its own handle on top.
+  static bool _routeDrawsDragHandle(BuildContext context) {
+    final route = ModalRoute.of(context);
+    if (route is! ModalBottomSheetRoute) return false;
+    return route.showDragHandle ??
+        (route.enableDrag && (Theme.of(context).bottomSheetTheme.showDragHandle ?? false));
   }
 
   @override
   Widget build(BuildContext context) {
-    final presets = getPresets(metadata);
+    final choices = this.choices ?? getPresets(metadata);
+    final videoChoices = choices.where((c) => !c.isAudio).toList();
+    final audioChoices = choices.where((c) => c.isAudio).toList();
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.85;
+    final palette = context.palette;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      decoration: const BoxDecoration(
-        color: Color(0xFF131720),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                if (metadata.thumbnailUrl.isNotEmpty) ...[
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      metadata.thumbnailUrl,
-                      width: 60,
-                      height: 60,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.video_library, size: 40),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                ],
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        metadata.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      if (metadata.uploader.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          metadata.uploader,
-                          style: TextStyle(fontSize: 13, color: Colors.grey[400]),
-                        ),
-                      ],
-                    ],
-                  ),
+    final content = ColoredBox(
+      color: palette.surface,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg16,
+                  0,
+                  AppSpacing.lg16,
+                  AppSpacing.xs4,
                 ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Select Quality / Preset',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF9E86FF),
+                child: _Header(metadata: metadata),
               ),
-            ),
-            const SizedBox(height: 12),
-            ...presets.map((preset) => Card(
-                  color: const Color(0xFF1B202D),
-                  margin: const EdgeInsets.only(bottom: 8),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(color: Color(0xFF282F40)),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg16,
+                    0,
+                    AppSpacing.lg16,
+                    AppSpacing.lg16,
                   ),
-                  child: ListTile(
-                    leading: Icon(
-                      preset.isAudio ? Icons.music_note : Icons.video_file,
-                      color: const Color(0xFF9E86FF),
-                    ),
-                    title: Text(
-                      preset.label,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
+                  children: [
+                    if (videoChoices.isNotEmpty) ...[
+                      const _SectionLabel('Video with sound'),
+                      ...videoChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
+                    ],
+                    if (audioChoices.isNotEmpty) ...[
+                      const _SectionLabel('Audio only'),
+                      ...audioChoices.map((c) => _ChoiceTile(choice: c, onSelect: onSelect)),
+                    ],
+                    if (footnote != null && footnote!.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: AppSpacing.sm8),
+                        child: Text(footnote!, style: AppTypography.of(palette).metadata),
                       ),
-                    ),
-                    subtitle: Text(
-                      preset.description,
-                      style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                    ),
-                    trailing: const Icon(Icons.download, color: Colors.white70),
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      onSelect(preset);
-                    },
-                  ),
-                )),
-          ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (_routeDrawsDragHandle(context)) {
+      // The route's handle sits in a transparent strip right above us: paint
+      // the strip (with an identical handle) so the sheet reads as one surface.
+      // Touches there still reach the route's own handle.
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Positioned(
+            left: 0,
+            right: 0,
+            top: -kMinInteractiveDimension,
+            height: kMinInteractiveDimension,
+            child: _GrabHandle(),
+          ),
+          content,
+        ],
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _GrabHandle(),
+        Flexible(child: content),
+      ],
+    );
+  }
+}
+
+/// Rounded top edge of the sheet with the drag handle pill. Corner radius and
+/// handle come from the app's bottom sheet theme so the sheet matches every
+/// other sheet in the app.
+class _GrabHandle extends StatelessWidget {
+  const _GrabHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final sheetTheme = Theme.of(context).bottomSheetTheme;
+    final handleSize = sheetTheme.dragHandleSize ?? const Size(36, 4);
+    final handleColor = sheetTheme.dragHandleColor ?? palette.dragHandle;
+    final sheetShape = sheetTheme.shape;
+    final themeRadius = sheetShape is RoundedRectangleBorder
+        ? sheetShape.borderRadius.resolve(Directionality.maybeOf(context))
+        : BorderRadius.zero;
+    return Container(
+      height: kMinInteractiveDimension,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.only(
+          topLeft: themeRadius.topLeft,
+          topRight: themeRadius.topRight,
+        ),
+      ),
+      child: Container(
+        width: handleSize.width,
+        height: handleSize.height,
+        decoration: BoxDecoration(
+          color: handleColor,
+          borderRadius: BorderRadius.circular(handleSize.height / 2),
         ),
       ),
     );
   }
 }
 
+class _Header extends StatelessWidget {
+  final ExtractorMetadata metadata;
+
+  const _Header({required this.metadata});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
+    final duration = metadata.durationSec > 0 ? Duration(seconds: metadata.durationSec) : null;
+    // Seeded by the video id, so the same video always gets the same
+    // placeholder cover wherever it shows.
+    final placeholder = ArtworkPlaceholder(
+      seed: metadata.id.isNotEmpty ? metadata.id : metadata.title,
+      icon: Icons.play_circle_outline_rounded,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // An app string, so the sheet title role; the video's own name goes
+        // in the body below (DESIGN.md 7.10).
+        Semantics(
+          header: true,
+          child: Text('Choose quality', style: type.sectionTitle),
+        ),
+        const SizedBox(height: AppSpacing.md12),
+        Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppSpacing.radiusArtSmall),
+              child: SizedBox(
+                width: 112,
+                height: 63,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (metadata.thumbnailUrl.isEmpty)
+                      placeholder
+                    else
+                      Image.network(
+                        metadata.thumbnailUrl,
+                        fit: BoxFit.cover,
+                        cacheWidth: 336,
+                        errorBuilder: (_, _, _) => placeholder,
+                        loadingBuilder: (context, child, progress) =>
+                            progress == null ? child : placeholder,
+                      ),
+                    if (duration != null)
+                      Positioned(
+                        right: AppSpacing.xs4,
+                        bottom: AppSpacing.xs4,
+                        child: DurationBadge(duration: duration),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    breakableTitle(metadata.title),
+                    semanticsLabel: metadata.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: type.bodyStrong,
+                  ),
+                  if (metadata.uploader.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      metadata.uploader,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: type.metadata,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md12),
+        const Divider(height: 1, thickness: 1),
+      ],
+    );
+  }
+}
+
+/// Group kicker ("VIDEO WITH SOUND", "AUDIO ONLY") in the overline role.
+class _SectionLabel extends StatelessWidget {
+  final String text;
+
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.lg16, bottom: AppSpacing.sm8),
+      child: Semantics(
+        header: true,
+        child: Text(
+          text.toUpperCase(),
+          semanticsLabel: text,
+          style: AppTypography.of(palette).overline.copyWith(color: palette.primary),
+        ),
+      ),
+    );
+  }
+}
+
+/// [text] with every " · "-separated part that starts with a figure ("12.0 MB",
+/// "~48 MB") set in the figures role at 14, the rest in [base] (DESIGN.md 6:
+/// in a meta line, figures are a TextSpan at 14).
+TextSpan _metaSpan(String text, TextStyle base, TextStyle figures) {
+  final parts = text.split(' · ');
+  final figure = RegExp(r'^[~≈]?\d');
+  final figureStyle = figures.copyWith(fontSize: 14, height: 20 / 14);
+  return TextSpan(
+    style: base,
+    children: [
+      for (var i = 0; i < parts.length; i++) ...[
+        if (i > 0) const TextSpan(text: ' · '),
+        TextSpan(text: parts[i], style: figure.hasMatch(parts[i]) ? figureStyle : null),
+      ],
+    ],
+  );
+}
+
+/// One option card: tonal type tile, quality label, size line, download glyph.
+class _ChoiceTile extends StatelessWidget {
+  final FormatChoice choice;
+  final void Function(FormatChoice choice) onSelect;
+
+  const _ChoiceTile({required this.choice, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
+    // The same tile as a Downloads row: primary music glyph, accent video glyph.
+    final glyph = choice.isAudio ? palette.primary : palette.accent;
+    final radius = BorderRadius.circular(AppSpacing.cardRadius);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm8),
+      child: MergeSemantics(
+        child: Semantics(
+          button: true,
+          hint: 'Download',
+          child: Material(
+            color: palette.surfaceElevated,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: radius,
+              side: BorderSide(color: palette.divider),
+            ),
+            child: InkWell(
+              onTap: () {
+                Navigator.of(context).pop();
+                onSelect(choice);
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 64),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md12,
+                    vertical: AppSpacing.md12,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: palette.primaryContainer,
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusArtSmall),
+                        ),
+                        child: Icon(
+                          choice.isAudio ? Icons.music_note_rounded : Icons.videocam_rounded,
+                          size: 22,
+                          color: glyph,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              choice.label,
+                              style: type.bodyStrong,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text.rich(
+                              _metaSpan(choice.subtitle, type.metadata, type.tabularFigures),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm8),
+                      Icon(Icons.download_rounded, size: 22, color: palette.primary),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

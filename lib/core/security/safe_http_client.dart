@@ -56,6 +56,15 @@ class SafeHttpClientException implements Exception {
   String toString() => 'SafeHttpClientException($code): $message';
 }
 
+/// One connection attempt of [SafeHttpClient.raceConnect]: its result, and a
+/// way to stop it while it is still connecting.
+class ConnectAttempt<T> {
+  ConnectAttempt(this.result, this.cancel);
+
+  final Future<T> result;
+  final void Function() cancel;
+}
+
 class SafeHttpClient {
   final DnsResolver _dnsResolver;
   final Duration connectionTimeout;
@@ -78,6 +87,149 @@ class SafeHttpClient {
         _customSecurityContext = customSecurityContext,
         // ignore: prefer_initializing_formals
         _seam = seam;
+
+  /// Delay before the next address is tried while the current one has not
+  /// answered yet (RFC 8305 recommends 250 ms).
+  static const Duration connectionAttemptDelay = Duration(milliseconds: 250);
+
+  /// [addresses] with the two families taking turns, starting with the
+  /// resolver's first family: `[v6a, v6b, v4a]` becomes `[v6a, v4a, v6b]`.
+  static List<InternetAddress> interleaveByFamily(List<InternetAddress> addresses) {
+    if (addresses.length < 2) return List.of(addresses);
+    final firstType = addresses.first.type;
+    final first = addresses.where((a) => a.type == firstType).toList();
+    final other = addresses.where((a) => a.type != firstType).toList();
+    final out = <InternetAddress>[];
+    for (var i = 0; i < first.length || i < other.length; i++) {
+      if (i < first.length) out.add(first[i]);
+      if (i < other.length) out.add(other[i]);
+    }
+    return out;
+  }
+
+  /// Races connection attempts to [addresses] the way browsers do ("Happy
+  /// Eyeballs", RFC 8305): the families take turns ([interleaveByFamily]),
+  /// the next address starts [attemptDelay] after the previous one (at once
+  /// when that one failed), and the first attempt that connects wins. The
+  /// moment there is a winner, or [cancelled] completes, every attempt still
+  /// running is cancelled, and one that connects anyway goes to [discard].
+  /// Fails with the last error once every address failed, or with
+  /// "Connection cancelled".
+  ///
+  /// So a family that is advertised but broken (IPv6 on some Wi-Fi, or IPv4
+  /// to some servers) costs a quarter of a second, not a full connection
+  /// timeout per address. It only connects to the addresses it is given
+  /// (every one was checked against the blocklist before) and resolves no
+  /// name itself.
+  static Future<T> raceConnect<T>(
+    List<InternetAddress> addresses,
+    ConnectAttempt<T> Function(InternetAddress address) start, {
+    required void Function(T connection) discard,
+    Duration attemptDelay = connectionAttemptDelay,
+    Future<void>? cancelled,
+  }) {
+    final ordered = interleaveByFamily(addresses);
+    if (ordered.isEmpty) {
+      return Future<T>.error(const SocketException('No address to connect to'));
+    }
+    final completer = Completer<T>();
+    final inFlight = <ConnectAttempt<T>>[];
+    var started = 0;
+    var failed = 0;
+    var stopped = false;
+    Timer? next;
+
+    void stopAll() {
+      stopped = true;
+      next?.cancel();
+      next = null;
+      final running = List.of(inFlight);
+      inFlight.clear();
+      for (final attempt in running) {
+        attempt.cancel();
+      }
+    }
+
+    void startNext() {
+      next?.cancel();
+      next = null;
+      if (stopped || started >= ordered.length) return;
+      final attempt = start(ordered[started++]);
+      inFlight.add(attempt);
+      attempt.result.then((connection) {
+        inFlight.remove(attempt);
+        if (stopped || completer.isCompleted) {
+          discard(connection);
+          return;
+        }
+        stopAll();
+        completer.complete(connection);
+      }, onError: (Object error, StackTrace stack) {
+        inFlight.remove(attempt);
+        failed++;
+        if (stopped || completer.isCompleted) return;
+        if (failed >= ordered.length) {
+          stopAll();
+          completer.completeError(error, stack);
+          return;
+        }
+        // A failed attempt hands over at once.
+        if (started < ordered.length) startNext();
+      });
+      if (started < ordered.length) next = Timer(attemptDelay, startNext);
+    }
+
+    cancelled?.then((_) {
+      if (stopped || completer.isCompleted) return;
+      stopAll();
+      completer.completeError(const SocketException('Connection cancelled'));
+    });
+    startNext();
+    return completer.future;
+  }
+
+  /// The error a cancelled [startTcp] attempt fails with (not a failure of
+  /// the address itself).
+  static const SocketException tcpCancelled = SocketException('Connection cancelled');
+
+  /// One TCP connection attempt to [address] that can be cancelled while it
+  /// connects. Fails after [timeout]; a socket that connects after a cancel
+  /// or the timeout is closed at once.
+  static ConnectAttempt<(InternetAddress, Socket)> startTcp(InternetAddress address, int port, Duration timeout) {
+    final out = Completer<(InternetAddress, Socket)>();
+    ConnectionTask<Socket>? task;
+    var over = false;
+    Timer? timer;
+
+    void giveUp(Object error) {
+      if (out.isCompleted) return;
+      over = true;
+      timer?.cancel();
+      task?.cancel();
+      out.completeError(error);
+    }
+
+    timer = Timer(timeout, () => giveUp(SocketException('Connection timed out', address: address, port: port)));
+    Socket.startConnect(address, port).then((t) {
+      task = t;
+      if (over) t.cancel();
+      t.socket.then((socket) {
+        timer?.cancel();
+        if (over || out.isCompleted) {
+          socket.destroy();
+          return;
+        }
+        out.complete((address, socket));
+      }, onError: (Object e, StackTrace st) {
+        timer?.cancel();
+        if (!out.isCompleted) out.completeError(e, st);
+      });
+    }, onError: (Object e, StackTrace st) {
+      timer?.cancel();
+      if (!out.isCompleted) out.completeError(e, st);
+    });
+    return ConnectAttempt(out.future, () => giveUp(tcpCancelled));
+  }
 
   /// Performs a secure request with DNS pinning, manual redirect handling,
   /// IP verification on each hop, and body size limits.
@@ -131,6 +283,13 @@ class SafeHttpClient {
     // Track host of original request to restrict credential/cookie leakage across hosts
     final initialHost = initialUri.host.toLowerCase();
     Map<String, String> activeHeaders = Map<String, String>.from(headers ?? {});
+    // Ask for the file exactly as it is. Dart's HttpClient always offers
+    // gzip, and with autoUncompress off a server that takes the offer (a
+    // download script with compression on) hands over a compressed copy,
+    // which is then refused as "not media" or fails the size check.
+    if (!activeHeaders.keys.any((k) => k.toLowerCase() == 'accept-encoding')) {
+      activeHeaders[HttpHeaders.acceptEncodingHeader] = 'identity';
+    }
 
     while (true) {
       // 1. Validate URL with UrlPolicy (or allow non-standard port in seam)
@@ -206,57 +365,85 @@ class SafeHttpClient {
       client.autoUncompress = false; // autoUncompress is off
 
       client.connectionFactory = (uri, proxyHost, proxyPort) {
-        final completer = Completer<Socket>();
+        // TCP is raced across the checked addresses (raceConnect); TLS then
+        // runs once, on the winner. If TLS fails there, the remaining
+        // addresses are raced again, as the old one-by-one loop did. So there
+        // is never more than one TLS handshake in flight per connection.
+        final cancel = Completer<void>();
+        final result = Completer<Socket>();
 
-        Future<void> tryConnect(int index) async {
-          if (index >= addresses.length) {
-            if (!completer.isCompleted) {
-              completer.completeError(
-                SocketException('Failed to connect to any resolved address for ${uri.host}'),
-              );
-            }
-            return;
+        Future<void> run() async {
+          var remaining = List.of(addresses);
+          Object lastError = SocketException('Failed to connect to any resolved address for ${uri.host}');
+          StackTrace? lastStack;
+          // A TLS error (a certificate for another name, say) says more than
+          // the TCP error of an address tried after it, so it is the one kept.
+          Object? tlsError;
+          StackTrace? tlsStack;
+          // Addresses whose TCP connect failed are not dialled again in a
+          // later round (a cancelled loser is not a failure).
+          final tcpFailed = <InternetAddress>[];
+          ConnectAttempt<(InternetAddress, Socket)> dial(InternetAddress address) {
+            final attempt = startTcp(address, uri.port, connectionTimeout);
+            attempt.result.then((_) {}, onError: (Object e) {
+              if (!identical(e, tcpCancelled)) tcpFailed.add(address);
+            });
+            return attempt;
           }
 
-          final targetAddr = addresses[index];
-          try {
-            final rawSocket = await Socket.connect(targetAddr, uri.port, timeout: connectionTimeout);
+          while (remaining.isNotEmpty && !result.isCompleted) {
+            final (InternetAddress, Socket) won;
             try {
-              final secureSocket = await SecureSocket.secure(
-                rawSocket,
+              won = await raceConnect<(InternetAddress, Socket)>(
+                remaining,
+                dial,
+                discard: (c) => c.$2.destroy(),
+                cancelled: cancel.future,
+              );
+            } catch (e, st) {
+              lastError = e;
+              lastStack = st;
+              break;
+            }
+            if (result.isCompleted) {
+              won.$2.destroy();
+              return;
+            }
+            remaining = remaining
+                .where((a) => !identical(a, won.$1) && !tcpFailed.any((f) => identical(f, a)))
+                .toList();
+            try {
+              final secure = await SecureSocket.secure(
+                won.$2,
                 host: uri.host,
                 context: _customSecurityContext ?? SecurityContext.defaultContext,
                 onBadCertificate: null,
               );
-              if (!completer.isCompleted) {
-                completer.complete(secureSocket);
+              if (result.isCompleted) {
+                secure.destroy();
               } else {
-                secureSocket.destroy();
+                result.complete(secure);
               }
-            } catch (err, st) {
-              rawSocket.destroy();
-              if (index + 1 < addresses.length) {
-                await tryConnect(index + 1);
-              } else if (!completer.isCompleted) {
-                completer.completeError(err, st);
-              }
-            }
-          } catch (err, st) {
-            if (index + 1 < addresses.length) {
-              await tryConnect(index + 1);
-            } else if (!completer.isCompleted) {
-              completer.completeError(err, st);
+              return;
+            } catch (e, st) {
+              won.$2.destroy();
+              tlsError = e;
+              tlsStack = st;
             }
           }
+          if (!result.isCompleted) result.completeError(tlsError ?? lastError, tlsError != null ? tlsStack : lastStack);
         }
 
-        tryConnect(0);
+        run();
 
+        // Cancelling (HttpClient's own timeout) fails the connection at once,
+        // as before, and stops every TCP attempt still running.
         return Future.value(ConnectionTask.fromSocket<Socket>(
-          completer.future,
+          result.future,
           () {
-            if (!completer.isCompleted) {
-              completer.completeError(const SocketException('Connection cancelled'));
+            if (!cancel.isCompleted) cancel.complete();
+            if (!result.isCompleted) {
+              result.completeError(const SocketException('Connection cancelled'));
             }
           },
         ));

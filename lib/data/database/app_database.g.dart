@@ -185,6 +185,112 @@ class $MediaItemsTableTable extends MediaItemsTable
     requiredDuringInsert: false,
     defaultValue: const Constant('device'),
   );
+  static const VerificationMeta _artworkPathMeta = const VerificationMeta(
+    'artworkPath',
+  );
+  @override
+  late final GeneratedColumn<String> artworkPath = GeneratedColumn<String>(
+    'artwork_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _albumIdMeta = const VerificationMeta(
+    'albumId',
+  );
+  @override
+  late final GeneratedColumn<String> albumId = GeneratedColumn<String>(
+    'album_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _albumArtistMeta = const VerificationMeta(
+    'albumArtist',
+  );
+  @override
+  late final GeneratedColumn<String> albumArtist = GeneratedColumn<String>(
+    'album_artist',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _trackNumberMeta = const VerificationMeta(
+    'trackNumber',
+  );
+  @override
+  late final GeneratedColumn<int> trackNumber = GeneratedColumn<int>(
+    'track_number',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _discNumberMeta = const VerificationMeta(
+    'discNumber',
+  );
+  @override
+  late final GeneratedColumn<int> discNumber = GeneratedColumn<int>(
+    'disc_number',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _yearMeta = const VerificationMeta('year');
+  @override
+  late final GeneratedColumn<int> year = GeneratedColumn<int>(
+    'year',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _searchKeyMeta = const VerificationMeta(
+    'searchKey',
+  );
+  @override
+  late final GeneratedColumn<String> searchKey = GeneratedColumn<String>(
+    'search_key',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _favoritedAtMeta = const VerificationMeta(
+    'favoritedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> favoritedAt = GeneratedColumn<DateTime>(
+    'favorited_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _relativePathMeta = const VerificationMeta(
+    'relativePath',
+  );
+  @override
+  late final GeneratedColumn<String> relativePath = GeneratedColumn<String>(
+    'relative_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _genreMeta = const VerificationMeta('genre');
+  @override
+  late final GeneratedColumn<String> genre = GeneratedColumn<String>(
+    'genre',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -204,6 +310,16 @@ class $MediaItemsTableTable extends MediaItemsTable
     isFavorite,
     availability,
     source,
+    artworkPath,
+    albumId,
+    albumArtist,
+    trackNumber,
+    discNumber,
+    year,
+    searchKey,
+    favoritedAt,
+    relativePath,
+    genre,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -333,6 +449,81 @@ class $MediaItemsTableTable extends MediaItemsTable
         source.isAcceptableOrUnknown(data['source']!, _sourceMeta),
       );
     }
+    if (data.containsKey('artwork_path')) {
+      context.handle(
+        _artworkPathMeta,
+        artworkPath.isAcceptableOrUnknown(
+          data['artwork_path']!,
+          _artworkPathMeta,
+        ),
+      );
+    }
+    if (data.containsKey('album_id')) {
+      context.handle(
+        _albumIdMeta,
+        albumId.isAcceptableOrUnknown(data['album_id']!, _albumIdMeta),
+      );
+    }
+    if (data.containsKey('album_artist')) {
+      context.handle(
+        _albumArtistMeta,
+        albumArtist.isAcceptableOrUnknown(
+          data['album_artist']!,
+          _albumArtistMeta,
+        ),
+      );
+    }
+    if (data.containsKey('track_number')) {
+      context.handle(
+        _trackNumberMeta,
+        trackNumber.isAcceptableOrUnknown(
+          data['track_number']!,
+          _trackNumberMeta,
+        ),
+      );
+    }
+    if (data.containsKey('disc_number')) {
+      context.handle(
+        _discNumberMeta,
+        discNumber.isAcceptableOrUnknown(data['disc_number']!, _discNumberMeta),
+      );
+    }
+    if (data.containsKey('year')) {
+      context.handle(
+        _yearMeta,
+        year.isAcceptableOrUnknown(data['year']!, _yearMeta),
+      );
+    }
+    if (data.containsKey('search_key')) {
+      context.handle(
+        _searchKeyMeta,
+        searchKey.isAcceptableOrUnknown(data['search_key']!, _searchKeyMeta),
+      );
+    }
+    if (data.containsKey('favorited_at')) {
+      context.handle(
+        _favoritedAtMeta,
+        favoritedAt.isAcceptableOrUnknown(
+          data['favorited_at']!,
+          _favoritedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('relative_path')) {
+      context.handle(
+        _relativePathMeta,
+        relativePath.isAcceptableOrUnknown(
+          data['relative_path']!,
+          _relativePathMeta,
+        ),
+      );
+    }
+    if (data.containsKey('genre')) {
+      context.handle(
+        _genreMeta,
+        genre.isAcceptableOrUnknown(data['genre']!, _genreMeta),
+      );
+    }
     return context;
   }
 
@@ -410,6 +601,46 @@ class $MediaItemsTableTable extends MediaItemsTable
         DriftSqlType.string,
         data['${effectivePrefix}source'],
       ),
+      artworkPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}artwork_path'],
+      ),
+      albumId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}album_id'],
+      ),
+      albumArtist: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}album_artist'],
+      ),
+      trackNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}track_number'],
+      ),
+      discNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}disc_number'],
+      ),
+      year: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}year'],
+      ),
+      searchKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}search_key'],
+      ),
+      favoritedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}favorited_at'],
+      ),
+      relativePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}relative_path'],
+      ),
+      genre: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}genre'],
+      ),
     );
   }
 
@@ -437,6 +668,22 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
   final bool isFavorite;
   final String availability;
   final String? source;
+  final String? artworkPath;
+
+  /// MediaStore ALBUM_ID (songs on the phone).
+  final String? albumId;
+  final String? albumArtist;
+  final int? trackNumber;
+  final int? discNumber;
+  final int? year;
+
+  /// [librarySearchKey] of the row: folded title, artist and album.
+  final String? searchKey;
+
+  /// When the song was liked; null when not liked (or liked before v8).
+  final DateTime? favoritedAt;
+  final String? relativePath;
+  final String? genre;
   const MediaItemEntry({
     required this.id,
     required this.uri,
@@ -455,6 +702,16 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     required this.isFavorite,
     required this.availability,
     this.source,
+    this.artworkPath,
+    this.albumId,
+    this.albumArtist,
+    this.trackNumber,
+    this.discNumber,
+    this.year,
+    this.searchKey,
+    this.favoritedAt,
+    this.relativePath,
+    this.genre,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -489,6 +746,36 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     map['availability'] = Variable<String>(availability);
     if (!nullToAbsent || source != null) {
       map['source'] = Variable<String>(source);
+    }
+    if (!nullToAbsent || artworkPath != null) {
+      map['artwork_path'] = Variable<String>(artworkPath);
+    }
+    if (!nullToAbsent || albumId != null) {
+      map['album_id'] = Variable<String>(albumId);
+    }
+    if (!nullToAbsent || albumArtist != null) {
+      map['album_artist'] = Variable<String>(albumArtist);
+    }
+    if (!nullToAbsent || trackNumber != null) {
+      map['track_number'] = Variable<int>(trackNumber);
+    }
+    if (!nullToAbsent || discNumber != null) {
+      map['disc_number'] = Variable<int>(discNumber);
+    }
+    if (!nullToAbsent || year != null) {
+      map['year'] = Variable<int>(year);
+    }
+    if (!nullToAbsent || searchKey != null) {
+      map['search_key'] = Variable<String>(searchKey);
+    }
+    if (!nullToAbsent || favoritedAt != null) {
+      map['favorited_at'] = Variable<DateTime>(favoritedAt);
+    }
+    if (!nullToAbsent || relativePath != null) {
+      map['relative_path'] = Variable<String>(relativePath);
+    }
+    if (!nullToAbsent || genre != null) {
+      map['genre'] = Variable<String>(genre);
     }
     return map;
   }
@@ -526,6 +813,34 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       source: source == null && nullToAbsent
           ? const Value.absent()
           : Value(source),
+      artworkPath: artworkPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(artworkPath),
+      albumId: albumId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(albumId),
+      albumArtist: albumArtist == null && nullToAbsent
+          ? const Value.absent()
+          : Value(albumArtist),
+      trackNumber: trackNumber == null && nullToAbsent
+          ? const Value.absent()
+          : Value(trackNumber),
+      discNumber: discNumber == null && nullToAbsent
+          ? const Value.absent()
+          : Value(discNumber),
+      year: year == null && nullToAbsent ? const Value.absent() : Value(year),
+      searchKey: searchKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(searchKey),
+      favoritedAt: favoritedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(favoritedAt),
+      relativePath: relativePath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(relativePath),
+      genre: genre == null && nullToAbsent
+          ? const Value.absent()
+          : Value(genre),
     );
   }
 
@@ -552,6 +867,16 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       isFavorite: serializer.fromJson<bool>(json['isFavorite']),
       availability: serializer.fromJson<String>(json['availability']),
       source: serializer.fromJson<String?>(json['source']),
+      artworkPath: serializer.fromJson<String?>(json['artworkPath']),
+      albumId: serializer.fromJson<String?>(json['albumId']),
+      albumArtist: serializer.fromJson<String?>(json['albumArtist']),
+      trackNumber: serializer.fromJson<int?>(json['trackNumber']),
+      discNumber: serializer.fromJson<int?>(json['discNumber']),
+      year: serializer.fromJson<int?>(json['year']),
+      searchKey: serializer.fromJson<String?>(json['searchKey']),
+      favoritedAt: serializer.fromJson<DateTime?>(json['favoritedAt']),
+      relativePath: serializer.fromJson<String?>(json['relativePath']),
+      genre: serializer.fromJson<String?>(json['genre']),
     );
   }
   @override
@@ -575,6 +900,16 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
       'isFavorite': serializer.toJson<bool>(isFavorite),
       'availability': serializer.toJson<String>(availability),
       'source': serializer.toJson<String?>(source),
+      'artworkPath': serializer.toJson<String?>(artworkPath),
+      'albumId': serializer.toJson<String?>(albumId),
+      'albumArtist': serializer.toJson<String?>(albumArtist),
+      'trackNumber': serializer.toJson<int?>(trackNumber),
+      'discNumber': serializer.toJson<int?>(discNumber),
+      'year': serializer.toJson<int?>(year),
+      'searchKey': serializer.toJson<String?>(searchKey),
+      'favoritedAt': serializer.toJson<DateTime?>(favoritedAt),
+      'relativePath': serializer.toJson<String?>(relativePath),
+      'genre': serializer.toJson<String?>(genre),
     };
   }
 
@@ -596,6 +931,16 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     bool? isFavorite,
     String? availability,
     Value<String?> source = const Value.absent(),
+    Value<String?> artworkPath = const Value.absent(),
+    Value<String?> albumId = const Value.absent(),
+    Value<String?> albumArtist = const Value.absent(),
+    Value<int?> trackNumber = const Value.absent(),
+    Value<int?> discNumber = const Value.absent(),
+    Value<int?> year = const Value.absent(),
+    Value<String?> searchKey = const Value.absent(),
+    Value<DateTime?> favoritedAt = const Value.absent(),
+    Value<String?> relativePath = const Value.absent(),
+    Value<String?> genre = const Value.absent(),
   }) => MediaItemEntry(
     id: id ?? this.id,
     uri: uri ?? this.uri,
@@ -614,6 +959,16 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     isFavorite: isFavorite ?? this.isFavorite,
     availability: availability ?? this.availability,
     source: source.present ? source.value : this.source,
+    artworkPath: artworkPath.present ? artworkPath.value : this.artworkPath,
+    albumId: albumId.present ? albumId.value : this.albumId,
+    albumArtist: albumArtist.present ? albumArtist.value : this.albumArtist,
+    trackNumber: trackNumber.present ? trackNumber.value : this.trackNumber,
+    discNumber: discNumber.present ? discNumber.value : this.discNumber,
+    year: year.present ? year.value : this.year,
+    searchKey: searchKey.present ? searchKey.value : this.searchKey,
+    favoritedAt: favoritedAt.present ? favoritedAt.value : this.favoritedAt,
+    relativePath: relativePath.present ? relativePath.value : this.relativePath,
+    genre: genre.present ? genre.value : this.genre,
   );
   MediaItemEntry copyWithCompanion(MediaItemsTableCompanion data) {
     return MediaItemEntry(
@@ -642,6 +997,28 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
           ? data.availability.value
           : this.availability,
       source: data.source.present ? data.source.value : this.source,
+      artworkPath: data.artworkPath.present
+          ? data.artworkPath.value
+          : this.artworkPath,
+      albumId: data.albumId.present ? data.albumId.value : this.albumId,
+      albumArtist: data.albumArtist.present
+          ? data.albumArtist.value
+          : this.albumArtist,
+      trackNumber: data.trackNumber.present
+          ? data.trackNumber.value
+          : this.trackNumber,
+      discNumber: data.discNumber.present
+          ? data.discNumber.value
+          : this.discNumber,
+      year: data.year.present ? data.year.value : this.year,
+      searchKey: data.searchKey.present ? data.searchKey.value : this.searchKey,
+      favoritedAt: data.favoritedAt.present
+          ? data.favoritedAt.value
+          : this.favoritedAt,
+      relativePath: data.relativePath.present
+          ? data.relativePath.value
+          : this.relativePath,
+      genre: data.genre.present ? data.genre.value : this.genre,
     );
   }
 
@@ -664,13 +1041,23 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
           ..write('playCount: $playCount, ')
           ..write('isFavorite: $isFavorite, ')
           ..write('availability: $availability, ')
-          ..write('source: $source')
+          ..write('source: $source, ')
+          ..write('artworkPath: $artworkPath, ')
+          ..write('albumId: $albumId, ')
+          ..write('albumArtist: $albumArtist, ')
+          ..write('trackNumber: $trackNumber, ')
+          ..write('discNumber: $discNumber, ')
+          ..write('year: $year, ')
+          ..write('searchKey: $searchKey, ')
+          ..write('favoritedAt: $favoritedAt, ')
+          ..write('relativePath: $relativePath, ')
+          ..write('genre: $genre')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     uri,
     mediaType,
@@ -688,7 +1075,17 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
     isFavorite,
     availability,
     source,
-  );
+    artworkPath,
+    albumId,
+    albumArtist,
+    trackNumber,
+    discNumber,
+    year,
+    searchKey,
+    favoritedAt,
+    relativePath,
+    genre,
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -709,7 +1106,17 @@ class MediaItemEntry extends DataClass implements Insertable<MediaItemEntry> {
           other.playCount == this.playCount &&
           other.isFavorite == this.isFavorite &&
           other.availability == this.availability &&
-          other.source == this.source);
+          other.source == this.source &&
+          other.artworkPath == this.artworkPath &&
+          other.albumId == this.albumId &&
+          other.albumArtist == this.albumArtist &&
+          other.trackNumber == this.trackNumber &&
+          other.discNumber == this.discNumber &&
+          other.year == this.year &&
+          other.searchKey == this.searchKey &&
+          other.favoritedAt == this.favoritedAt &&
+          other.relativePath == this.relativePath &&
+          other.genre == this.genre);
 }
 
 class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
@@ -730,6 +1137,16 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
   final Value<bool> isFavorite;
   final Value<String> availability;
   final Value<String?> source;
+  final Value<String?> artworkPath;
+  final Value<String?> albumId;
+  final Value<String?> albumArtist;
+  final Value<int?> trackNumber;
+  final Value<int?> discNumber;
+  final Value<int?> year;
+  final Value<String?> searchKey;
+  final Value<DateTime?> favoritedAt;
+  final Value<String?> relativePath;
+  final Value<String?> genre;
   final Value<int> rowid;
   const MediaItemsTableCompanion({
     this.id = const Value.absent(),
@@ -749,6 +1166,16 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     this.isFavorite = const Value.absent(),
     this.availability = const Value.absent(),
     this.source = const Value.absent(),
+    this.artworkPath = const Value.absent(),
+    this.albumId = const Value.absent(),
+    this.albumArtist = const Value.absent(),
+    this.trackNumber = const Value.absent(),
+    this.discNumber = const Value.absent(),
+    this.year = const Value.absent(),
+    this.searchKey = const Value.absent(),
+    this.favoritedAt = const Value.absent(),
+    this.relativePath = const Value.absent(),
+    this.genre = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MediaItemsTableCompanion.insert({
@@ -769,6 +1196,16 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     this.isFavorite = const Value.absent(),
     this.availability = const Value.absent(),
     this.source = const Value.absent(),
+    this.artworkPath = const Value.absent(),
+    this.albumId = const Value.absent(),
+    this.albumArtist = const Value.absent(),
+    this.trackNumber = const Value.absent(),
+    this.discNumber = const Value.absent(),
+    this.year = const Value.absent(),
+    this.searchKey = const Value.absent(),
+    this.favoritedAt = const Value.absent(),
+    this.relativePath = const Value.absent(),
+    this.genre = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        uri = Value(uri),
@@ -795,6 +1232,16 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     Expression<bool>? isFavorite,
     Expression<String>? availability,
     Expression<String>? source,
+    Expression<String>? artworkPath,
+    Expression<String>? albumId,
+    Expression<String>? albumArtist,
+    Expression<int>? trackNumber,
+    Expression<int>? discNumber,
+    Expression<int>? year,
+    Expression<String>? searchKey,
+    Expression<DateTime>? favoritedAt,
+    Expression<String>? relativePath,
+    Expression<String>? genre,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -815,6 +1262,16 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
       if (isFavorite != null) 'is_favorite': isFavorite,
       if (availability != null) 'availability': availability,
       if (source != null) 'source': source,
+      if (artworkPath != null) 'artwork_path': artworkPath,
+      if (albumId != null) 'album_id': albumId,
+      if (albumArtist != null) 'album_artist': albumArtist,
+      if (trackNumber != null) 'track_number': trackNumber,
+      if (discNumber != null) 'disc_number': discNumber,
+      if (year != null) 'year': year,
+      if (searchKey != null) 'search_key': searchKey,
+      if (favoritedAt != null) 'favorited_at': favoritedAt,
+      if (relativePath != null) 'relative_path': relativePath,
+      if (genre != null) 'genre': genre,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -837,6 +1294,16 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     Value<bool>? isFavorite,
     Value<String>? availability,
     Value<String?>? source,
+    Value<String?>? artworkPath,
+    Value<String?>? albumId,
+    Value<String?>? albumArtist,
+    Value<int?>? trackNumber,
+    Value<int?>? discNumber,
+    Value<int?>? year,
+    Value<String?>? searchKey,
+    Value<DateTime?>? favoritedAt,
+    Value<String?>? relativePath,
+    Value<String?>? genre,
     Value<int>? rowid,
   }) {
     return MediaItemsTableCompanion(
@@ -857,6 +1324,16 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
       isFavorite: isFavorite ?? this.isFavorite,
       availability: availability ?? this.availability,
       source: source ?? this.source,
+      artworkPath: artworkPath ?? this.artworkPath,
+      albumId: albumId ?? this.albumId,
+      albumArtist: albumArtist ?? this.albumArtist,
+      trackNumber: trackNumber ?? this.trackNumber,
+      discNumber: discNumber ?? this.discNumber,
+      year: year ?? this.year,
+      searchKey: searchKey ?? this.searchKey,
+      favoritedAt: favoritedAt ?? this.favoritedAt,
+      relativePath: relativePath ?? this.relativePath,
+      genre: genre ?? this.genre,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -915,6 +1392,36 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
     if (source.present) {
       map['source'] = Variable<String>(source.value);
     }
+    if (artworkPath.present) {
+      map['artwork_path'] = Variable<String>(artworkPath.value);
+    }
+    if (albumId.present) {
+      map['album_id'] = Variable<String>(albumId.value);
+    }
+    if (albumArtist.present) {
+      map['album_artist'] = Variable<String>(albumArtist.value);
+    }
+    if (trackNumber.present) {
+      map['track_number'] = Variable<int>(trackNumber.value);
+    }
+    if (discNumber.present) {
+      map['disc_number'] = Variable<int>(discNumber.value);
+    }
+    if (year.present) {
+      map['year'] = Variable<int>(year.value);
+    }
+    if (searchKey.present) {
+      map['search_key'] = Variable<String>(searchKey.value);
+    }
+    if (favoritedAt.present) {
+      map['favorited_at'] = Variable<DateTime>(favoritedAt.value);
+    }
+    if (relativePath.present) {
+      map['relative_path'] = Variable<String>(relativePath.value);
+    }
+    if (genre.present) {
+      map['genre'] = Variable<String>(genre.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -941,6 +1448,16 @@ class MediaItemsTableCompanion extends UpdateCompanion<MediaItemEntry> {
           ..write('isFavorite: $isFavorite, ')
           ..write('availability: $availability, ')
           ..write('source: $source, ')
+          ..write('artworkPath: $artworkPath, ')
+          ..write('albumId: $albumId, ')
+          ..write('albumArtist: $albumArtist, ')
+          ..write('trackNumber: $trackNumber, ')
+          ..write('discNumber: $discNumber, ')
+          ..write('year: $year, ')
+          ..write('searchKey: $searchKey, ')
+          ..write('favoritedAt: $favoritedAt, ')
+          ..write('relativePath: $relativePath, ')
+          ..write('genre: $genre, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -2699,6 +3216,135 @@ class $DownloadsTableTable extends DownloadsTable
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _engineMeta = const VerificationMeta('engine');
+  @override
+  late final GeneratedColumn<String> engine = GeneratedColumn<String>(
+    'engine',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('http'),
+  );
+  static const VerificationMeta _thumbnailUrlMeta = const VerificationMeta(
+    'thumbnailUrl',
+  );
+  @override
+  late final GeneratedColumn<String> thumbnailUrl = GeneratedColumn<String>(
+    'thumbnail_url',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _thumbnailPathMeta = const VerificationMeta(
+    'thumbnailPath',
+  );
+  @override
+  late final GeneratedColumn<String> thumbnailPath = GeneratedColumn<String>(
+    'thumbnail_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _qualityLabelMeta = const VerificationMeta(
+    'qualityLabel',
+  );
+  @override
+  late final GeneratedColumn<String> qualityLabel = GeneratedColumn<String>(
+    'quality_label',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _formatSelectorMeta = const VerificationMeta(
+    'formatSelector',
+  );
+  @override
+  late final GeneratedColumn<String> formatSelector = GeneratedColumn<String>(
+    'format_selector',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _audioFormatMeta = const VerificationMeta(
+    'audioFormat',
+  );
+  @override
+  late final GeneratedColumn<String> audioFormat = GeneratedColumn<String>(
+    'audio_format',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _extractorArgsMeta = const VerificationMeta(
+    'extractorArgs',
+  );
+  @override
+  late final GeneratedColumn<String> extractorArgs = GeneratedColumn<String>(
+    'extractor_args',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _uploaderMeta = const VerificationMeta(
+    'uploader',
+  );
+  @override
+  late final GeneratedColumn<String> uploader = GeneratedColumn<String>(
+    'uploader',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _durationSecMeta = const VerificationMeta(
+    'durationSec',
+  );
+  @override
+  late final GeneratedColumn<int> durationSec = GeneratedColumn<int>(
+    'duration_sec',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _streamSizesMeta = const VerificationMeta(
+    'streamSizes',
+  );
+  @override
+  late final GeneratedColumn<String> streamSizes = GeneratedColumn<String>(
+    'stream_sizes',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _errorDetailMeta = const VerificationMeta(
+    'errorDetail',
+  );
+  @override
+  late final GeneratedColumn<String> errorDetail = GeneratedColumn<String>(
+    'error_detail',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -2718,6 +3364,18 @@ class $DownloadsTableTable extends DownloadsTable
     updatedAt,
     finalPath,
     mediaId,
+    kind,
+    engine,
+    thumbnailUrl,
+    thumbnailPath,
+    qualityLabel,
+    formatSelector,
+    audioFormat,
+    extractorArgs,
+    uploader,
+    durationSec,
+    streamSizes,
+    errorDetail,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2858,6 +3516,105 @@ class $DownloadsTableTable extends DownloadsTable
         mediaId.isAcceptableOrUnknown(data['media_id']!, _mediaIdMeta),
       );
     }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    }
+    if (data.containsKey('engine')) {
+      context.handle(
+        _engineMeta,
+        engine.isAcceptableOrUnknown(data['engine']!, _engineMeta),
+      );
+    }
+    if (data.containsKey('thumbnail_url')) {
+      context.handle(
+        _thumbnailUrlMeta,
+        thumbnailUrl.isAcceptableOrUnknown(
+          data['thumbnail_url']!,
+          _thumbnailUrlMeta,
+        ),
+      );
+    }
+    if (data.containsKey('thumbnail_path')) {
+      context.handle(
+        _thumbnailPathMeta,
+        thumbnailPath.isAcceptableOrUnknown(
+          data['thumbnail_path']!,
+          _thumbnailPathMeta,
+        ),
+      );
+    }
+    if (data.containsKey('quality_label')) {
+      context.handle(
+        _qualityLabelMeta,
+        qualityLabel.isAcceptableOrUnknown(
+          data['quality_label']!,
+          _qualityLabelMeta,
+        ),
+      );
+    }
+    if (data.containsKey('format_selector')) {
+      context.handle(
+        _formatSelectorMeta,
+        formatSelector.isAcceptableOrUnknown(
+          data['format_selector']!,
+          _formatSelectorMeta,
+        ),
+      );
+    }
+    if (data.containsKey('audio_format')) {
+      context.handle(
+        _audioFormatMeta,
+        audioFormat.isAcceptableOrUnknown(
+          data['audio_format']!,
+          _audioFormatMeta,
+        ),
+      );
+    }
+    if (data.containsKey('extractor_args')) {
+      context.handle(
+        _extractorArgsMeta,
+        extractorArgs.isAcceptableOrUnknown(
+          data['extractor_args']!,
+          _extractorArgsMeta,
+        ),
+      );
+    }
+    if (data.containsKey('uploader')) {
+      context.handle(
+        _uploaderMeta,
+        uploader.isAcceptableOrUnknown(data['uploader']!, _uploaderMeta),
+      );
+    }
+    if (data.containsKey('duration_sec')) {
+      context.handle(
+        _durationSecMeta,
+        durationSec.isAcceptableOrUnknown(
+          data['duration_sec']!,
+          _durationSecMeta,
+        ),
+      );
+    }
+    if (data.containsKey('stream_sizes')) {
+      context.handle(
+        _streamSizesMeta,
+        streamSizes.isAcceptableOrUnknown(
+          data['stream_sizes']!,
+          _streamSizesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('error_detail')) {
+      context.handle(
+        _errorDetailMeta,
+        errorDetail.isAcceptableOrUnknown(
+          data['error_detail']!,
+          _errorDetailMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -2935,6 +3692,54 @@ class $DownloadsTableTable extends DownloadsTable
         DriftSqlType.string,
         data['${effectivePrefix}media_id'],
       ),
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      ),
+      engine: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}engine'],
+      )!,
+      thumbnailUrl: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}thumbnail_url'],
+      ),
+      thumbnailPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}thumbnail_path'],
+      ),
+      qualityLabel: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}quality_label'],
+      ),
+      formatSelector: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}format_selector'],
+      ),
+      audioFormat: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}audio_format'],
+      ),
+      extractorArgs: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}extractor_args'],
+      ),
+      uploader: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}uploader'],
+      ),
+      durationSec: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}duration_sec'],
+      ),
+      streamSizes: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}stream_sizes'],
+      ),
+      errorDetail: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}error_detail'],
+      ),
     );
   }
 
@@ -2962,6 +3767,27 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
   final DateTime updatedAt;
   final String? finalPath;
   final String? mediaId;
+
+  /// 'audio' | 'video' (null = not known yet, e.g. direct link before sniffing)
+  final String? kind;
+
+  /// 'http' (direct link engine) | 'extractor' (yt-dlp web link downloader)
+  final String engine;
+  final String? thumbnailUrl;
+  final String? thumbnailPath;
+  final String? qualityLabel;
+  final String? formatSelector;
+  final String? audioFormat;
+  final String? extractorArgs;
+  final String? uploader;
+  final int? durationSec;
+
+  /// JSON list of expected stream sizes in bytes (e.g. [video, audio]); used
+  /// to turn yt-dlp's per-stream percentages into one overall progress value.
+  final String? streamSizes;
+
+  /// Short, sanitized reason reported by the downloader (shown under the error).
+  final String? errorDetail;
   const DownloadEntry({
     required this.id,
     required this.url,
@@ -2980,6 +3806,18 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
     required this.updatedAt,
     this.finalPath,
     this.mediaId,
+    this.kind,
+    required this.engine,
+    this.thumbnailUrl,
+    this.thumbnailPath,
+    this.qualityLabel,
+    this.formatSelector,
+    this.audioFormat,
+    this.extractorArgs,
+    this.uploader,
+    this.durationSec,
+    this.streamSizes,
+    this.errorDetail,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -3015,6 +3853,40 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
     if (!nullToAbsent || mediaId != null) {
       map['media_id'] = Variable<String>(mediaId);
     }
+    if (!nullToAbsent || kind != null) {
+      map['kind'] = Variable<String>(kind);
+    }
+    map['engine'] = Variable<String>(engine);
+    if (!nullToAbsent || thumbnailUrl != null) {
+      map['thumbnail_url'] = Variable<String>(thumbnailUrl);
+    }
+    if (!nullToAbsent || thumbnailPath != null) {
+      map['thumbnail_path'] = Variable<String>(thumbnailPath);
+    }
+    if (!nullToAbsent || qualityLabel != null) {
+      map['quality_label'] = Variable<String>(qualityLabel);
+    }
+    if (!nullToAbsent || formatSelector != null) {
+      map['format_selector'] = Variable<String>(formatSelector);
+    }
+    if (!nullToAbsent || audioFormat != null) {
+      map['audio_format'] = Variable<String>(audioFormat);
+    }
+    if (!nullToAbsent || extractorArgs != null) {
+      map['extractor_args'] = Variable<String>(extractorArgs);
+    }
+    if (!nullToAbsent || uploader != null) {
+      map['uploader'] = Variable<String>(uploader);
+    }
+    if (!nullToAbsent || durationSec != null) {
+      map['duration_sec'] = Variable<int>(durationSec);
+    }
+    if (!nullToAbsent || streamSizes != null) {
+      map['stream_sizes'] = Variable<String>(streamSizes);
+    }
+    if (!nullToAbsent || errorDetail != null) {
+      map['error_detail'] = Variable<String>(errorDetail);
+    }
     return map;
   }
 
@@ -3049,6 +3921,38 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
       mediaId: mediaId == null && nullToAbsent
           ? const Value.absent()
           : Value(mediaId),
+      kind: kind == null && nullToAbsent ? const Value.absent() : Value(kind),
+      engine: Value(engine),
+      thumbnailUrl: thumbnailUrl == null && nullToAbsent
+          ? const Value.absent()
+          : Value(thumbnailUrl),
+      thumbnailPath: thumbnailPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(thumbnailPath),
+      qualityLabel: qualityLabel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(qualityLabel),
+      formatSelector: formatSelector == null && nullToAbsent
+          ? const Value.absent()
+          : Value(formatSelector),
+      audioFormat: audioFormat == null && nullToAbsent
+          ? const Value.absent()
+          : Value(audioFormat),
+      extractorArgs: extractorArgs == null && nullToAbsent
+          ? const Value.absent()
+          : Value(extractorArgs),
+      uploader: uploader == null && nullToAbsent
+          ? const Value.absent()
+          : Value(uploader),
+      durationSec: durationSec == null && nullToAbsent
+          ? const Value.absent()
+          : Value(durationSec),
+      streamSizes: streamSizes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(streamSizes),
+      errorDetail: errorDetail == null && nullToAbsent
+          ? const Value.absent()
+          : Value(errorDetail),
     );
   }
 
@@ -3075,6 +3979,18 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       finalPath: serializer.fromJson<String?>(json['finalPath']),
       mediaId: serializer.fromJson<String?>(json['mediaId']),
+      kind: serializer.fromJson<String?>(json['kind']),
+      engine: serializer.fromJson<String>(json['engine']),
+      thumbnailUrl: serializer.fromJson<String?>(json['thumbnailUrl']),
+      thumbnailPath: serializer.fromJson<String?>(json['thumbnailPath']),
+      qualityLabel: serializer.fromJson<String?>(json['qualityLabel']),
+      formatSelector: serializer.fromJson<String?>(json['formatSelector']),
+      audioFormat: serializer.fromJson<String?>(json['audioFormat']),
+      extractorArgs: serializer.fromJson<String?>(json['extractorArgs']),
+      uploader: serializer.fromJson<String?>(json['uploader']),
+      durationSec: serializer.fromJson<int?>(json['durationSec']),
+      streamSizes: serializer.fromJson<String?>(json['streamSizes']),
+      errorDetail: serializer.fromJson<String?>(json['errorDetail']),
     );
   }
   @override
@@ -3098,6 +4014,18 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'finalPath': serializer.toJson<String?>(finalPath),
       'mediaId': serializer.toJson<String?>(mediaId),
+      'kind': serializer.toJson<String?>(kind),
+      'engine': serializer.toJson<String>(engine),
+      'thumbnailUrl': serializer.toJson<String?>(thumbnailUrl),
+      'thumbnailPath': serializer.toJson<String?>(thumbnailPath),
+      'qualityLabel': serializer.toJson<String?>(qualityLabel),
+      'formatSelector': serializer.toJson<String?>(formatSelector),
+      'audioFormat': serializer.toJson<String?>(audioFormat),
+      'extractorArgs': serializer.toJson<String?>(extractorArgs),
+      'uploader': serializer.toJson<String?>(uploader),
+      'durationSec': serializer.toJson<int?>(durationSec),
+      'streamSizes': serializer.toJson<String?>(streamSizes),
+      'errorDetail': serializer.toJson<String?>(errorDetail),
     };
   }
 
@@ -3119,6 +4047,18 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
     DateTime? updatedAt,
     Value<String?> finalPath = const Value.absent(),
     Value<String?> mediaId = const Value.absent(),
+    Value<String?> kind = const Value.absent(),
+    String? engine,
+    Value<String?> thumbnailUrl = const Value.absent(),
+    Value<String?> thumbnailPath = const Value.absent(),
+    Value<String?> qualityLabel = const Value.absent(),
+    Value<String?> formatSelector = const Value.absent(),
+    Value<String?> audioFormat = const Value.absent(),
+    Value<String?> extractorArgs = const Value.absent(),
+    Value<String?> uploader = const Value.absent(),
+    Value<int?> durationSec = const Value.absent(),
+    Value<String?> streamSizes = const Value.absent(),
+    Value<String?> errorDetail = const Value.absent(),
   }) => DownloadEntry(
     id: id ?? this.id,
     url: url ?? this.url,
@@ -3137,6 +4077,24 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
     updatedAt: updatedAt ?? this.updatedAt,
     finalPath: finalPath.present ? finalPath.value : this.finalPath,
     mediaId: mediaId.present ? mediaId.value : this.mediaId,
+    kind: kind.present ? kind.value : this.kind,
+    engine: engine ?? this.engine,
+    thumbnailUrl: thumbnailUrl.present ? thumbnailUrl.value : this.thumbnailUrl,
+    thumbnailPath: thumbnailPath.present
+        ? thumbnailPath.value
+        : this.thumbnailPath,
+    qualityLabel: qualityLabel.present ? qualityLabel.value : this.qualityLabel,
+    formatSelector: formatSelector.present
+        ? formatSelector.value
+        : this.formatSelector,
+    audioFormat: audioFormat.present ? audioFormat.value : this.audioFormat,
+    extractorArgs: extractorArgs.present
+        ? extractorArgs.value
+        : this.extractorArgs,
+    uploader: uploader.present ? uploader.value : this.uploader,
+    durationSec: durationSec.present ? durationSec.value : this.durationSec,
+    streamSizes: streamSizes.present ? streamSizes.value : this.streamSizes,
+    errorDetail: errorDetail.present ? errorDetail.value : this.errorDetail,
   );
   DownloadEntry copyWithCompanion(DownloadsTableCompanion data) {
     return DownloadEntry(
@@ -3167,6 +4125,36 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       finalPath: data.finalPath.present ? data.finalPath.value : this.finalPath,
       mediaId: data.mediaId.present ? data.mediaId.value : this.mediaId,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      engine: data.engine.present ? data.engine.value : this.engine,
+      thumbnailUrl: data.thumbnailUrl.present
+          ? data.thumbnailUrl.value
+          : this.thumbnailUrl,
+      thumbnailPath: data.thumbnailPath.present
+          ? data.thumbnailPath.value
+          : this.thumbnailPath,
+      qualityLabel: data.qualityLabel.present
+          ? data.qualityLabel.value
+          : this.qualityLabel,
+      formatSelector: data.formatSelector.present
+          ? data.formatSelector.value
+          : this.formatSelector,
+      audioFormat: data.audioFormat.present
+          ? data.audioFormat.value
+          : this.audioFormat,
+      extractorArgs: data.extractorArgs.present
+          ? data.extractorArgs.value
+          : this.extractorArgs,
+      uploader: data.uploader.present ? data.uploader.value : this.uploader,
+      durationSec: data.durationSec.present
+          ? data.durationSec.value
+          : this.durationSec,
+      streamSizes: data.streamSizes.present
+          ? data.streamSizes.value
+          : this.streamSizes,
+      errorDetail: data.errorDetail.present
+          ? data.errorDetail.value
+          : this.errorDetail,
     );
   }
 
@@ -3189,13 +4177,25 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('finalPath: $finalPath, ')
-          ..write('mediaId: $mediaId')
+          ..write('mediaId: $mediaId, ')
+          ..write('kind: $kind, ')
+          ..write('engine: $engine, ')
+          ..write('thumbnailUrl: $thumbnailUrl, ')
+          ..write('thumbnailPath: $thumbnailPath, ')
+          ..write('qualityLabel: $qualityLabel, ')
+          ..write('formatSelector: $formatSelector, ')
+          ..write('audioFormat: $audioFormat, ')
+          ..write('extractorArgs: $extractorArgs, ')
+          ..write('uploader: $uploader, ')
+          ..write('durationSec: $durationSec, ')
+          ..write('streamSizes: $streamSizes, ')
+          ..write('errorDetail: $errorDetail')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     url,
     host,
@@ -3213,7 +4213,19 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
     updatedAt,
     finalPath,
     mediaId,
-  );
+    kind,
+    engine,
+    thumbnailUrl,
+    thumbnailPath,
+    qualityLabel,
+    formatSelector,
+    audioFormat,
+    extractorArgs,
+    uploader,
+    durationSec,
+    streamSizes,
+    errorDetail,
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3234,7 +4246,19 @@ class DownloadEntry extends DataClass implements Insertable<DownloadEntry> {
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
           other.finalPath == this.finalPath &&
-          other.mediaId == this.mediaId);
+          other.mediaId == this.mediaId &&
+          other.kind == this.kind &&
+          other.engine == this.engine &&
+          other.thumbnailUrl == this.thumbnailUrl &&
+          other.thumbnailPath == this.thumbnailPath &&
+          other.qualityLabel == this.qualityLabel &&
+          other.formatSelector == this.formatSelector &&
+          other.audioFormat == this.audioFormat &&
+          other.extractorArgs == this.extractorArgs &&
+          other.uploader == this.uploader &&
+          other.durationSec == this.durationSec &&
+          other.streamSizes == this.streamSizes &&
+          other.errorDetail == this.errorDetail);
 }
 
 class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
@@ -3255,6 +4279,18 @@ class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
   final Value<DateTime> updatedAt;
   final Value<String?> finalPath;
   final Value<String?> mediaId;
+  final Value<String?> kind;
+  final Value<String> engine;
+  final Value<String?> thumbnailUrl;
+  final Value<String?> thumbnailPath;
+  final Value<String?> qualityLabel;
+  final Value<String?> formatSelector;
+  final Value<String?> audioFormat;
+  final Value<String?> extractorArgs;
+  final Value<String?> uploader;
+  final Value<int?> durationSec;
+  final Value<String?> streamSizes;
+  final Value<String?> errorDetail;
   final Value<int> rowid;
   const DownloadsTableCompanion({
     this.id = const Value.absent(),
@@ -3274,6 +4310,18 @@ class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
     this.updatedAt = const Value.absent(),
     this.finalPath = const Value.absent(),
     this.mediaId = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.engine = const Value.absent(),
+    this.thumbnailUrl = const Value.absent(),
+    this.thumbnailPath = const Value.absent(),
+    this.qualityLabel = const Value.absent(),
+    this.formatSelector = const Value.absent(),
+    this.audioFormat = const Value.absent(),
+    this.extractorArgs = const Value.absent(),
+    this.uploader = const Value.absent(),
+    this.durationSec = const Value.absent(),
+    this.streamSizes = const Value.absent(),
+    this.errorDetail = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DownloadsTableCompanion.insert({
@@ -3294,6 +4342,18 @@ class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
     required DateTime updatedAt,
     this.finalPath = const Value.absent(),
     this.mediaId = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.engine = const Value.absent(),
+    this.thumbnailUrl = const Value.absent(),
+    this.thumbnailPath = const Value.absent(),
+    this.qualityLabel = const Value.absent(),
+    this.formatSelector = const Value.absent(),
+    this.audioFormat = const Value.absent(),
+    this.extractorArgs = const Value.absent(),
+    this.uploader = const Value.absent(),
+    this.durationSec = const Value.absent(),
+    this.streamSizes = const Value.absent(),
+    this.errorDetail = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        url = Value(url),
@@ -3321,6 +4381,18 @@ class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
     Expression<DateTime>? updatedAt,
     Expression<String>? finalPath,
     Expression<String>? mediaId,
+    Expression<String>? kind,
+    Expression<String>? engine,
+    Expression<String>? thumbnailUrl,
+    Expression<String>? thumbnailPath,
+    Expression<String>? qualityLabel,
+    Expression<String>? formatSelector,
+    Expression<String>? audioFormat,
+    Expression<String>? extractorArgs,
+    Expression<String>? uploader,
+    Expression<int>? durationSec,
+    Expression<String>? streamSizes,
+    Expression<String>? errorDetail,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3341,6 +4413,18 @@ class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
       if (updatedAt != null) 'updated_at': updatedAt,
       if (finalPath != null) 'final_path': finalPath,
       if (mediaId != null) 'media_id': mediaId,
+      if (kind != null) 'kind': kind,
+      if (engine != null) 'engine': engine,
+      if (thumbnailUrl != null) 'thumbnail_url': thumbnailUrl,
+      if (thumbnailPath != null) 'thumbnail_path': thumbnailPath,
+      if (qualityLabel != null) 'quality_label': qualityLabel,
+      if (formatSelector != null) 'format_selector': formatSelector,
+      if (audioFormat != null) 'audio_format': audioFormat,
+      if (extractorArgs != null) 'extractor_args': extractorArgs,
+      if (uploader != null) 'uploader': uploader,
+      if (durationSec != null) 'duration_sec': durationSec,
+      if (streamSizes != null) 'stream_sizes': streamSizes,
+      if (errorDetail != null) 'error_detail': errorDetail,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3363,6 +4447,18 @@ class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
     Value<DateTime>? updatedAt,
     Value<String?>? finalPath,
     Value<String?>? mediaId,
+    Value<String?>? kind,
+    Value<String>? engine,
+    Value<String?>? thumbnailUrl,
+    Value<String?>? thumbnailPath,
+    Value<String?>? qualityLabel,
+    Value<String?>? formatSelector,
+    Value<String?>? audioFormat,
+    Value<String?>? extractorArgs,
+    Value<String?>? uploader,
+    Value<int?>? durationSec,
+    Value<String?>? streamSizes,
+    Value<String?>? errorDetail,
     Value<int>? rowid,
   }) {
     return DownloadsTableCompanion(
@@ -3383,6 +4479,18 @@ class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
       updatedAt: updatedAt ?? this.updatedAt,
       finalPath: finalPath ?? this.finalPath,
       mediaId: mediaId ?? this.mediaId,
+      kind: kind ?? this.kind,
+      engine: engine ?? this.engine,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      thumbnailPath: thumbnailPath ?? this.thumbnailPath,
+      qualityLabel: qualityLabel ?? this.qualityLabel,
+      formatSelector: formatSelector ?? this.formatSelector,
+      audioFormat: audioFormat ?? this.audioFormat,
+      extractorArgs: extractorArgs ?? this.extractorArgs,
+      uploader: uploader ?? this.uploader,
+      durationSec: durationSec ?? this.durationSec,
+      streamSizes: streamSizes ?? this.streamSizes,
+      errorDetail: errorDetail ?? this.errorDetail,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3441,6 +4549,42 @@ class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
     if (mediaId.present) {
       map['media_id'] = Variable<String>(mediaId.value);
     }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (engine.present) {
+      map['engine'] = Variable<String>(engine.value);
+    }
+    if (thumbnailUrl.present) {
+      map['thumbnail_url'] = Variable<String>(thumbnailUrl.value);
+    }
+    if (thumbnailPath.present) {
+      map['thumbnail_path'] = Variable<String>(thumbnailPath.value);
+    }
+    if (qualityLabel.present) {
+      map['quality_label'] = Variable<String>(qualityLabel.value);
+    }
+    if (formatSelector.present) {
+      map['format_selector'] = Variable<String>(formatSelector.value);
+    }
+    if (audioFormat.present) {
+      map['audio_format'] = Variable<String>(audioFormat.value);
+    }
+    if (extractorArgs.present) {
+      map['extractor_args'] = Variable<String>(extractorArgs.value);
+    }
+    if (uploader.present) {
+      map['uploader'] = Variable<String>(uploader.value);
+    }
+    if (durationSec.present) {
+      map['duration_sec'] = Variable<int>(durationSec.value);
+    }
+    if (streamSizes.present) {
+      map['stream_sizes'] = Variable<String>(streamSizes.value);
+    }
+    if (errorDetail.present) {
+      map['error_detail'] = Variable<String>(errorDetail.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3467,6 +4611,18 @@ class DownloadsTableCompanion extends UpdateCompanion<DownloadEntry> {
           ..write('updatedAt: $updatedAt, ')
           ..write('finalPath: $finalPath, ')
           ..write('mediaId: $mediaId, ')
+          ..write('kind: $kind, ')
+          ..write('engine: $engine, ')
+          ..write('thumbnailUrl: $thumbnailUrl, ')
+          ..write('thumbnailPath: $thumbnailPath, ')
+          ..write('qualityLabel: $qualityLabel, ')
+          ..write('formatSelector: $formatSelector, ')
+          ..write('audioFormat: $audioFormat, ')
+          ..write('extractorArgs: $extractorArgs, ')
+          ..write('uploader: $uploader, ')
+          ..write('durationSec: $durationSec, ')
+          ..write('streamSizes: $streamSizes, ')
+          ..write('errorDetail: $errorDetail, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3520,6 +4676,16 @@ typedef $$MediaItemsTableTableCreateCompanionBuilder =
       Value<bool> isFavorite,
       Value<String> availability,
       Value<String?> source,
+      Value<String?> artworkPath,
+      Value<String?> albumId,
+      Value<String?> albumArtist,
+      Value<int?> trackNumber,
+      Value<int?> discNumber,
+      Value<int?> year,
+      Value<String?> searchKey,
+      Value<DateTime?> favoritedAt,
+      Value<String?> relativePath,
+      Value<String?> genre,
       Value<int> rowid,
     });
 typedef $$MediaItemsTableTableUpdateCompanionBuilder =
@@ -3541,6 +4707,16 @@ typedef $$MediaItemsTableTableUpdateCompanionBuilder =
       Value<bool> isFavorite,
       Value<String> availability,
       Value<String?> source,
+      Value<String?> artworkPath,
+      Value<String?> albumId,
+      Value<String?> albumArtist,
+      Value<int?> trackNumber,
+      Value<int?> discNumber,
+      Value<int?> year,
+      Value<String?> searchKey,
+      Value<DateTime?> favoritedAt,
+      Value<String?> relativePath,
+      Value<String?> genre,
       Value<int> rowid,
     });
 
@@ -3635,6 +4811,56 @@ class $$MediaItemsTableTableFilterComposer
 
   ColumnFilters<String> get source => $composableBuilder(
     column: $table.source,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get artworkPath => $composableBuilder(
+    column: $table.artworkPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get albumId => $composableBuilder(
+    column: $table.albumId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get albumArtist => $composableBuilder(
+    column: $table.albumArtist,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get trackNumber => $composableBuilder(
+    column: $table.trackNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get discNumber => $composableBuilder(
+    column: $table.discNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get year => $composableBuilder(
+    column: $table.year,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get searchKey => $composableBuilder(
+    column: $table.searchKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get favoritedAt => $composableBuilder(
+    column: $table.favoritedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get genre => $composableBuilder(
+    column: $table.genre,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -3732,6 +4958,56 @@ class $$MediaItemsTableTableOrderingComposer
     column: $table.source,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get artworkPath => $composableBuilder(
+    column: $table.artworkPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get albumId => $composableBuilder(
+    column: $table.albumId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get albumArtist => $composableBuilder(
+    column: $table.albumArtist,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get trackNumber => $composableBuilder(
+    column: $table.trackNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get discNumber => $composableBuilder(
+    column: $table.discNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get year => $composableBuilder(
+    column: $table.year,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get searchKey => $composableBuilder(
+    column: $table.searchKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get favoritedAt => $composableBuilder(
+    column: $table.favoritedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get genre => $composableBuilder(
+    column: $table.genre,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MediaItemsTableTableAnnotationComposer
@@ -3801,6 +5077,48 @@ class $$MediaItemsTableTableAnnotationComposer
 
   GeneratedColumn<String> get source =>
       $composableBuilder(column: $table.source, builder: (column) => column);
+
+  GeneratedColumn<String> get artworkPath => $composableBuilder(
+    column: $table.artworkPath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get albumId =>
+      $composableBuilder(column: $table.albumId, builder: (column) => column);
+
+  GeneratedColumn<String> get albumArtist => $composableBuilder(
+    column: $table.albumArtist,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get trackNumber => $composableBuilder(
+    column: $table.trackNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get discNumber => $composableBuilder(
+    column: $table.discNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get year =>
+      $composableBuilder(column: $table.year, builder: (column) => column);
+
+  GeneratedColumn<String> get searchKey =>
+      $composableBuilder(column: $table.searchKey, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get favoritedAt => $composableBuilder(
+    column: $table.favoritedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get relativePath => $composableBuilder(
+    column: $table.relativePath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get genre =>
+      $composableBuilder(column: $table.genre, builder: (column) => column);
 }
 
 class $$MediaItemsTableTableTableManager
@@ -3857,6 +5175,16 @@ class $$MediaItemsTableTableTableManager
                 Value<bool> isFavorite = const Value.absent(),
                 Value<String> availability = const Value.absent(),
                 Value<String?> source = const Value.absent(),
+                Value<String?> artworkPath = const Value.absent(),
+                Value<String?> albumId = const Value.absent(),
+                Value<String?> albumArtist = const Value.absent(),
+                Value<int?> trackNumber = const Value.absent(),
+                Value<int?> discNumber = const Value.absent(),
+                Value<int?> year = const Value.absent(),
+                Value<String?> searchKey = const Value.absent(),
+                Value<DateTime?> favoritedAt = const Value.absent(),
+                Value<String?> relativePath = const Value.absent(),
+                Value<String?> genre = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MediaItemsTableCompanion(
                 id: id,
@@ -3876,6 +5204,16 @@ class $$MediaItemsTableTableTableManager
                 isFavorite: isFavorite,
                 availability: availability,
                 source: source,
+                artworkPath: artworkPath,
+                albumId: albumId,
+                albumArtist: albumArtist,
+                trackNumber: trackNumber,
+                discNumber: discNumber,
+                year: year,
+                searchKey: searchKey,
+                favoritedAt: favoritedAt,
+                relativePath: relativePath,
+                genre: genre,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -3897,6 +5235,16 @@ class $$MediaItemsTableTableTableManager
                 Value<bool> isFavorite = const Value.absent(),
                 Value<String> availability = const Value.absent(),
                 Value<String?> source = const Value.absent(),
+                Value<String?> artworkPath = const Value.absent(),
+                Value<String?> albumId = const Value.absent(),
+                Value<String?> albumArtist = const Value.absent(),
+                Value<int?> trackNumber = const Value.absent(),
+                Value<int?> discNumber = const Value.absent(),
+                Value<int?> year = const Value.absent(),
+                Value<String?> searchKey = const Value.absent(),
+                Value<DateTime?> favoritedAt = const Value.absent(),
+                Value<String?> relativePath = const Value.absent(),
+                Value<String?> genre = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MediaItemsTableCompanion.insert(
                 id: id,
@@ -3916,6 +5264,16 @@ class $$MediaItemsTableTableTableManager
                 isFavorite: isFavorite,
                 availability: availability,
                 source: source,
+                artworkPath: artworkPath,
+                albumId: albumId,
+                albumArtist: albumArtist,
+                trackNumber: trackNumber,
+                discNumber: discNumber,
+                year: year,
+                searchKey: searchKey,
+                favoritedAt: favoritedAt,
+                relativePath: relativePath,
+                genre: genre,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -4905,6 +6263,18 @@ typedef $$DownloadsTableTableCreateCompanionBuilder =
       required DateTime updatedAt,
       Value<String?> finalPath,
       Value<String?> mediaId,
+      Value<String?> kind,
+      Value<String> engine,
+      Value<String?> thumbnailUrl,
+      Value<String?> thumbnailPath,
+      Value<String?> qualityLabel,
+      Value<String?> formatSelector,
+      Value<String?> audioFormat,
+      Value<String?> extractorArgs,
+      Value<String?> uploader,
+      Value<int?> durationSec,
+      Value<String?> streamSizes,
+      Value<String?> errorDetail,
       Value<int> rowid,
     });
 typedef $$DownloadsTableTableUpdateCompanionBuilder =
@@ -4926,6 +6296,18 @@ typedef $$DownloadsTableTableUpdateCompanionBuilder =
       Value<DateTime> updatedAt,
       Value<String?> finalPath,
       Value<String?> mediaId,
+      Value<String?> kind,
+      Value<String> engine,
+      Value<String?> thumbnailUrl,
+      Value<String?> thumbnailPath,
+      Value<String?> qualityLabel,
+      Value<String?> formatSelector,
+      Value<String?> audioFormat,
+      Value<String?> extractorArgs,
+      Value<String?> uploader,
+      Value<int?> durationSec,
+      Value<String?> streamSizes,
+      Value<String?> errorDetail,
       Value<int> rowid,
     });
 
@@ -5020,6 +6402,66 @@ class $$DownloadsTableTableFilterComposer
 
   ColumnFilters<String> get mediaId => $composableBuilder(
     column: $table.mediaId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get engine => $composableBuilder(
+    column: $table.engine,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get thumbnailUrl => $composableBuilder(
+    column: $table.thumbnailUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get thumbnailPath => $composableBuilder(
+    column: $table.thumbnailPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get qualityLabel => $composableBuilder(
+    column: $table.qualityLabel,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get formatSelector => $composableBuilder(
+    column: $table.formatSelector,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get audioFormat => $composableBuilder(
+    column: $table.audioFormat,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get extractorArgs => $composableBuilder(
+    column: $table.extractorArgs,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get uploader => $composableBuilder(
+    column: $table.uploader,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get durationSec => $composableBuilder(
+    column: $table.durationSec,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get streamSizes => $composableBuilder(
+    column: $table.streamSizes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get errorDetail => $composableBuilder(
+    column: $table.errorDetail,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -5117,6 +6559,66 @@ class $$DownloadsTableTableOrderingComposer
     column: $table.mediaId,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get engine => $composableBuilder(
+    column: $table.engine,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get thumbnailUrl => $composableBuilder(
+    column: $table.thumbnailUrl,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get thumbnailPath => $composableBuilder(
+    column: $table.thumbnailPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get qualityLabel => $composableBuilder(
+    column: $table.qualityLabel,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get formatSelector => $composableBuilder(
+    column: $table.formatSelector,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get audioFormat => $composableBuilder(
+    column: $table.audioFormat,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get extractorArgs => $composableBuilder(
+    column: $table.extractorArgs,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get uploader => $composableBuilder(
+    column: $table.uploader,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get durationSec => $composableBuilder(
+    column: $table.durationSec,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get streamSizes => $composableBuilder(
+    column: $table.streamSizes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get errorDetail => $composableBuilder(
+    column: $table.errorDetail,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$DownloadsTableTableAnnotationComposer
@@ -5188,6 +6690,60 @@ class $$DownloadsTableTableAnnotationComposer
 
   GeneratedColumn<String> get mediaId =>
       $composableBuilder(column: $table.mediaId, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get engine =>
+      $composableBuilder(column: $table.engine, builder: (column) => column);
+
+  GeneratedColumn<String> get thumbnailUrl => $composableBuilder(
+    column: $table.thumbnailUrl,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get thumbnailPath => $composableBuilder(
+    column: $table.thumbnailPath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get qualityLabel => $composableBuilder(
+    column: $table.qualityLabel,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get formatSelector => $composableBuilder(
+    column: $table.formatSelector,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get audioFormat => $composableBuilder(
+    column: $table.audioFormat,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get extractorArgs => $composableBuilder(
+    column: $table.extractorArgs,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get uploader =>
+      $composableBuilder(column: $table.uploader, builder: (column) => column);
+
+  GeneratedColumn<int> get durationSec => $composableBuilder(
+    column: $table.durationSec,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get streamSizes => $composableBuilder(
+    column: $table.streamSizes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get errorDetail => $composableBuilder(
+    column: $table.errorDetail,
+    builder: (column) => column,
+  );
 }
 
 class $$DownloadsTableTableTableManager
@@ -5240,6 +6796,18 @@ class $$DownloadsTableTableTableManager
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<String?> finalPath = const Value.absent(),
                 Value<String?> mediaId = const Value.absent(),
+                Value<String?> kind = const Value.absent(),
+                Value<String> engine = const Value.absent(),
+                Value<String?> thumbnailUrl = const Value.absent(),
+                Value<String?> thumbnailPath = const Value.absent(),
+                Value<String?> qualityLabel = const Value.absent(),
+                Value<String?> formatSelector = const Value.absent(),
+                Value<String?> audioFormat = const Value.absent(),
+                Value<String?> extractorArgs = const Value.absent(),
+                Value<String?> uploader = const Value.absent(),
+                Value<int?> durationSec = const Value.absent(),
+                Value<String?> streamSizes = const Value.absent(),
+                Value<String?> errorDetail = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DownloadsTableCompanion(
                 id: id,
@@ -5259,6 +6827,18 @@ class $$DownloadsTableTableTableManager
                 updatedAt: updatedAt,
                 finalPath: finalPath,
                 mediaId: mediaId,
+                kind: kind,
+                engine: engine,
+                thumbnailUrl: thumbnailUrl,
+                thumbnailPath: thumbnailPath,
+                qualityLabel: qualityLabel,
+                formatSelector: formatSelector,
+                audioFormat: audioFormat,
+                extractorArgs: extractorArgs,
+                uploader: uploader,
+                durationSec: durationSec,
+                streamSizes: streamSizes,
+                errorDetail: errorDetail,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -5280,6 +6860,18 @@ class $$DownloadsTableTableTableManager
                 required DateTime updatedAt,
                 Value<String?> finalPath = const Value.absent(),
                 Value<String?> mediaId = const Value.absent(),
+                Value<String?> kind = const Value.absent(),
+                Value<String> engine = const Value.absent(),
+                Value<String?> thumbnailUrl = const Value.absent(),
+                Value<String?> thumbnailPath = const Value.absent(),
+                Value<String?> qualityLabel = const Value.absent(),
+                Value<String?> formatSelector = const Value.absent(),
+                Value<String?> audioFormat = const Value.absent(),
+                Value<String?> extractorArgs = const Value.absent(),
+                Value<String?> uploader = const Value.absent(),
+                Value<int?> durationSec = const Value.absent(),
+                Value<String?> streamSizes = const Value.absent(),
+                Value<String?> errorDetail = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DownloadsTableCompanion.insert(
                 id: id,
@@ -5299,6 +6891,18 @@ class $$DownloadsTableTableTableManager
                 updatedAt: updatedAt,
                 finalPath: finalPath,
                 mediaId: mediaId,
+                kind: kind,
+                engine: engine,
+                thumbnailUrl: thumbnailUrl,
+                thumbnailPath: thumbnailPath,
+                qualityLabel: qualityLabel,
+                formatSelector: formatSelector,
+                audioFormat: audioFormat,
+                extractorArgs: extractorArgs,
+                uploader: uploader,
+                durationSec: durationSec,
+                streamSizes: streamSizes,
+                errorDetail: errorDetail,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

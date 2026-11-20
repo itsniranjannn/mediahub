@@ -1,0 +1,392 @@
+package com.example.mediahub
+
+import android.app.Activity
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.graphics.drawable.Icon
+import android.media.AudioManager
+import android.media.audiofx.LoudnessEnhancer
+import android.os.Build
+import android.provider.Settings
+import android.util.Log
+import android.util.Rational
+import android.view.WindowManager
+import androidx.core.content.ContextCompat
+import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugins.videoplayer.AudioSessions
+import java.lang.ref.WeakReference
+import kotlin.math.log10
+import kotlin.math.roundToInt
+
+/**
+ * Volume, screen brightness, picture-in-picture, the headphone-unplug signal and the video
+ * volume boost for the video player. Brightness only changes this app's window (it never
+ * touches the system setting).
+ *
+ * The channel lives as long as the Flutter engine; the Activity it acts on is attached
+ * and detached as Activities come and go (see MainActivity.EngineChannels).
+ */
+class DeviceControlsChannel(
+    context: Context,
+    messenger: BinaryMessenger
+) : MethodChannel.MethodCallHandler {
+
+    companion object {
+        private const val TAG = "DeviceControls"
+
+        /** Hidden framework action; sent by the system whenever a stream's volume changes. */
+        private const val ACTION_VOLUME_CHANGED = "android.media.VOLUME_CHANGED_ACTION"
+        private const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE"
+
+        /** The picture-in-picture window's buttons; app-private (explicit package, not exported). */
+        private const val ACTION_PIP = "com.example.mediahub.action.PIP_CONTROL"
+        private const val EXTRA_PIP = "pip_control"
+
+        /** +6 dB is twice the amplitude: 200 % of full volume. */
+        private const val MAX_BOOST_MB = 600
+    }
+
+    private val appContext = context.applicationContext
+    private val channel = MethodChannel(messenger, "mediahub/device_controls")
+    private val audio = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var activityRef: WeakReference<Activity>? = null
+    private val activity: Activity? get() = activityRef?.get()
+
+    // --- picture in picture -------------------------------------------------
+    private var pipEligible = false
+    private var pipAspect = Rational(16, 9)
+
+    /** Null: no buttons. Otherwise whether the middle button shows pause (playing) or play. */
+    private var pipActionsPlaying: Boolean? = null
+
+    fun attach(activity: Activity) {
+        activityRef = WeakReference(activity)
+        // A re-created Activity must learn the current PiP setup again (Android 12+ auto-enter).
+        applyPipParams()
+    }
+
+    fun detach(activity: Activity) {
+        if (this.activity === activity) activityRef = null
+    }
+
+    fun cleanup() {
+        channel.setMethodCallHandler(null)
+        activityRef = null
+        unregister(pipReceiver)
+        setVolumeWatch(false)
+        setNoisyWatch(false)
+        releaseBoost()
+    }
+
+    private fun register(receiver: BroadcastReceiver, filter: IntentFilter) {
+        // System broadcasts still reach a not-exported receiver; other apps cannot.
+        ContextCompat.registerReceiver(appContext, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
+
+    private fun unregister(receiver: BroadcastReceiver) {
+        try {
+            appContext.unregisterReceiver(receiver)
+        } catch (e: IllegalArgumentException) {
+            // Was not registered.
+        }
+    }
+
+    private fun pipSupported(): Boolean {
+        val a = activity ?: return false
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            a.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
+
+    private fun pipIntent(control: String, requestCode: Int): PendingIntent {
+        val intent = Intent(ACTION_PIP).setPackage(appContext.packageName).putExtra(EXTRA_PIP, control)
+        return PendingIntent.getBroadcast(
+            appContext,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun pipActions(playing: Boolean): List<RemoteAction> {
+        fun action(icon: Int, title: String, control: String, code: Int) = RemoteAction(
+            Icon.createWithResource(appContext, icon), title, title, pipIntent(control, code)
+        )
+        return listOf(
+            action(android.R.drawable.ic_media_rew, "Rewind 10 seconds", "rewind", 31),
+            if (playing) {
+                action(android.R.drawable.ic_media_pause, "Pause", "playPause", 32)
+            } else {
+                action(android.R.drawable.ic_media_play, "Play", "playPause", 32)
+            },
+            action(android.R.drawable.ic_media_ff, "Forward 10 seconds", "forward", 33)
+        )
+    }
+
+    private fun pipParams(): PictureInPictureParams {
+        val builder = PictureInPictureParams.Builder().setAspectRatio(pipAspect)
+        val playing = pipActionsPlaying
+        builder.setActions(if (playing == null) emptyList() else pipActions(playing))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Android 12+: the system enters picture-in-picture by itself when the user leaves.
+            builder.setAutoEnterEnabled(pipEligible)
+        }
+        return builder.build()
+    }
+
+    private fun applyPipParams() {
+        val a = activity ?: return
+        if (!pipSupported()) return
+        // Android 12+ needs the params ahead of time for auto-enter; on any version an open
+        // window picks up new buttons (the play / pause glyph) this way.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S || a.isInPictureInPictureMode) {
+            try {
+                a.setPictureInPictureParams(pipParams())
+            } catch (e: IllegalStateException) {
+                // Activity not in a state that accepts PiP params; the next call will retry.
+            } catch (e: IllegalArgumentException) {
+                // Rejected params (e.g. more actions than the device allows): keep the old ones.
+                Log.w(TAG, "PiP params rejected: ${e.message}")
+            }
+        }
+    }
+
+    private fun enterPip(): Boolean {
+        val a = activity ?: return false
+        if (!pipSupported()) return false
+        return try {
+            a.enterPictureInPictureMode(pipParams())
+        } catch (e: IllegalStateException) {
+            false
+        } catch (e: IllegalArgumentException) {
+            false
+        }
+    }
+
+    /** Called from MainActivity.onUserLeaveHint (Android 8-11 need us to enter PiP ourselves). */
+    fun onUserLeaveHint() {
+        if (pipEligible && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) enterPip()
+    }
+
+    fun notifyPipChanged(inPip: Boolean) {
+        channel.invokeMethod("pipChanged", inPip)
+    }
+
+    /** The user closed the picture-in-picture window instead of expanding it. */
+    fun notifyPipDismissed() {
+        channel.invokeMethod("pipDismissed", null)
+    }
+
+    private val pipReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val control = intent.getStringExtra(EXTRA_PIP) ?: return
+            if (control == "rewind" || control == "playPause" || control == "forward") {
+                channel.invokeMethod("pipAction", control)
+            }
+        }
+    }
+
+    // --- volume changes (the volume keys, the system slider, other apps) -------------
+    private var volumeWatching = false
+
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val stream = intent.getIntExtra(EXTRA_VOLUME_STREAM_TYPE, -1)
+            if (stream != -1 && stream != AudioManager.STREAM_MUSIC) return
+            channel.invokeMethod("volumeChanged", musicVolume())
+        }
+    }
+
+    private fun setVolumeWatch(on: Boolean) {
+        if (on == volumeWatching) return
+        volumeWatching = on
+        if (on) register(volumeReceiver, IntentFilter(ACTION_VOLUME_CHANGED)) else unregister(volumeReceiver)
+    }
+
+    private fun musicVolume(): Double {
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val cur = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+        return if (max > 0) cur.toDouble() / max else 0.0
+    }
+
+    // --- headphones unplugged / Bluetooth headset gone ---------------------------------
+    private var noisyWatching = false
+
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                channel.invokeMethod("becomingNoisy", null)
+            }
+        }
+    }
+
+    private fun setNoisyWatch(on: Boolean) {
+        if (on == noisyWatching) return
+        noisyWatching = on
+        if (on) {
+            register(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+        } else {
+            unregister(noisyReceiver)
+        }
+    }
+
+    // --- video volume boost ----------------------------------------------------------
+    // A LoudnessEnhancer on the VIDEO player's own audio session (never session 0, the
+    // global mix, and never the music player's session). Released when the video closes.
+    private var enhancer: LoudnessEnhancer? = null
+    private var enhancerSession = 0
+
+    /** Returns false when the boost cannot be applied (no session, no effect on this phone). */
+    private fun setVideoBoost(playerId: Long, percent: Int): Boolean {
+        if (percent <= 100) {
+            // Back to normal: keep the effect but neutral, so raising again is instant.
+            enhancer?.let {
+                try {
+                    it.setTargetGain(0)
+                    it.setEnabled(false)
+                } catch (e: RuntimeException) {
+                    releaseBoost()
+                }
+            }
+            return true
+        }
+        val session = AudioSessions.sessionIdFor(playerId)
+        if (session <= 0) return false
+        return try {
+            var e = enhancer
+            if (e == null || enhancerSession != session) {
+                releaseBoost()
+                e = LoudnessEnhancer(session)
+                enhancer = e
+                enhancerSession = session
+            }
+            val gainMb = (2000.0 * log10(percent / 100.0)).roundToInt().coerceIn(0, MAX_BOOST_MB)
+            e.setTargetGain(gainMb)
+            e.setEnabled(true)
+            true
+        } catch (e: RuntimeException) {
+            // UnsupportedOperationException / IllegalStateException / IllegalArgumentException:
+            // the effect is missing or refused on this phone.
+            Log.w(TAG, "Volume boost unavailable: ${e.message}")
+            releaseBoost()
+            false
+        }
+    }
+
+    private fun releaseBoost() {
+        val e = enhancer ?: return
+        enhancer = null
+        enhancerSession = 0
+        try {
+            e.setEnabled(false)
+        } catch (ignored: RuntimeException) {
+            // Already broken; release below.
+        }
+        try {
+            e.release()
+        } catch (ignored: RuntimeException) {
+            // Nothing more to free.
+        }
+    }
+
+    // Runs after every property above is initialised (Kotlin runs initialisers in order).
+    init {
+        channel.setMethodCallHandler(this)
+        // Always on (cheap): only our own PendingIntents can reach it.
+        register(pipReceiver, IntentFilter(ACTION_PIP))
+    }
+
+    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            when (call.method) {
+                "getVolume" -> result.success(musicVolume())
+                "setVolume" -> {
+                    val v = (call.argument<Double>("value") ?: 0.0).coerceIn(0.0, 1.0)
+                    val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, (v * max).roundToInt(), 0)
+                    result.success(true)
+                }
+                "watchVolume" -> {
+                    setVolumeWatch(call.argument<Boolean>("on") ?: false)
+                    result.success(true)
+                }
+                "watchNoisy" -> {
+                    setNoisyWatch(call.argument<Boolean>("on") ?: false)
+                    result.success(true)
+                }
+                "setVideoBoost" -> {
+                    val playerId = (call.argument<Number>("playerId") ?: -1).toLong()
+                    val percent = (call.argument<Number>("percent") ?: 100).toInt().coerceIn(100, 200)
+                    result.success(setVideoBoost(playerId, percent))
+                }
+                "releaseVideoBoost" -> {
+                    releaseBoost()
+                    result.success(true)
+                }
+                "getBrightness" -> {
+                    val window = activity?.window?.attributes?.screenBrightness ?: -1f
+                    if (window >= 0f) {
+                        result.success(window.toDouble())
+                    } else {
+                        val system = Settings.System.getInt(
+                            appContext.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128
+                        )
+                        result.success((system / 255.0).coerceIn(0.05, 1.0))
+                    }
+                }
+                "setBrightness" -> {
+                    val v = (call.argument<Double>("value") ?: 0.5).coerceIn(0.02, 1.0)
+                    val a = activity
+                    if (a == null) {
+                        result.success(false)
+                        return
+                    }
+                    a.runOnUiThread {
+                        val lp = a.window.attributes
+                        lp.screenBrightness = v.toFloat()
+                        a.window.attributes = lp
+                    }
+                    result.success(true)
+                }
+                "isPipSupported" -> result.success(pipSupported())
+                "setPipEligible" -> {
+                    pipEligible = call.argument<Boolean>("eligible") ?: false
+                    pipActionsPlaying = call.argument<Boolean>("actionsPlaying")
+                    val w = (call.argument<Int>("width") ?: 16).coerceAtLeast(1)
+                    val h = (call.argument<Int>("height") ?: 9).coerceAtLeast(1)
+                    // The system only accepts ratios between 1:2.39 and 2.39:1.
+                    val ratio = w.toDouble() / h.toDouble()
+                    pipAspect = when {
+                        ratio > 2.39 -> Rational(239, 100)
+                        ratio < 0.42 -> Rational(42, 100)
+                        else -> Rational(w, h)
+                    }
+                    applyPipParams()
+                    result.success(true)
+                }
+                "enterPip" -> result.success(enterPip())
+                "resetBrightness" -> {
+                    val a = activity
+                    if (a != null) {
+                        a.runOnUiThread {
+                            val lp = a.window.attributes
+                            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                            a.window.attributes = lp
+                        }
+                    }
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        } catch (e: Exception) {
+            result.error("DEVICE_CONTROL_FAILED", e.localizedMessage, null)
+        }
+    }
+}

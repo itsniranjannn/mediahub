@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Release builds shrink unused resources. These icons are looked up BY NAME from Dart
+  (audio_service notification buttons: shuffle / repeat / play / pause ..., and the
+  status-bar icon ic_stat_mediahub named by androidNotificationIcon), so the
+  shrinker cannot see that they are used. Without this file the notification and the
+  lock-screen controls lose their buttons in release builds, and a missing small icon
+  makes startForeground fail ("invalid small icon") as soon as music starts.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_action_*,@drawable/ic_stat_*,@drawable/audio_service_*,@drawable/ic_launcher_foreground,@mipmap/ic_launcher*" />

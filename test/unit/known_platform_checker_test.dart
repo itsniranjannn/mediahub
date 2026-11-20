@@ -1,5 +1,8 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/core/downloads/known_platform_checker.dart';
+import 'package:mediahub/features/downloads/downloads_notifier.dart';
+import 'package:mediahub/personal/extractor_hosts.dart';
 
 void main() {
   group('TASK 5.2c Item 3: Known Platforms Host Matching', () {
@@ -33,5 +36,66 @@ void main() {
       expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://notx.com')), isNull);
       expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://example.com/audio.mp3')), isNull);
     });
+  });
+
+  group('Spotify songs are refused up front (SEC-14)', () {
+    bool protectedLink(String url) => KnownPlatformChecker.isProtectedSpotifyLink(Uri.parse(url));
+
+    test('tracks, albums and playlists, in any of their link shapes', () {
+      for (final url in [
+        'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT',
+        'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT?si=abc',
+        'https://open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3',
+        'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M',
+        'https://open.spotify.com/intl-fr/album/1DFixLWuPkv3KT3TnV35m3',
+        'https://open.spotify.com/embed/track/4cOdK2wGLETKBW3PvgPWqT',
+        'https://OPEN.SPOTIFY.COM/Track/4cOdK2wGLETKBW3PvgPWqT',
+        'https://open.spotify.com./track/4cOdK2wGLETKBW3PvgPWqT',
+      ]) {
+        expect(protectedLink(url), isTrue, reason: url);
+        expect(KnownPlatformChecker.protectedContentMessage(Uri.parse(url)), KnownPlatformChecker.spotifyProtectedMessage);
+      }
+    });
+
+    test('episodes, shows, other pages and look-alikes are not', () {
+      for (final url in [
+        'https://open.spotify.com/episode/512ojhOuo1ktJprKbVcKyQ',
+        'https://open.spotify.com/show/2MAi0BvDc6GTFvKFPXnkCL',
+        'https://open.spotify.com/',
+        'https://open.spotify.com/artist/0OdUWJ0sBjDrqHygGUXeCF',
+        'https://spotify.com.evil.example/track/4cOdK2wGLETKBW3PvgPWqT',
+        'https://notspotify.com/track/4cOdK2wGLETKBW3PvgPWqT',
+        'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      ]) {
+        expect(protectedLink(url), isFalse, reason: url);
+      }
+    });
+
+    test('the Downloads link check says so instead of a "Platform Link" card', () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await container.read(inspectionProvider.notifier).inspect(Uri.parse('https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT'));
+      final s = container.read(inspectionProvider);
+      expect(s.errorMessage, KnownPlatformChecker.spotifyProtectedMessage);
+      expect(s.result, isNull);
+      expect(s.isInspecting, isFalse);
+
+      await container.read(inspectionProvider.notifier).inspect(Uri.parse('https://open.spotify.com/episode/512ojhOuo1ktJprKbVcKyQ'));
+      expect(container.read(inspectionProvider).errorMessage, isNull);
+      expect(container.read(inspectionProvider).knownPlatformName, 'Spotify');
+    });
+  });
+
+  // Every site the web link downloader reads gets the Platform Link card
+  // (with Choose quality) at once, not a direct-file check first.
+  test('every web link downloader site is a known platform (Dailymotion and Reddit too)', () {
+    for (final host in ExtractorHosts.allowed) {
+      expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://$host/watch')), isNotNull, reason: host);
+    }
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://www.dailymotion.com/video/x8abc')), 'Dailymotion');
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://dai.ly/x8abc')), 'Dailymotion');
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://v.redd.it/abc123')), 'Reddit');
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://www.reddit.com/r/videos/comments/abc/')), 'Reddit');
+    expect(KnownPlatformChecker.matchPlatformName(Uri.parse('https://notreddit.com/r/x')), isNull);
   });
 }

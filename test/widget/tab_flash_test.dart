@@ -70,17 +70,50 @@ void main() {
     // At loading stage: CircularProgressIndicator should be visible, NOT EmptyStateWidget
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.byType(EmptyStateWidget), findsNothing);
-    expect(find.text('No Music Found'), findsNothing);
+    expect(find.text('No songs yet'), findsNothing);
 
     // Now emit empty list from DB stream
     streamController.add([]);
     await tester.pump();
 
-    // After emission: EmptyStateWidget with 'No Music Found' is shown
+    // After emission: EmptyStateWidget with 'No songs yet' is shown
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byType(EmptyStateWidget), findsOneWidget);
-    expect(find.text('No Music Found'), findsOneWidget);
+    expect(find.text('No songs yet'), findsOneWidget);
 
     await streamController.close();
+  });
+
+  testWidgets('the empty Songs tab offers a Scan device button that scans', (tester) async {
+    when(() => mockRepo.scanDeviceMedia()).thenAnswer((_) async {});
+    when(() => mockRepo.watchMediaItems(
+          mediaType: MediaType.audio,
+          searchQuery: any(named: 'searchQuery'),
+          sortBy: any(named: 'sortBy'),
+          ascending: any(named: 'ascending'),
+        )).thenAnswer((_) => Stream.value(const []));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          libraryRepositoryProvider.overrideWithValue(mockRepo),
+          mediaPermissionServiceProvider.overrideWithValue(mockPermService),
+        ],
+        child: const MaterialApp(home: MusicScreen()),
+      ),
+    );
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.text('No songs yet'), findsOneWidget);
+    expect(find.text('Find the songs saved on this phone.'), findsOneWidget);
+    expect(find.text('Search your music'), findsOneWidget, reason: 'a hint short enough to stay whole');
+
+    // Forget the automatic scan on open, if any; only the tap counts.
+    clearInteractions(mockRepo);
+    await tester.tap(find.text('Scan device'));
+    await tester.pump();
+    verify(() => mockRepo.scanDeviceMedia()).called(1);
   });
 }

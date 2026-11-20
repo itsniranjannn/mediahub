@@ -1,7 +1,30 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Release signing: android/key.properties (git-ignored) points at the private family keystore.
+// A release build WITHOUT it is refused: a debug-signed "release" could not update the phones
+// (Android would ask to uninstall first, which deletes every download). For a quick local test
+// only, pass -Pmediahub.allowDebugSignedRelease=true to sign with the debug key anyway.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("key.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val allowDebugSignedRelease = (findProperty("mediahub.allowDebugSignedRelease") as String?) == "true"
+
+gradle.taskGraph.whenReady {
+    val buildsRelease = allTasks.any { it.project == project && it.name.contains("Release") }
+    if (buildsRelease && keystoreProperties.isEmpty() && !allowDebugSignedRelease) {
+        throw GradleException(
+            "android/key.properties is missing, so the release build cannot be signed with the " +
+                "family key. Restore key.properties and the keystore from your backup " +
+                "(see docs/ROADMAP.md, 'Builds'), or build a debug APK instead."
+        )
+    }
 }
 
 android {
@@ -29,11 +52,28 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("family") {
+            if (keystoreProperties.isNotEmpty()) {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (keystoreProperties.isNotEmpty()) {
+                signingConfigs.getByName("family")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+            // Smaller, harder to read, not debuggable.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 

@@ -5,15 +5,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediahub/data/database/app_database.dart';
+import 'package:mediahub/data/downloads/extractor_download_runner.dart';
 import 'package:mediahub/data/repositories/direct_url_resolver.dart';
 import 'package:mediahub/domain/models/download_state.dart';
 import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/domain/repositories/platform_resolver.dart';
+import 'package:mediahub/features/downloads/download_providers.dart';
 import 'package:mediahub/features/downloads/downloads_notifier.dart';
 import 'package:mediahub/features/downloads/downloads_screen.dart';
 import 'package:mediahub/features/library/media_song_row.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/shared/widgets/media_item_tile.dart';
+import 'fake_extractor_backend.dart';
 
 class _FakeDirectUrlResolver extends DirectUrlResolver {
   final SourceInfo Function(Uri uri) handler;
@@ -21,6 +24,15 @@ class _FakeDirectUrlResolver extends DirectUrlResolver {
 
   @override
   Future<SourceInfo> inspect(Uri uri) async => handler(uri);
+}
+
+/// Lets real async work (drift, dart:io) finish and rebuilds the tree several
+/// times; `pumpAndSettle` alone cannot do that inside FakeAsync.
+Future<void> settle(WidgetTester tester, {int rounds = 8}) async {
+  for (var i = 0; i < rounds; i++) {
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+    await tester.pump(const Duration(milliseconds: 60));
+  }
 }
 
 void main() {
@@ -219,6 +231,12 @@ void main() {
 
       expect(find.text('Download added to queue'), findsOneWidget);
 
+      // The floating snackbar sits over the bottom of the 800x600 test
+      // screen, where the next Download button lands: clear it first so the
+      // tap below really reaches the button.
+      ScaffoldMessenger.of(tester.element(find.byType(DownloadsScreen))).removeCurrentSnackBar();
+      await tester.pumpAndSettle();
+
       // Next download -> Dialog is NOT shown again
       await tester.enterText(find.byType(TextField).first, 'https://example.com/track.mp3');
       await tester.pumpAndSettle();
@@ -228,48 +246,57 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Download Notice'), findsNothing);
+      expect(find.text('Download added to queue'), findsOneWidget, reason: 'queued straight away');
     });
 
     testWidgets('4. Download row states and delete confirmation removes file and DB row', (tester) async {
       final now = DateTime.now();
       final dummyFile = File('${tempDir.path}/finished.mp3');
-      await dummyFile.writeAsString('audio-content');
 
-      // Seed database with a completed download
-      await db.into(db.downloadsTable).insert(
-        DownloadsTableCompanion.insert(
-          id: 'dl_completed_1',
-          url: 'https://example.com/finished.mp3',
-          host: 'example.com',
-          displayName: 'Finished Song',
-          fileName: 'finished.mp3',
-          state: DownloadTaskState.completed.name,
-          receivedBytes: const d.Value(1024),
-          totalBytes: const d.Value(1024),
-          finalPath: d.Value(dummyFile.path),
-          mediaId: const d.Value('dl_dl_completed_1'),
-          createdAt: now,
-          updatedAt: now,
-        ),
-      );
+      // dart:io and drift complete on the real event loop: inside testWidgets
+      // (FakeAsync) they only work through tester.runAsync, otherwise the test hangs.
+      await tester.runAsync(() async {
+        await dummyFile.writeAsString('audio-content');
 
-      await db.into(db.mediaItemsTable).insert(
-        MediaItemsTableCompanion.insert(
-          id: 'dl_dl_completed_1',
-          uri: dummyFile.path,
-          mediaType: 'audio',
-          title: 'Finished Song',
-          durationMs: 0,
-          sizeBytes: 1024,
-          dateAdded: now,
-          source: const d.Value('download'),
-        ),
-      );
+        // Seed database with a completed download
+        await db.into(db.downloadsTable).insert(
+          DownloadsTableCompanion.insert(
+            id: 'dl_completed_1',
+            url: 'https://example.com/finished.mp3',
+            host: 'example.com',
+            displayName: 'Finished Song',
+            fileName: 'finished.mp3',
+            state: DownloadTaskState.completed.name,
+            receivedBytes: const d.Value(1024),
+            totalBytes: const d.Value(1024),
+            finalPath: d.Value(dummyFile.path),
+            mediaId: const d.Value('dl_dl_completed_1'),
+            kind: const d.Value('audio'),
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+
+        await db.into(db.mediaItemsTable).insert(
+          MediaItemsTableCompanion.insert(
+            id: 'dl_dl_completed_1',
+            uri: dummyFile.path,
+            mediaType: 'audio',
+            title: 'Finished Song',
+            durationMs: 0,
+            sizeBytes: 1024,
+            dateAdded: now,
+            source: const d.Value('download'),
+          ),
+        );
+      });
 
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
             appDatabaseProvider.overrideWithValue(db),
+            // The file is inside the downloads folder, so it may be deleted.
+            downloadDirectoryProvider.overrideWith((ref) async => tempDir),
             storageInfoProvider.overrideWith((ref) => Future.value(const StorageInfo(usedBytes: 1024, freeBytes: 1000000000))),
           ],
           child: const MaterialApp(
@@ -277,32 +304,210 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      // let the drift stream deliver its first rows, then rebuild
+      await settle(tester);
 
       expect(find.text('Finished Song'), findsOneWidget);
       expect(find.text('example.com'), findsOneWidget);
-      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('Saved'), findsOneWidget, reason: 'the state word (DESIGN.md 7.14)');
+      // audio/video is shown as a chip on every row
+      expect(find.text('Audio'), findsOneWidget);
 
       // Tap Delete icon
       final deleteBtn = find.byTooltip('Delete');
       expect(deleteBtn, findsOneWidget);
       await tester.tap(deleteBtn);
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       // Delete confirmation dialog
-      expect(find.text('Delete Download'), findsOneWidget);
+      expect(find.text('Delete download?'), findsOneWidget);
       expect(find.text('Delete "finished.mp3"? Your other files are safe.'), findsOneWidget);
 
       // Confirm Delete
       await tester.tap(find.text('Delete'));
-      await tester.pumpAndSettle();
+      await settle(tester);
 
       // Verifications: file deleted from disk, rows deleted from DB
-      expect(dummyFile.existsSync(), isFalse);
-      final dlRows = await db.select(db.downloadsTable).get();
-      expect(dlRows, isEmpty);
-      final mediaRows = await db.select(db.mediaItemsTable).get();
-      expect(mediaRows, isEmpty);
+      await tester.runAsync(() async {
+        expect(dummyFile.existsSync(), isFalse);
+        final dlRows = await db.select(db.downloadsTable).get();
+        expect(dlRows, isEmpty);
+        final mediaRows = await db.select(db.mediaItemsTable).get();
+        expect(mediaRows, isEmpty);
+      });
+
+      // unmount so the drift streams are cancelled, then let drift's own
+      // clean-up timer fire (an un-fired timer fails the test)
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    // SEC-1 probe: a deleted download used to leave its playlist entries
+    // behind (the playlist said "3 songs", showed 2, and remove / reorder
+    // acted on the wrong rows), and any path on the row was deleted.
+    testWidgets('4c. Deleting a download takes it out of its playlists, and never deletes files outside the downloads folder',
+        (tester) async {
+      final now = DateTime.now();
+      final outside = await tester.runAsync(() => Directory.systemTemp.createTemp('dl_outside'));
+      final outsideFile = File('${outside!.path}/not_ours.mp3');
+      final insideFile = File('${tempDir.path}/ours.mp3');
+
+      await tester.runAsync(() async {
+        await outsideFile.writeAsString('someone else');
+        await insideFile.writeAsString('ours');
+        await db.into(db.downloadsTable).insert(
+              DownloadsTableCompanion.insert(
+                id: 'dl_x',
+                url: 'https://example.com/x.mp3',
+                host: 'example.com',
+                displayName: 'Crafted Row',
+                fileName: 'x.mp3',
+                state: DownloadTaskState.completed.name,
+                // A row pointing at a file the app does not own.
+                finalPath: d.Value(outsideFile.path),
+                thumbnailPath: d.Value(insideFile.path),
+                mediaId: const d.Value('dl_dl_x'),
+                kind: const d.Value('audio'),
+                createdAt: now,
+                updatedAt: now,
+              ),
+            );
+        for (final id in ['dl_dl_x', 'keep_1', 'keep_2']) {
+          await db.into(db.mediaItemsTable).insert(
+                MediaItemsTableCompanion.insert(
+                  id: id,
+                  uri: id == 'dl_dl_x' ? outsideFile.path : 'content://media/$id',
+                  mediaType: 'audio',
+                  title: id,
+                  durationMs: 1000,
+                  sizeBytes: 1,
+                  dateAdded: now,
+                  source: d.Value(id == 'dl_dl_x' ? 'download' : 'device'),
+                ),
+              );
+        }
+        await db.into(db.playlistsTable).insert(
+              PlaylistsTableCompanion.insert(id: 'pl_1', name: 'Road trip', createdAt: now, updatedAt: now),
+            );
+        var position = 0;
+        for (final id in ['keep_1', 'dl_dl_x', 'keep_2']) {
+          await db.into(db.playlistItemsTable).insert(
+                PlaylistItemsTableCompanion.insert(
+                  playlistId: 'pl_1',
+                  mediaId: id,
+                  position: position++,
+                  addedAt: now,
+                ),
+              );
+        }
+      });
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWithValue(db),
+            downloadDirectoryProvider.overrideWith((ref) async => tempDir),
+            storageInfoProvider.overrideWith((ref) => Future.value(const StorageInfo(usedBytes: 0, freeBytes: 1000000000))),
+          ],
+          child: const MaterialApp(home: DownloadsScreen()),
+        ),
+      );
+      await settle(tester);
+
+      await tester.tap(find.byTooltip('Delete'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.text('Delete'));
+      await settle(tester);
+
+      await tester.runAsync(() async {
+        expect(outsideFile.existsSync(), isTrue, reason: 'outside the downloads folder: never deleted');
+        expect(insideFile.existsSync(), isFalse, reason: 'its cover inside the folder goes');
+        expect((await db.select(db.mediaItemsTable).get()).map((r) => r.id), unorderedEquals(['keep_1', 'keep_2']));
+        final entries = await (db.select(db.playlistItemsTable)
+              ..orderBy([(t) => d.OrderingTerm(expression: t.position)]))
+            .get();
+        expect([for (final e in entries) (e.mediaId, e.position)], [('keep_1', 0), ('keep_2', 1)],
+            reason: 'the entry is gone and the playlist renumbered');
+        await outside.delete(recursive: true);
+      });
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    testWidgets('4b. Deleting a web-link download also removes its yt-dlp work files', (tester) async {
+      final now = DateTime.now();
+      final workDir = Directory('${tempDir.path}/ytdlp');
+      final ownFiles = [
+        File('${workDir.path}/x100.f137.mp4.part'),
+        File('${workDir.path}/x100.ytdl'),
+      ];
+      final otherTaskFile = File('${workDir.path}/x200.f137.mp4.part');
+
+      await tester.runAsync(() async {
+        for (final f in [...ownFiles, otherTaskFile]) {
+          await f.create(recursive: true);
+          await f.writeAsBytes([1, 2, 3]);
+        }
+        await db.into(db.downloadsTable).insert(
+              DownloadsTableCompanion.insert(
+                id: 'x100',
+                url: 'https://www.youtube.com/watch?v=abc',
+                host: 'www.youtube.com',
+                displayName: 'Failed Web Video',
+                fileName: 'Failed Web Video.mp4',
+                state: DownloadTaskState.failed.name,
+                errorCode: const d.Value('x_network_error'),
+                engine: const d.Value('extractor'),
+                kind: const d.Value('video'),
+                createdAt: now,
+                updatedAt: now,
+              ),
+            );
+      });
+
+      final runner = ExtractorDownloadRunner(
+        db: db,
+        backend: FakeExtractorBackend(),
+        downloadDir: tempDir,
+        publish: (_) {},
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWithValue(db),
+            storageInfoProvider.overrideWith((ref) => Future.value(const StorageInfo(usedBytes: 0, freeBytes: 1000000000))),
+            extractorDownloadRunnerProvider.overrideWithValue(runner),
+          ],
+          child: const MaterialApp(
+            home: DownloadsScreen(),
+          ),
+        ),
+      );
+      await settle(tester);
+
+      expect(find.text('Failed Web Video'), findsOneWidget);
+      await tester.tap(find.byTooltip('Delete'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Delete download?'), findsOneWidget);
+
+      await tester.tap(find.text('Delete'));
+      await settle(tester);
+
+      await tester.runAsync(() async {
+        for (final f in ownFiles) {
+          expect(f.existsSync(), isFalse, reason: f.path);
+        }
+        expect(otherTaskFile.existsSync(), isTrue, reason: 'other tasks keep their files');
+        expect(await db.select(db.downloadsTable).get(), isEmpty);
+      });
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
     });
 
     testWidgets('5. Library shows "Downloaded" badge on audio and video rows', (tester) async {
@@ -329,18 +534,20 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Column(
-              children: [
-                MediaSongRow(item: downloadedAudio),
-                MediaItemTile(item: downloadedVideo),
-              ],
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  MediaSongRow(item: downloadedAudio),
+                  MediaItemTile(item: downloadedVideo),
+                ],
+              ),
             ),
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.text('Downloaded'), findsNWidgets(2));
       expect(find.text('Downloaded Track'), findsOneWidget);

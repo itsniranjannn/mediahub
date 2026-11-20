@@ -4,10 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/downloads/known_platform_checker.dart';
 import '../../data/database/app_database.dart';
+import '../../data/downloads/direct_link_probe.dart';
 import '../../data/repositories/direct_url_resolver.dart';
 import '../../domain/models/download_progress.dart';
 import '../../domain/models/download_state.dart';
 import '../../domain/repositories/platform_resolver.dart';
+import '../../core/platform_info.dart';
+import '../../personal/personal_tools_notifier.dart';
 import '../music_player/playback_notifier.dart';
 import 'download_providers.dart';
 
@@ -27,20 +30,39 @@ class InspectionState {
 
 class InspectionNotifier extends Notifier<InspectionState> {
   DirectUrlResolver? _resolver;
+
+  /// Settles what the headers could not: a link with no extension, a
+  /// generic type, a name only after redirects (see [DirectLinkProbe]).
+  DirectLinkProbe? _probe;
   CancelableOperation? _activeOperation;
 
   @override
   InspectionState build() {
     _resolver = DirectUrlResolver();
+    _probe = DirectLinkProbe();
     return const InspectionState();
   }
 
-  void setResolverForTesting(DirectUrlResolver resolver) {
+  /// Tests: [resolver] answers every check, and nothing else touches the
+  /// network unless a [probe] is given too.
+  void setResolverForTesting(DirectUrlResolver resolver, {DirectLinkProbe? probe}) {
     _resolver = resolver;
+    _probe = probe;
   }
 
   Future<void> inspect(Uri uri) async {
     cancel();
+
+    // Protected music (a Spotify song, album or playlist) is refused up
+    // front: no lookup could ever save it.
+    final protectedReason = KnownPlatformChecker.protectedContentMessage(uri);
+    if (protectedReason != null) {
+      state = InspectionState(
+        errorMessage: protectedReason,
+        knownPlatformName: KnownPlatformChecker.matchPlatformName(uri),
+      );
+      return;
+    }
 
     // Check if URL belongs to a known platform first (no network call needed)
     final platform = KnownPlatformChecker.matchPlatformName(uri);
@@ -67,12 +89,28 @@ class InspectionNotifier extends Notifier<InspectionState> {
     );
 
     try {
-      final info = await _resolver!.inspect(uri).timeout(
-        const Duration(seconds: 15),
-        onTimeout: () {
-          throw TimeoutException('Inspection timed out. The server did not respond in time.');
-        },
-      );
+      SourceInfo? info;
+      Object? failure;
+      try {
+        info = await _resolver!.inspect(uri).timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            throw TimeoutException('Inspection timed out. The server did not respond in time.');
+          },
+        );
+      } on TimeoutException {
+        rethrow;
+      } catch (e) {
+        failure = e;
+      }
+
+      // Headers that could not tell (or a check that tripped over an odd
+      // address): the file's first bytes decide.
+      final probe = _probe;
+      if (probe != null && !isCancelled && (info == null || DirectLinkProbe.needsProbe(info))) {
+        info = await probe.refine(info, uri);
+      }
+      if (info == null) throw failure ?? StateError('no result');
 
       if (!isCancelled) {
         state = InspectionState(isInspecting: false, result: info);
@@ -138,10 +176,33 @@ final downloadProgressStreamProvider =
   return engine.progressStream;
 });
 
+/// Latest progress update per download id. The UI used to keep only the very
+/// last update of any task, so two parallel downloads made each other's speed
+/// and ETA flicker.
+class DownloadProgressMapNotifier extends Notifier<Map<String, DownloadProgressUpdate>> {
+  @override
+  Map<String, DownloadProgressUpdate> build() {
+    final engine = ref.watch(downloadEngineProvider);
+    final sub = engine.progressStream.listen((u) {
+      state = {...state, u.id: u};
+    });
+    ref.onDispose(sub.cancel);
+    return const {};
+  }
+}
+
+final downloadProgressMapProvider =
+    NotifierProvider<DownloadProgressMapNotifier, Map<String, DownloadProgressUpdate>>(
+  DownloadProgressMapNotifier.new,
+);
+
 // Storage space info provider
 class StorageInfo {
   final int usedBytes;
-  final int freeBytes;
+
+  /// Free space on the phone; null when it cannot be known (iOS), and then
+  /// no figure is shown.
+  final int? freeBytes;
 
   const StorageInfo({required this.usedBytes, required this.freeBytes});
 }
@@ -154,6 +215,10 @@ final storageInfoProvider = FutureProvider.autoDispose<StorageInfo>((ref) async 
   for (final d in downloads) {
     used += d.receivedBytes;
   }
+
+  // Nothing on iOS answers the free-space call: show no figure rather than
+  // the made-up 10 GB below.
+  if (PlatformInfo.isIOS) return StorageInfo(usedBytes: used, freeBytes: null);
 
   int free = 10 * 1024 * 1024 * 1024;
   try {
@@ -176,7 +241,6 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
     final serviceController = ref.watch(downloadServiceControllerProvider);
     _actionEventsSub = serviceController.actionEvents.listen((event) async {
       final db = ref.read(appDatabaseProvider);
-      final engine = ref.read(downloadEngineProvider);
       if (event == 'pauseAll' || event == 'timeout') {
         final active = await (db.select(db.downloadsTable)
               ..where((t) =>
@@ -185,7 +249,7 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
                   t.state.equals(DownloadTaskState.queued.name)))
             .get();
         for (final t in active) {
-          await engine.pause(t.id);
+          await pauseTask(t);
         }
         await serviceController.stopService();
       }
@@ -290,22 +354,68 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
       await serviceController.stopService();
     }
 
-    if (activeDownloadingCount >= 2) return;
+    // _runningTaskIds is updated synchronously, the DB state a moment later:
+    // use whichever is larger so rapid trigger() calls cannot exceed 2 workers.
+    final busy = activeDownloadingCount > _runningTaskIds.length
+        ? activeDownloadingCount
+        : _runningTaskIds.length;
+    if (busy >= 2) return;
 
     final nextQueued = queuedTasks;
-    int slotsAvailable = 2 - activeDownloadingCount;
+    int slotsAvailable = 2 - busy;
 
     for (final task in nextQueued) {
       if (slotsAvailable <= 0) break;
       if (!_runningTaskIds.contains(task.id)) {
         _runningTaskIds.add(task.id);
         slotsAvailable--;
-        engine.runTask(task.id).whenComplete(() {
+        final Future<void> job = task.engine == 'extractor'
+            ? ref.read(extractorDownloadRunnerProvider).run(task.id)
+            : engine.runTask(task.id);
+        job.whenComplete(() {
           _runningTaskIds.remove(task.id);
           trigger();
         });
       }
     }
+  }
+
+  /// Pause a task with the engine that owns it.
+  Future<void> pauseTask(DownloadEntry task) {
+    if (task.engine == 'extractor') {
+      return ref.read(extractorDownloadRunnerProvider).pause(task.id);
+    }
+    return ref.read(downloadEngineProvider).pause(task.id);
+  }
+
+  /// Cancel a task with the engine that owns it.
+  Future<void> cancelTask(DownloadEntry task) {
+    if (task.engine == 'extractor') {
+      return ref.read(extractorDownloadRunnerProvider).cancel(task.id);
+    }
+    return ref.read(downloadEngineProvider).cancel(task.id);
+  }
+
+  /// Called once at app start: repairs tasks that were interrupted by the app
+  /// being killed and resumes them (and anything still queued).
+  Future<void> recoverAndResume() async {
+    if (!PlatformInfo.supportsDownloads) return;
+    await ref.read(downloadDirectoryProvider.future);
+    final db = ref.read(appDatabaseProvider);
+    final engine = ref.read(downloadEngineProvider);
+    final httpIds = await engine.reconcileOnStartup();
+    for (final id in httpIds) {
+      await (db.update(db.downloadsTable)..where((t) => t.id.equals(id))).write(
+        const DownloadsTableCompanion(state: Value('queued')),
+      );
+    }
+    await ref.read(extractorDownloadRunnerProvider).reconcileOnStartup();
+    await trigger();
+    // Once per install: downloads saved in the wrong section (a song in
+    // Videos) move to the right one. Never holds up the downloads above.
+    try {
+      await engine.repairLibraryKinds();
+    } catch (_) {}
   }
 }
 
@@ -330,3 +440,12 @@ final downloadNoticeAgreedProvider =
     NotifierProvider<DownloadNoticeAgreedNotifier, bool>(
   DownloadNoticeAgreedNotifier.new,
 );
+
+/// Reads once from main() after the first frame to recover interrupted downloads.
+final downloadStartupProvider = FutureProvider<void>((ref) async {
+  await ref.read(downloadQueueCoordinatorProvider.notifier).recoverAndResume();
+  // Builds the web link downloader's state: when it is on, it reads the
+  // yt-dlp version and checks for a newer yt-dlp once a week (release builds,
+  // not on metered data).
+  if (PlatformInfo.supportsWebLinkDownloader) ref.read(personalToolsProvider);
+});
