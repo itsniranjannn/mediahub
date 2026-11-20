@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_theme.dart';
+import '../../app/theme/ink_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/services/artwork_presence.dart';
@@ -178,7 +179,7 @@ class NowPlayingSheet extends ConsumerWidget {
     void close() => Navigator.of(context).pop();
 
     return Theme(
-      data: AppTheme.darkTheme,
+      data: InkTheme.of(context),
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         value: AppTheme.barsOnInk,
         child: Builder(

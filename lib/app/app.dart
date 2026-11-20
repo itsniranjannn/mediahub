@@ -6,6 +6,7 @@ import '../core/app_config.dart';
 import '../features/settings/theme_mode_setting.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
+import 'theme/ink_theme.dart';
 import 'theme/font_licenses.dart';
 
 class MediaHubApp extends ConsumerStatefulWidget {
@@ -45,16 +46,20 @@ class _MediaHubAppState extends ConsumerState<MediaHubApp> {
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
+    final classic = ref.watch(appearanceSettingProvider) == AppearanceChoice.classic;
+    final inkTheme = classic ? AppTheme.classicTheme : AppTheme.darkTheme;
 
     return MaterialApp.router(
       title: AppConfig.appName,
       debugShowCheckedModeBanner: false,
       // Follows the phone, paper by day and ink at night (docs/DESIGN.md
-      // 8.2), unless Settings → Appearance pins dark or light.
+      // 8.2), unless Settings → Appearance pins dark, light or Bijuli
+      // Classic (always dark, also on the Ink Dock and the stage).
       theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
+      darkTheme: inkTheme,
       themeMode: ref.watch(themeModeSettingProvider),
       routerConfig: router,
+      builder: (context, child) => InkTheme(data: inkTheme, child: child ?? const SizedBox.shrink()),
     );
   }
 }

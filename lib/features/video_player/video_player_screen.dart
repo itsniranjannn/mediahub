@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_theme.dart';
+import '../../app/theme/ink_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/platform/device_controls.dart';
@@ -646,7 +647,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
         }
       },
       child: Theme(
-        data: AppTheme.darkTheme,
+        data: InkTheme.of(context),
         child: AnnotatedRegion<SystemUiOverlayStyle>(
           value: AppTheme.barsOnInk,
           child: Builder(

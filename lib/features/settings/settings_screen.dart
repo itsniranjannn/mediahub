@@ -161,20 +161,21 @@ class _Header extends StatelessWidget {
 // Groups
 // ---------------------------------------------------------------------------
 
-/// Settings → Appearance: follow the phone (the default), or always dark or
-/// always light ([themeModeSettingProvider]).
+/// Settings → Appearance: follow the phone (the default), always dark, always
+/// light or Bijuli Classic ([appearanceSettingProvider]).
 class _AppearanceCard extends ConsumerWidget {
   const _AppearanceCard();
 
-  static const List<(ThemeMode, IconData, String, String)> _options = [
-    (ThemeMode.system, Icons.brightness_auto_outlined, 'System', 'Dark or light, the same as your phone.'),
-    (ThemeMode.dark, Icons.dark_mode_outlined, 'Dark', 'Always dark.'),
-    (ThemeMode.light, Icons.light_mode_outlined, 'Light', 'Always light.'),
+  static const List<(AppearanceChoice, IconData, String, String)> _options = [
+    (AppearanceChoice.system, Icons.brightness_auto_outlined, 'System', 'Dark or light, the same as your phone.'),
+    (AppearanceChoice.dark, Icons.dark_mode_outlined, 'Dark', 'Always dark.'),
+    (AppearanceChoice.light, Icons.light_mode_outlined, 'Light', 'Always light.'),
+    (AppearanceChoice.classic, Icons.bolt_outlined, 'Bijuli Classic', 'The original lime-on-violet look. Always dark.'),
   ];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final mode = ref.watch(themeModeSettingProvider);
+    final mode = ref.watch(appearanceSettingProvider);
     final type = context.typography;
 
     return _SettingsCard(
@@ -185,17 +186,17 @@ class _AppearanceCard extends ConsumerWidget {
           subtitle: 'How MediaHub looks. The player stays dark either way.',
         ),
         const _CardDivider.underHeading(),
-        RadioGroup<ThemeMode>(
+        RadioGroup<AppearanceChoice>(
           groupValue: mode,
           onChanged: (value) {
-            if (value != null) ref.read(themeModeSettingProvider.notifier).set(value);
+            if (value != null) ref.read(appearanceSettingProvider.notifier).set(value);
           },
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               for (final (i, (value, icon, title, subtitle)) in _options.indexed) ...[
                 if (i > 0) const _CardDivider.betweenRows(),
-                RadioListTile<ThemeMode>(
+                RadioListTile<AppearanceChoice>(
                   key: ValueKey('appearance_${value.name}'),
                   value: value,
                   controlAffinity: ListTileControlAffinity.trailing,

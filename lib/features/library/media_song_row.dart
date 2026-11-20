@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
+import '../../app/theme/ink_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
@@ -372,8 +373,8 @@ class _RowArtwork extends StatelessWidget {
             ),
             child: Icon(
               _playingGlyph,
-              // The veil is ink in both themes: the ink theme's Volt reads on it.
-              color: AppPalette.dark.primary,
+              // The veil is ink in both themes: the ink theme's primary reads on it.
+              color: InkTheme.paletteOf(context).primary,
               size: 24,
               semanticLabel: 'Now playing',
             ),

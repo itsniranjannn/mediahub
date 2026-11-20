@@ -8,14 +8,15 @@ import 'app_palette.dart';
 import 'app_spacing.dart';
 import 'app_typography.dart';
 
-/// The Bijuli themes (docs/DESIGN.md sections 2.3, 7 and 8), both built from
+/// The Sindur themes (docs/DESIGN.md sections 2.3, 7 and 8), both built from
 /// an [AppPalette] by one recipe: [darkTheme] (ink) and [lightTheme] (paper).
 /// The app follows the phone by default ([themeMode]); Settings → Appearance
-/// can pin it to dark or light (`themeModeSettingProvider`).
+/// can pin it to dark, light or Bijuli Classic (`appearanceSettingProvider`).
 ///
 /// Each theme carries its palette as an extension (`context.palette`). The
 /// Ink Dock, Now Playing and the video player wrap themselves in
-/// `Theme(data: AppTheme.darkTheme)`, so they look the same in both modes.
+/// `InkTheme.of(context)` ([darkTheme], or [classicTheme] when Bijuli Classic
+/// is chosen), so they look the same in both modes.
 abstract final class AppTheme {
   /// The default `MaterialApp.themeMode`: the phone's own setting, paper by
   /// day and ink at night (DESIGN.md 8.2). Settings → Appearance overrides it.
@@ -46,11 +47,14 @@ abstract final class AppTheme {
   /// The bar style that suits [palette]'s canvas.
   static SystemUiOverlayStyle barsFor(AppPalette palette) => palette.isDark ? barsOnInk : barsOnPaper;
 
-  /// Ink: Volt on the deep ultraviolet canvas.
+  /// Sindur dark: crimson and rose on a near-black canvas.
   static ThemeData get darkTheme => _cached(AppPalette.dark);
 
-  /// Paper: Ultraviolet ink on warm ivory, Volt fills as ink-edged stickers.
+  /// Sindur light: wine and crimson on white, fills as ink-edged stickers.
   static ThemeData get lightTheme => _cached(AppPalette.light);
+
+  /// Bijuli Classic: the original Volt on ultraviolet ink (always dark).
+  static ThemeData get classicTheme => _cached(AppPalette.classic);
 
   /// [darkTheme] or [lightTheme].
   static ThemeData of(Brightness brightness) =>
@@ -59,17 +63,18 @@ abstract final class AppTheme {
   // ThemeData captures the target platform when it is built (page
   // transitions, typography), so the cache is per platform: a test that
   // overrides the platform still gets a matching theme.
-  static final Map<(Brightness, TargetPlatform), ThemeData> _cache = {};
+  // Keyed by palette identity (AppPalette keeps Object's identity ==), so
+  // dark and classic, both Brightness.dark, get their own entries.
+  static final Map<(AppPalette, TargetPlatform), ThemeData> _cache = {};
 
   static ThemeData _cached(AppPalette palette) =>
-      _cache.putIfAbsent((palette.brightness, defaultTargetPlatform), () => build(palette));
+      _cache.putIfAbsent((palette, defaultTargetPlatform), () => build(palette));
 
   /// Builds a theme from any palette (the two built-in ones are cached by
   /// [darkTheme] and [lightTheme]).
   static ThemeData build(AppPalette p) {
     final dark = p.isDark;
     final t = AppTypography.of(p);
-    const ink = Color(0xFF180A2E);
     const stadium = StadiumBorder();
 
     final scheme = ColorScheme(
@@ -83,7 +88,7 @@ abstract final class AppTheme {
       secondaryContainer: p.secondaryContainer,
       onSecondaryContainer: p.onSecondaryContainer,
       tertiary: p.favorite,
-      onTertiary: dark ? ink : Colors.white,
+      onTertiary: p.onTertiary,
       error: p.error,
       onError: p.onError,
       errorContainer: p.errorContainer,
@@ -99,11 +104,11 @@ abstract final class AppTheme {
       surfaceTint: Colors.transparent,
       outline: p.outline,
       outlineVariant: p.outlineVariant,
-      shadow: dark ? Colors.black : ink,
+      shadow: p.schemeShadow,
       scrim: p.scrim,
-      inverseSurface: dark ? const Color(0xFFF6F2FF) : ink,
-      onInverseSurface: dark ? ink : const Color(0xFFF6F2FF),
-      inversePrimary: dark ? const Color(0xFF5A32D6) : const Color(0xFFCCFF3A),
+      inverseSurface: p.inverseSurface,
+      onInverseSurface: p.onInverseSurface,
+      inversePrimary: p.inversePrimary,
     );
 
     // Depth: tone steps and hairlines on ink; on paper a soft ink shadow

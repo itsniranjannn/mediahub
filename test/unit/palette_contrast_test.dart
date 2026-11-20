@@ -14,7 +14,6 @@ import 'package:mediahub/shared/widgets/ui_kit.dart';
 const _white = Color(0xFFFFFFFF);
 const _black = Color(0xFF000000);
 const _yellow = Color(0xFFFFFF00);
-const _ink = Color(0xFF180A2E);
 const _volt = Color(0xFFCCFF3A);
 
 double _channel(double v) {
@@ -55,7 +54,11 @@ class _Checker {
   void expectNone() => expect(failures, isEmpty, reason: failures.join('\n'));
 }
 
-const _palettes = {'dark': AppPalette.dark, 'light': AppPalette.light};
+const _palettes = {'dark': AppPalette.dark, 'light': AppPalette.light, 'classic': AppPalette.classic};
+
+/// The palette of the Ink Dock and the stage for [p]: itself when dark
+/// (Sindur dark or Bijuli Classic), else Sindur dark.
+AppPalette _inkFor(AppPalette p) => p.isDark ? p : AppPalette.dark;
 
 List<Color> _surfaces(AppPalette p) => [p.background, p.surface, p.surfaceElevated, p.surfacePressed];
 
@@ -182,16 +185,16 @@ void main() {
             ..check('onDock on dock', p.onDock, p.dock, 4.5, under: page)
             ..check('onDockMuted on dock', p.onDockMuted, p.dock, 4.5, under: page)
             ..check('Volt indicator / play disc vs dock', p.navIndicator, p.dock, 3, under: page)
-            ..check('Ice count dot vs dock', AppPalette.dark.accent, p.dock, 3, under: page);
+            ..check('accent count dot vs dock', _inkFor(p).accent, p.dock, 3, under: page);
         }
         c
-          ..check('ink count on the Ice dot', p.onNavIndicator, AppPalette.dark.accent, 4.5)
+          ..check('ink count on the accent dot', p.onNavIndicator, _inkFor(p).accent, 4.5)
           ..check('Volt progress vs dockLine', p.navIndicator, p.dockLine, 3);
         c.expectNone();
       });
 
       test('the stage (always dark) on its veil over a white glow', () {
-        const stage = AppPalette.dark;
+        final stage = _inkFor(p);
         final veil = over(stage.scrim, _white);
         final c = _Checker()
           ..check('stage textPrimary', stage.textPrimary, veil, 4.5)
@@ -209,7 +212,7 @@ void main() {
             ..check('onLive on the LIVE chip', p.onLive, p.liveFill, 4.5, under: frame);
         }
         for (final frame in [_white, _black]) {
-          c.check('Volt resume line on its overlay track', _volt, p.overlay, 3, under: frame);
+          c.check('resume line on its overlay track', _inkFor(p).primary, p.overlay, 3, under: frame);
         }
         c.expectNone();
       });
@@ -266,17 +269,20 @@ void main() {
     });
   }
 
-  test('figures quoted in docs/DESIGN.md section 4 (spot checks)', () {
+  test('spot checks of the palettes (docs/DESIGN.md section 4 points here)', () {
     const d = AppPalette.dark;
     const l = AppPalette.light;
-    expect(ratio(d.textPrimary, d.background), closeTo(17.00, 0.02));
-    expect(ratio(l.textPrimary, l.background), closeTo(16.78, 0.02));
-    expect(ratio(l.primary, l.surfaceElevated), closeTo(7.34, 0.02));
-    expect(ratio(d.onVoltFill, d.voltFill), closeTo(15.99, 0.02));
-    expect(ratio(l.outline, l.surfacePressed), closeTo(3.12, 0.02));
-    expect(ratio(MediaBadge.glyphColor, d.overlay, under: _white), closeTo(4.12, 0.03));
-    // Not pass/fail: the reason every Volt fill on paper carries the ink edge.
-    expect(ratio(_volt, l.background), lessThan(1.1));
-    expect(_ink, d.background);
+    const k = AppPalette.classic;
+    expect(ratio(d.textPrimary, d.background), closeTo(17.99, 0.02));
+    expect(ratio(l.textPrimary, l.background), closeTo(18.71, 0.02));
+    expect(ratio(l.primary, l.surfaceElevated), closeTo(10.70, 0.02));
+    expect(ratio(d.onVoltFill, d.voltFill), closeTo(5.09, 0.02));
+    expect(ratio(l.outline, l.surfacePressed), closeTo(3.32, 0.02));
+    expect(ratio(MediaBadge.glyphColor, d.overlay, under: _white), closeTo(3.29, 0.03));
+    // Bijuli Classic: Volt on ink, and Volt on white paper would need an edge.
+    expect(ratio(k.onVoltFill, k.voltFill), closeTo(15.99, 0.02));
+    expect(ratio(_volt, _white), lessThan(1.2));
+    expect(k.background, const Color(0xFF180A2E));
+    expect(k.voltFill, _volt);
   });
 }

@@ -172,14 +172,14 @@ void main() {
     expect(printOffset(AppPalette.dark.printShadow), findsOneWidget);
   });
 
-  testWidgets('on paper the header is the lavender wash and the print offset is ink', (tester) async {
+  testWidgets('on paper the header is the blush wash and the print offset is ink', (tester) async {
     mockArtwork(withArt: _coverUri);
     await pump(tester, AlbumDetailScreen(album: _group), theme: AppTheme.lightTheme);
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(heroTint(AppPalette.light.heroGradient), findsOneWidget);
     expect(printOffset(AppPalette.light.printShadow), findsOneWidget);
-    expect(AppPalette.light.printShadow, const Color(0xFF180A2E));
+    expect(AppPalette.light.printShadow, const Color(0xFF121214));
     final kicker = tester.widget<Text>(find.text('ALBUM'));
     expect(kicker.style?.color, AppPalette.light.primary);
   });

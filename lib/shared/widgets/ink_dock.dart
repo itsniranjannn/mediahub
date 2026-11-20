@@ -4,13 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_theme.dart';
+import '../../app/theme/ink_theme.dart';
 
 /// The Ink Dock (docs/DESIGN.md 7.7): the container for the mini player and
 /// the bottom navigation. It is ink in both themes, so the place the family
 /// spends most time looks the same on every phone.
 ///
-/// It wraps its content in [AppTheme.darkTheme] (so `context.palette` inside
-/// is always [AppPalette.dark]) and in [AppTheme.barsOnInk], so the Android
+/// It wraps its content in `InkTheme.of(context)` (so `context.palette` inside
+/// is always a dark palette: [AppPalette.dark] or [AppPalette.classic]) and in [AppTheme.barsOnInk], so the Android
 /// navigation bar icons stay light over it in both themes. The fill is
 /// [AppPalette.dock] over a 24 blur, with 24 dp top corners and a 1 dp
 /// [AppPalette.dockLine] along the top edge.
@@ -46,7 +47,7 @@ class InkDock extends StatelessWidget {
   Widget build(BuildContext context) {
     final miniPlayer = this.miniPlayer;
     return Theme(
-      data: AppTheme.darkTheme,
+      data: InkTheme.of(context),
       child: AnnotatedRegion<SystemUiOverlayStyle>(
         value: AppTheme.barsOnInk,
         child: Builder(

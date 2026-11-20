@@ -130,12 +130,14 @@ abstract final class AppTypography {
 
   static final AppTextStyles _dark = _build(AppPalette.dark);
   static final AppTextStyles _light = _build(AppPalette.light);
+  static final AppTextStyles _classic = _build(AppPalette.classic);
 
-  /// Every role coloured for [palette]. The two built-in palettes are cached;
+  /// Every role coloured for [palette]. The three built-in palettes are cached;
   /// any other (a palette mid-way through a theme change) is built on demand.
   static AppTextStyles of(AppPalette palette) {
     if (identical(palette, AppPalette.dark)) return _dark;
     if (identical(palette, AppPalette.light)) return _light;
+    if (identical(palette, AppPalette.classic)) return _classic;
     return _build(palette);
   }
 

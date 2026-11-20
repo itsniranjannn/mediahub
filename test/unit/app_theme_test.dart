@@ -1,4 +1,4 @@
-// Smoke tests for the Bijuli themes (docs/DESIGN.md 2.3, 5, 6, 7 and 8):
+// Smoke tests for the Sindur themes and Bijuli Classic (docs/DESIGN.md 2.3, 5, 6, 7 and 8):
 // both build from their palette, the type roles use the right families, and
 // the component themes carry the rules the spec calls out.
 import 'package:flutter/foundation.dart';
@@ -8,11 +8,13 @@ import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_spacing.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/app/theme/app_typography.dart';
+import 'package:mediahub/app/theme/ink_theme.dart';
 
 void main() {
   final themes = {
     'dark': (AppPalette.dark, AppTheme.darkTheme),
     'light': (AppPalette.light, AppTheme.lightTheme),
+    'classic': (AppPalette.classic, AppTheme.classicTheme),
   };
 
   for (final MapEntry(key: name, value: (p, theme)) in themes.entries) {
@@ -22,7 +24,8 @@ void main() {
         expect(theme.useMaterial3, isTrue);
         expect(theme.extension<AppPalette>(), same(p));
         expect(theme.scaffoldBackgroundColor, p.background);
-        expect(AppTheme.of(p.brightness), same(theme), reason: 'cached');
+        if (!identical(p, AppPalette.classic)) expect(AppTheme.of(p.brightness), same(theme), reason: 'cached');
+        expect(AppTheme.build(p), isNot(same(theme)));
       });
 
       test('ColorScheme follows docs/DESIGN.md 2.3', () {
@@ -37,7 +40,7 @@ void main() {
         expect(s.secondaryContainer, p.secondaryContainer);
         expect(s.onSecondaryContainer, p.onSecondaryContainer);
         expect(s.tertiary, p.favorite);
-        expect(s.onTertiary, p.isDark ? const Color(0xFF180A2E) : const Color(0xFFFFFFFF));
+        expect(s.onTertiary, p.onTertiary);
         expect(s.error, p.error);
         expect(s.onError, p.onError);
         expect(s.errorContainer, p.errorContainer);
@@ -53,11 +56,11 @@ void main() {
         expect(s.surfaceTint, Colors.transparent);
         expect(s.outline, p.outline);
         expect(s.outlineVariant, p.outlineVariant);
-        expect(s.shadow, p.isDark ? const Color(0xFF000000) : const Color(0xFF180A2E));
+        expect(s.shadow, p.schemeShadow);
         expect(s.scrim, p.scrim);
-        expect(s.inverseSurface, p.isDark ? const Color(0xFFF6F2FF) : const Color(0xFF180A2E));
-        expect(s.onInverseSurface, p.isDark ? const Color(0xFF180A2E) : const Color(0xFFF6F2FF));
-        expect(s.inversePrimary, p.isDark ? const Color(0xFF5A32D6) : const Color(0xFFCCFF3A));
+        expect(s.inverseSurface, p.inverseSurface);
+        expect(s.onInverseSurface, p.onInverseSurface);
+        expect(s.inversePrimary, p.inversePrimary);
       });
 
       test('text roles use the four voices with even leading and Devanagari fallbacks', () {
@@ -117,7 +120,8 @@ void main() {
           expect(selectedSide, BorderSide.none);
           expect(idleSide, BorderSide.none);
         } else {
-          expect(selectedSide.color, const Color(0xFF180A2E));
+          expect(selectedSide.color, p.voltEdge);
+          expect(p.voltEdge, const Color(0xFF121214));
           expect(selectedSide.width, 1.5);
           expect(idleSide.color, p.outline);
         }
@@ -309,6 +313,49 @@ void main() {
     expect(AppTheme.darkTheme.platform, TargetPlatform.iOS);
     debugDefaultTargetPlatformOverride = null;
     expect(AppTheme.darkTheme.platform, TargetPlatform.android);
+  });
+
+  test('scheme extras: Bijuli Classic keeps the old hard-coded ink values', () {
+    const c = AppPalette.classic;
+    expect(c.onTertiary, const Color(0xFF180A2E));
+    expect(c.schemeShadow, const Color(0xFF000000));
+    expect(c.inverseSurface, const Color(0xFFF6F2FF));
+    expect(c.onInverseSurface, const Color(0xFF180A2E));
+    expect(c.inversePrimary, const Color(0xFF5A32D6));
+    expect(c.background, const Color(0xFF180A2E));
+    expect(c.voltFill, const Color(0xFFCCFF3A));
+    expect(c.primaryGradient.colors, const [Color(0xFFDAFF63), Color(0xFFB4EE14)]);
+    expect(c.isDark, isTrue);
+    expect(AppPalette.dark.inversePrimary, AppPalette.light.primary);
+  });
+
+  test('the theme cache is keyed by palette: dark and classic are separate', () {
+    expect(AppTheme.classicTheme, same(AppTheme.classicTheme));
+    expect(AppTheme.classicTheme, isNot(same(AppTheme.darkTheme)));
+    expect(AppTheme.classicTheme.extension<AppPalette>(), same(AppPalette.classic));
+    expect(AppTypography.of(AppPalette.classic), same(AppTypography.of(AppPalette.classic)));
+    expect(AppTypography.of(AppPalette.classic).body.color, AppPalette.classic.textPrimary);
+  });
+
+  testWidgets('InkTheme.of falls back to the Sindur dark theme', (tester) async {
+    late ThemeData bare;
+    late ThemeData inClassic;
+    await tester.pumpWidget(Column(children: [
+      Builder(builder: (context) {
+        bare = InkTheme.of(context);
+        return const SizedBox();
+      }),
+      InkTheme(
+        data: AppTheme.classicTheme,
+        child: Builder(builder: (context) {
+          inClassic = InkTheme.of(context);
+          expect(InkTheme.paletteOf(context), same(AppPalette.classic));
+          return const SizedBox();
+        }),
+      ),
+    ]));
+    expect(bare, same(AppTheme.darkTheme));
+    expect(inClassic, same(AppTheme.classicTheme));
   });
 
   test('by default the app follows the phone (DESIGN.md 8.2)', () {

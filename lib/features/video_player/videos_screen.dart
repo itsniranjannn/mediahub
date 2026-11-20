@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_theme.dart';
+import '../../app/theme/ink_theme.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/app_config.dart';
 import '../../core/permissions/media_permission_service.dart';
@@ -717,7 +718,7 @@ class _ResumeCard extends StatelessWidget {
                               minHeight: _resumeHeight,
                               borderRadius: BorderRadius.zero,
                               backgroundColor: palette.overlay,
-                              valueColor: AlwaysStoppedAnimation<Color>(AppPalette.dark.primary),
+                              valueColor: AlwaysStoppedAnimation<Color>(InkTheme.paletteOf(context).primary),
                             ),
                           ),
                         ],

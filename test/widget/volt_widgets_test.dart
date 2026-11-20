@@ -13,7 +13,7 @@ import 'package:mediahub/shared/widgets/ui_kit.dart';
 
 import '../helpers/app_fonts.dart';
 
-const _ink = Color(0xFF180A2E);
+const _ink = Color(0xFF121214);
 
 Future<void> _pump(
   WidgetTester tester,
@@ -73,7 +73,7 @@ void main() {
   setUpAll(loadAppFonts);
 
   group('the ink edge on paper', () {
-    testWidgets('VoltButton, VoltDisc and VoltSlab paint a 1.5 dp #180A2E border in light', (tester) async {
+    testWidgets('VoltButton, VoltDisc and VoltSlab paint a 1.5 dp #121214 border in light', (tester) async {
       await _pump(
         tester,
         Column(
