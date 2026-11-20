@@ -1457,7 +1457,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm8),
-                      // The video's own name: Anek, two lines at most, broken
+                      // The video's own name: Poppins, two lines at most, broken
                       // after "_" in file-style names; read as written.
                       child: Text(
                         shownTitle,

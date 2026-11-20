@@ -63,18 +63,18 @@ void main() {
         expect(s.inversePrimary, p.inversePrimary);
       });
 
-      test('text roles use the four voices with even leading and Devanagari fallbacks', () {
+      test('text roles use the three voices with even leading and Devanagari fallbacks', () {
         final t = theme.textTheme;
-        expect(t.displaySmall!.fontFamily, 'Unbounded');
-        expect(t.titleLarge!.fontFamily, 'Unbounded');
-        expect(t.displaySmall!.fontFamilyFallback, ['AnekWide']);
+        expect(t.displaySmall!.fontFamily, 'Fraunces');
+        expect(t.titleLarge!.fontFamily, 'Fraunces');
+        expect(t.displaySmall!.fontFamilyFallback, ['Poppins']);
         for (final style in [t.headlineLarge!, t.headlineMedium!, t.headlineSmall!, t.titleMedium!]) {
-          expect(style.fontFamily, 'AnekWide');
+          expect(style.fontFamily, 'Poppins');
           expect(style.letterSpacing, 0, reason: 'user content: no tracking');
         }
         for (final style in [t.bodyLarge!, t.bodyMedium!, t.bodySmall!, t.titleSmall!, t.labelLarge!, t.labelMedium!]) {
-          expect(style.fontFamily, 'AtkinsonNext');
-          expect(style.fontFamilyFallback, ['Mukta']);
+          expect(style.fontFamily, 'Poppins', reason: 'Poppins draws Devanagari itself');
+          expect(style.fontFamilyFallback, isEmpty);
         }
         expect(t.labelSmall!.fontFamily, 'DMMono', reason: 'overline');
         expect(t.bodyLarge!.fontSize, 16);
@@ -113,12 +113,12 @@ void main() {
         expect(chip.checkmarkColor, p.onVoltFill);
         expect(WidgetStateProperty.resolveAs<Color?>(chip.labelStyle!.color, selected), p.onVoltFill);
         expect(WidgetStateProperty.resolveAs<Color?>(chip.labelStyle!.color, {}), p.textPrimary);
-        expect(chip.labelStyle!.fontFamily, 'AtkinsonNext');
+        expect(chip.labelStyle!.fontFamily, 'Poppins');
         final selectedSide = WidgetStateProperty.resolveAs<BorderSide?>(chip.side, selected)!;
         final idleSide = WidgetStateProperty.resolveAs<BorderSide?>(chip.side, {})!;
         if (p.isDark) {
           expect(selectedSide, BorderSide.none);
-          expect(idleSide, BorderSide.none);
+          expect(idleSide.color, p.outlineVariant, reason: 'unselected: surface with a hairline outline');
         } else {
           expect(selectedSide.color, p.voltEdge);
           expect(p.voltEdge, const Color(0xFF121214));
@@ -194,7 +194,7 @@ void main() {
         final dialog = theme.dialogTheme;
         expect(dialog.backgroundColor, p.surfaceElevated);
         expect((dialog.shape! as RoundedRectangleBorder).borderRadius, BorderRadius.circular(AppSpacing.radiusSheet));
-        expect(dialog.titleTextStyle!.fontFamily, 'Unbounded');
+        expect(dialog.titleTextStyle!.fontFamily, 'Fraunces');
         expect(dialog.contentTextStyle!.color, p.textSecondary);
 
         // Depth: no shadows on ink, a soft ink shadow on paper.
@@ -202,11 +202,12 @@ void main() {
         expect(dialog.elevation, p.isDark ? 0 : greaterThan(0));
 
         final input = theme.inputDecorationTheme;
-        expect(input.fillColor, p.isDark ? p.surfaceElevated : Colors.white);
-        expect((input.focusedBorder! as OutlineInputBorder).borderSide.color, p.focusRing);
+        expect(input.fillColor, p.isDark ? p.surfaceElevated : p.surface);
+        expect((input.focusedBorder! as OutlineInputBorder).borderRadius, BorderRadius.circular(16));
+        expect((input.focusedBorder! as OutlineInputBorder).borderSide.color, p.primary, reason: 'rose / wine ring');
         expect((input.focusedBorder! as OutlineInputBorder).borderSide.width, 2);
         expect((input.enabledBorder! as OutlineInputBorder).borderSide,
-            p.isDark ? BorderSide.none : BorderSide(color: p.outline));
+            BorderSide(color: p.isDark ? p.divider : p.outline));
       });
 
       test('app bars set the system bar style of their canvas', () {
@@ -217,7 +218,7 @@ void main() {
         expect(style.systemNavigationBarContrastEnforced, isFalse);
         expect(style.statusBarIconBrightness, p.isDark ? Brightness.light : Brightness.dark);
         expect(style.statusBarBrightness, p.isDark ? Brightness.dark : Brightness.light);
-        expect(theme.appBarTheme.titleTextStyle!.fontFamily, 'AnekWide');
+        expect(theme.appBarTheme.titleTextStyle!.fontFamily, 'Poppins');
       });
     });
   }
@@ -234,29 +235,29 @@ void main() {
         expect(style.leadingDistribution, TextLeadingDistribution.even);
       }
 
-      role(s.display, 'Unbounded', 32, 40, FontWeight.w700, -0.5);
-      role(s.greeting, 'AnekWide', 30, 42, FontWeight.w700, 0);
-      role(s.screenTitle, 'AnekWide', 24, 34, FontWeight.w700, 0);
-      role(s.playerTitle, 'AnekWide', 22, 30, FontWeight.w600, 0);
-      role(s.cardTitle, 'AnekWide', 20, 28, FontWeight.w700, 0);
-      role(s.sectionTitle, 'Unbounded', 18, 26, FontWeight.w600, 0);
-      role(s.body, 'AtkinsonNext', 16, 24, FontWeight.w400, 0);
-      role(s.bodyStrong, 'AtkinsonNext', 16, 24, FontWeight.w600, 0);
-      role(s.metadata, 'AtkinsonNext', 14, 20, FontWeight.w400, 0);
-      role(s.label, 'AtkinsonNext', 12, 16, FontWeight.w600, 0.2);
-      role(s.chipLabel, 'AtkinsonNext', 14, 20, FontWeight.w600, 0);
-      role(s.button, 'AtkinsonNext', 15, 20, FontWeight.w700, 0.15);
-      role(s.caption, 'AtkinsonNext', 12, 16, FontWeight.w400, 0);
+      role(s.display, 'Fraunces', 32, 40, FontWeight.w700, -0.5);
+      role(s.greeting, 'Poppins', 30, 42, FontWeight.w700, 0);
+      role(s.screenTitle, 'Poppins', 24, 34, FontWeight.w700, 0);
+      role(s.playerTitle, 'Poppins', 22, 30, FontWeight.w600, 0);
+      role(s.cardTitle, 'Poppins', 20, 28, FontWeight.w700, 0);
+      role(s.sectionTitle, 'Fraunces', 18, 26, FontWeight.w600, 0);
+      role(s.body, 'Poppins', 16, 24, FontWeight.w400, 0);
+      role(s.bodyStrong, 'Poppins', 16, 24, FontWeight.w600, 0);
+      role(s.metadata, 'Poppins', 14, 20, FontWeight.w400, 0);
+      role(s.label, 'Poppins', 12, 16, FontWeight.w600, 0.2);
+      role(s.chipLabel, 'Poppins', 14, 20, FontWeight.w600, 0);
+      role(s.button, 'Poppins', 15, 20, FontWeight.w600, 0);
+      role(s.caption, 'Poppins', 12, 16, FontWeight.w400, 0);
       role(s.tabularFigures, 'DMMono', 13, 18, FontWeight.w500, 0);
       role(s.index, 'DMMono', 13, 18, FontWeight.w500, 0);
       role(s.overline, 'DMMono', 11, 16, FontWeight.w500, 1.1);
       role(s.badge, 'DMMono', 12, 16, FontWeight.w500, 0.2);
       role(s.figureLarge, 'DMMono', 28, 32, FontWeight.w500, -0.5);
 
-      expect(s.display.fontFamilyFallback, ['AnekWide']);
-      expect(s.screenTitle.fontFamilyFallback, ['AtkinsonNext', 'Mukta']);
-      expect(s.body.fontFamilyFallback, ['Mukta']);
-      expect(s.tabularFigures.fontFamilyFallback, ['Mukta']);
+      expect(s.display.fontFamilyFallback, ['Poppins']);
+      expect(s.screenTitle.fontFamilyFallback, isEmpty);
+      expect(s.body.fontFamilyFallback, isEmpty);
+      expect(s.tabularFigures.fontFamilyFallback, ['Poppins']);
       expect(s.tabularFigures.fontFeatures, contains(const FontFeature.tabularFigures()));
       expect(s.button.color, isNull, reason: 'the button gives the colour');
     });

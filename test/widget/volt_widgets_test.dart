@@ -1,4 +1,4 @@
-// The Volt widgets and the rest of the Bijuli kit in both themes: Volt fills
+// The Volt widgets and the rest of the Sindur kit in both themes: Volt fills
 // on paper always draw the 1.5 dp ink edge (docs/DESIGN.md 0.6 and 10), the
 // kit reads context.palette, and the Ink Dock stays ink in the light theme.
 import 'package:flutter/material.dart';
@@ -181,7 +181,7 @@ void main() {
         ),
       );
       expect(text.text.style!.color, AppPalette.light.onVoltFill);
-      expect(text.text.style!.fontFamily, 'AtkinsonNext');
+      expect(text.text.style!.fontFamily, 'Poppins');
     });
 
     testWidgets('pressed: the pressed Volt and a 0.97 scale; released: the sheen again', (tester) async {
@@ -319,7 +319,7 @@ void main() {
       final title = tester.widget<Text>(find.text(breakableTitle('Audit_Long_Tone_5min')));
       expect(title.semanticsLabel, 'Audit_Long_Tone_5min');
       expect(title.style!.color, palette.onVoltFill);
-      expect(title.style!.fontFamily, 'AnekWide');
+      expect(title.style!.fontFamily, 'Poppins');
       expect(title.maxLines, 1);
       expect(tester.widget<Text>(find.text('Family Recordings · 2:41 left')).style!.color, palette.onVoltMuted);
 
@@ -484,7 +484,7 @@ void main() {
       expect(rule.color, p.rule);
       expect(tester.getSize(find.descendant(of: find.byType(SectionHeader), matching: find.byType(Container)).first).height,
           SectionHeader.ruleThickness);
-      expect(tester.widget<Text>(find.text('Recently played')).style!.fontFamily, 'Unbounded');
+      expect(tester.widget<Text>(find.text('Recently played')).style!.fontFamily, 'Fraunces');
     });
 
     testWidgets('a kicker header with an action keeps the rule on the full gutter and the label on it', (tester) async {

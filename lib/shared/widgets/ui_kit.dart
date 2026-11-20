@@ -107,6 +107,9 @@ class SectionHeader extends StatelessWidget {
   /// Thickness of the rule above a kicker.
   static const double ruleThickness = 2;
 
+  /// Length of the brand segment that leads the rule.
+  static const double ruleAccentWidth = 28;
+
   /// The action button's narrowest width (Material's TextButton minimum).
   static const double _actionMinWidth = 64;
 
@@ -182,7 +185,13 @@ class SectionHeader extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (rule) ...[
-                        Container(height: ruleThickness, color: palette.rule),
+                        // The rule, led by a short brand segment.
+                        Container(
+                          height: ruleThickness,
+                          color: palette.rule,
+                          alignment: AlignmentDirectional.centerStart,
+                          child: Container(width: ruleAccentWidth, color: palette.primaryBase),
+                        ),
                         const SizedBox(height: AppSpacing.md12),
                       ],
                       if (kicker != null) ...[
@@ -412,9 +421,18 @@ class SurfaceCard extends StatelessWidget {
     );
   }
 
+  /// The soft ink shadow under a card on paper (none on ink, where the
+  /// hairline edge separates it).
+  static List<BoxShadow> shadowsFor(AppPalette palette) => palette.isDark
+      ? const []
+      : [
+          BoxShadow(color: palette.schemeShadow.withValues(alpha: 0.06), blurRadius: 2, offset: const Offset(0, 1)),
+          BoxShadow(color: palette.schemeShadow.withValues(alpha: 0.07), blurRadius: 16, offset: const Offset(0, 6)),
+        ];
+
   Widget _card(AppPalette palette, Gradient? gradient) {
     final radius = BorderRadius.circular(AppSpacing.cardRadius);
-    return Material(
+    final card = Material(
       color: gradient == null ? palette.surface : Colors.transparent,
       borderRadius: radius,
       child: Ink(
@@ -427,9 +445,16 @@ class SurfaceCard extends StatelessWidget {
           borderRadius: radius,
           onTap: onTap,
           highlightColor: palette.surfacePressed,
+          splashColor: palette.primaryBase.withValues(alpha: 0.10),
           child: Padding(padding: padding, child: child),
         ),
       ),
+    );
+    final shadows = shadowsFor(palette);
+    if (shadows.isEmpty) return card;
+    return DecoratedBox(
+      decoration: BoxDecoration(borderRadius: radius, boxShadow: shadows),
+      child: card,
     );
   }
 }
@@ -480,6 +505,7 @@ class EmptyHint extends StatelessWidget {
               height: 84,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
+                border: Border.all(color: palette.primaryBase.withValues(alpha: 0.22)),
                 gradient: RadialGradient(
                   colors: [
                     palette.primaryBase.withValues(alpha: 0.28),
@@ -514,6 +540,57 @@ class EmptyHint extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// A round tonal icon button (docs/DESIGN.md 7.3): the icon on a
+/// [AppPalette.secondaryContainer] disc, 48 dp, with the crimson press wash
+/// and a 0.97 press scale (instant with reduced motion). For secondary
+/// actions next to a [VoltButton] (shuffle, add to playlist ...).
+class TonalIconButton extends StatefulWidget {
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final String? tooltip;
+  final double size;
+
+  const TonalIconButton({
+    super.key,
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+    this.size = 48,
+  });
+
+  @override
+  State<TonalIconButton> createState() => _TonalIconButtonState();
+}
+
+class _TonalIconButtonState extends State<TonalIconButton> with _PressedState<TonalIconButton> {
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final button = IconButton.filledTonal(
+      statesController: states,
+      tooltip: widget.tooltip,
+      onPressed: widget.onPressed,
+      style: IconButton.styleFrom(
+        backgroundColor: palette.secondaryContainer,
+        foregroundColor: palette.onSecondaryContainer,
+        disabledBackgroundColor: palette.textPrimary.withValues(alpha: 0.12),
+        disabledForegroundColor: palette.textPrimary.withValues(alpha: 0.38),
+        fixedSize: Size.square(widget.size),
+        shape: const CircleBorder(),
+      ).copyWith(
+        overlayColor: WidgetStateProperty.resolveWith((s) {
+          if (s.contains(WidgetState.pressed)) return palette.primaryBase.withValues(alpha: 0.18);
+          if (s.contains(WidgetState.focused)) return palette.primaryBase.withValues(alpha: 0.14);
+          if (s.contains(WidgetState.hovered)) return palette.primaryBase.withValues(alpha: 0.08);
+          return null;
+        }),
+      ),
+      icon: Icon(widget.icon),
+    );
+    return _PressScale(pressed: pressed, child: button);
   }
 }
 
@@ -587,7 +664,7 @@ class VoltButton extends StatefulWidget {
   final VoidCallback? onPressed;
   final VoidCallback? onLongPress;
 
-  /// 40 dp tall with 16 dp side padding, for toolbars and the watch strip.
+  /// 40 dp tall with 12 dp side padding, for toolbars and the watch strip.
   final bool compact;
 
   /// Fills the available width (the Downloads link field's button).
@@ -652,7 +729,7 @@ class _VoltButtonState extends State<VoltButton> with _PressedState<VoltButton> 
       shadowColor: const WidgetStatePropertyAll(Colors.transparent),
       surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
       padding: WidgetStatePropertyAll(
-        EdgeInsets.symmetric(horizontal: widget.compact ? AppSpacing.lg16 : AppSpacing.xxl24),
+        EdgeInsets.symmetric(horizontal: widget.compact ? AppSpacing.md12 : AppSpacing.xxl24),
       ),
       minimumSize: WidgetStatePropertyAll(widget.expand ? Size.fromHeight(height) : Size(height, height)),
       tapTargetSize: MaterialTapTargetSize.padded,
@@ -711,7 +788,23 @@ ShapeDecoration _voltButtonDecoration(AppPalette palette, Set<WidgetState> state
     shape: StadiumBorder(side: side),
     color: disabled ? palette.surfacePressed : (pressed ? palette.voltPressed : null),
     gradient: disabled || pressed ? null : palette.primaryGradient,
+    shadows: voltGlowShadows(palette, disabled: disabled, pressed: pressed),
   );
+}
+
+/// The soft crimson glow under an enabled Volt button or disc: only where the
+/// palette has a glow (ink; transparent on paper, where the ink edge does the
+/// job), tighter while pressed, none when disabled.
+List<BoxShadow> voltGlowShadows(AppPalette palette, {bool disabled = false, bool pressed = false}) {
+  if (disabled || palette.voltGlow.a == 0) return const [];
+  return [
+    BoxShadow(
+      color: palette.voltGlow,
+      blurRadius: pressed ? 8 : 18,
+      offset: Offset(0, pressed ? 2 : 6),
+      spreadRadius: -2,
+    ),
+  ];
 }
 
 /// Round Volt play button with an ink glyph: [small] 44 dp (mini player, 24
@@ -807,7 +900,7 @@ class _VoltDiscState extends State<VoltDisc> with _PressedState<VoltDisc> {
       disc = DecoratedBox(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          boxShadow: [BoxShadow(color: palette.voltGlow, blurRadius: 24)],
+          boxShadow: [BoxShadow(color: palette.voltGlow, blurRadius: pressed ? 12 : 24)],
         ),
         child: disc,
       );

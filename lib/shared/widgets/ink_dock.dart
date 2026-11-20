@@ -58,7 +58,11 @@ class InkDock extends StatelessWidget {
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
                 child: CustomPaint(
-                  foregroundPainter: _DockEdgePainter(color: palette.dockLine, radius: topRadius),
+                  foregroundPainter: _DockEdgePainter(
+                    color: palette.dockLine,
+                    radius: topRadius,
+                    glint: palette.voltGlow.withValues(alpha: palette.voltGlow.a * 1.6 > 1 ? 1 : palette.voltGlow.a * 1.6),
+                  ),
                   child: ColoredBox(
                     color: palette.dock,
                     child: Column(
@@ -81,8 +85,9 @@ class InkDock extends StatelessWidget {
 class _DockEdgePainter extends CustomPainter {
   final Color color;
   final double radius;
+  final Color glint;
 
-  const _DockEdgePainter({required this.color, required this.radius});
+  const _DockEdgePainter({required this.color, required this.radius, this.glint = const Color(0x00000000)});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -102,8 +107,21 @@ class _DockEdgePainter extends CustomPainter {
         ..strokeWidth = stroke
         ..color = color,
     );
+    // A brand glint across the middle of the top edge, fading out to the
+    // corners (transparent where the palette has no glow).
+    if (glint.a > 0 && size.width > r * 2) {
+      final rect = Rect.fromLTWH(r, 0, size.width - r * 2, stroke);
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..shader = LinearGradient(
+            colors: [glint.withValues(alpha: 0), glint, glint.withValues(alpha: 0)],
+          ).createShader(rect),
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(_DockEdgePainter oldDelegate) => oldDelegate.color != color || oldDelegate.radius != radius;
+  bool shouldRepaint(_DockEdgePainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.radius != radius || oldDelegate.glint != glint;
 }

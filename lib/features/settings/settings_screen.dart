@@ -34,7 +34,7 @@ const BorderRadius _tileRadius = BorderRadius.all(Radius.circular(AppSpacing.rad
 /// are no separate group labels above the cards.
 const double _cardGap = AppSpacing.xl20;
 
-/// Row titles: the body role a step heavier (app strings, so Atkinson).
+/// Row titles: the body role a step heavier (app strings, so Poppins).
 TextStyle _rowTitleStyle(AppTextStyles type) => type.body.copyWith(fontWeight: FontWeight.w500);
 
 /// Settings, opened from the gear in the Home header: one card each for

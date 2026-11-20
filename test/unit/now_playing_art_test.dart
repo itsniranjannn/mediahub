@@ -75,7 +75,7 @@ void main() {
       expect(lookups, [song.uri], reason: 'the cover was read once');
     });
 
-    test('F1: a song without a cover gets its Bijuli placeholder as a PNG, shared per gradient', () async {
+    test('F1: a song without a cover gets its Sindur placeholder as a PNG, shared per gradient', () async {
       final art = resolver();
       final a = _song(1);
       // Another song with the same placeholder gradient.

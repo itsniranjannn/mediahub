@@ -778,7 +778,7 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-/// The tab masthead: "Music" in `display` (Unbounded), a one-line subtitle
+/// The tab masthead: "Music" in `display` (Fraunces), a one-line subtitle
 /// and optional icon actions.
 class _MusicHeader extends StatelessWidget {
   final List<Widget> actions;
@@ -1287,7 +1287,7 @@ class _ArtistAvatar extends StatelessWidget {
       child: ExcludeSemantics(
         child: Text(
           initial,
-          // A letter of the artist's name: Anek draws Latin and Devanagari
+          // A letter of the artist's name: Poppins draws Latin and Devanagari
           // alike. White, like every glyph on a cover gradient.
           style: context.typography.greeting.copyWith(
             fontSize: size * 0.4,

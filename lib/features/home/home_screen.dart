@@ -144,7 +144,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        // The app's own name: an app-written heading, so Unbounded.
+        // The app's own name: an app-written heading, so Fraunces.
         title: Text(AppConfig.appName, style: context.typography.sectionTitle),
         actions: [
           IconButton(

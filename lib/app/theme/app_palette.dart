@@ -975,8 +975,8 @@ abstract final class _Sindur {
   );
 
   static const LinearGradient primaryGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
     colors: [Color(0xFFD23A54), Color(0xFFC02D47)],
   );
 
@@ -1105,8 +1105,8 @@ abstract final class _SindurPaper {
   );
 
   static const LinearGradient primaryGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
     colors: [Color(0xFFD23A54), Color(0xFFC02D47)],
   );
 

@@ -1,29 +1,25 @@
 # Fonts
 
-The app bundles five open-licensed (SIL OFL 1.1) families; see `docs/DESIGN.md` section 5 for roles.
-Licences are in `assets/fonts/licenses/` and are registered on the app's licences page.
+The app bundles three open-licensed (SIL OFL 1.1, no Reserved Font Name) families; see `docs/DESIGN.md` section 5 for
+roles. Licences are in `assets/fonts/licenses/`, embedded in `lib/app/theme/font_licenses.dart` and registered on the
+app's licences page.
 
 | Family | Files in `assets/fonts/` | Source |
 |---|---|---|
-| Unbounded | `Unbounded-SemiBold.ttf`, `Unbounded-Bold.ttf` (Latin subset) | github.com/googlefonts/unbounded `fonts/ttf/` |
-| Anek Devanagari, width pinned to 112.5 | `AnekDevanagariWide-SemiBold.ttf`, `AnekDevanagariWide-Bold.ttf` (static instances) | github.com/google/fonts `ofl/anekdevanagari/AnekDevanagari[wdth,wght].ttf` |
-| Atkinson Hyperlegible Next | `AtkinsonHyperlegibleNext-{Regular,Medium,SemiBold,Bold}.ttf` | github.com/googlefonts/atkinson-hyperlegible-next `fonts/ttf/` |
-| Mukta | `Mukta-{Regular,Medium,SemiBold,Bold}.ttf` (Devanagari + ASCII subset) | github.com/google/fonts `ofl/mukta/` |
-| DM Mono | `DMMono-{Regular,Medium}.ttf` | github.com/google/fonts `ofl/dmmono/` |
+| Fraunces | `Fraunces-SemiBold.ttf`, `Fraunces-Bold.ttf` (static instances) | github.com/google/fonts `ofl/fraunces/Fraunces[SOFT,WONK,opsz,wght].ttf` |
+| Poppins (Latin + Devanagari) | `Poppins-{Regular,Medium,SemiBold,Bold}.ttf` (unmodified) | github.com/google/fonts `ofl/poppins/` |
+| DM Mono | `DMMono-{Regular,Medium}.ttf` (unmodified) | github.com/google/fonts `ofl/dmmono/` |
 
-## Rebuilding the processed files
+Licence files: `ofl/fraunces/OFL.txt` as `Fraunces-OFL.txt`, `ofl/poppins/OFL.txt` as `Poppins-OFL.txt`,
+`ofl/dmmono/OFL.txt` as `DMMono-OFL.txt`.
+
+## Rebuilding the Fraunces instances
 
 ```sh
-python -m venv ftvenv && ftvenv/bin/pip install fonttools brotli   # Windows: ftvenv\Scripts\pip
-fonttools varLib.instancer "AnekDevanagari[wdth,wght].ttf" wdth=112.5 wght=600 -o AnekDevanagariWide-SemiBold.ttf
-fonttools varLib.instancer "AnekDevanagari[wdth,wght].ttf" wdth=112.5 wght=700 -o AnekDevanagariWide-Bold.ttf
-for f in Unbounded-SemiBold Unbounded-Bold; do
-  pyftsubset $f.ttf --unicodes="U+0000-024F,U+2000-206F,U+20B9,U+2122,U+2190-2199,U+2212" --layout-features='*' --output-file=out/$f.ttf
-done
-for w in Regular Medium SemiBold Bold; do
-  pyftsubset Mukta-$w.ttf --unicodes="U+0020-007E,U+00A0,U+0900-097F,U+1CD0-1CFF,U+200B-200D,U+20B9,U+25CC,U+A8E0-A8FF" --layout-features='*' --output-file=out/Mukta-$w.ttf
-done
+python -m venv ftvenv && ftvenv/bin/pip install fonttools   # Windows: ftvenv\Scripts\pip
+fonttools varLib.instancer "Fraunces[SOFT,WONK,opsz,wght].ttf" wght=600 opsz=72 SOFT=50 WONK=0 --static -o Fraunces-SemiBold.ttf
+fonttools varLib.instancer "Fraunces[SOFT,WONK,opsz,wght].ttf" wght=700 opsz=72 SOFT=50 WONK=0 --static -o Fraunces-Bold.ttf
 ```
 
-Built on 2026-11-17 with fontTools 4.68.0. Sizes: Anek 426 KB + 427 KB, Unbounded 199 KB + 203 KB, Mukta 327-349 KB each,
-Atkinson 65-67 KB each, DM Mono 50 KB each; 2.9 MB in total.
+Built on 2026-11-20 with fontTools 4.x. Sizes: Fraunces 73 KB each, Poppins 156-160 KB each, DM Mono 50 KB each;
+about 0.9 MB in total (the previous Unbounded / Anek Devanagari / Atkinson Hyperlegible Next / Mukta set was 2.9 MB).

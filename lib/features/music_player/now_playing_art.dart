@@ -18,7 +18,7 @@ import '../../shared/widgets/artwork_placeholder.dart';
 /// a file. Phone songs have neither (their cover is embedded in the file or
 /// kept by MediaStore), so their cover is read once through
 /// [ArtworkService], written to `<cache>/np_art/` and handed over as a
-/// `file://` uri. A song without any cover gets the same Bijuli placeholder
+/// `file://` uri. A song without any cover gets the same Sindur placeholder
 /// the app paints for it (its palette gradient and a note), rendered once
 /// per gradient.
 class NowPlayingArt {

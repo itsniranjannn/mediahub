@@ -277,7 +277,7 @@ class _LogLine extends StatelessWidget {
 
     // Every part of a line is in DM Mono (the figures role), so times line up
     // and event names read as the codes they are. Devanagari in a payload
-    // falls back to Mukta, and letterSpacing stays 0.
+    // falls back to Poppins, and letterSpacing stays 0.
     final palette = context.palette;
     final figures = AppTypography.of(palette).tabularFigures;
     // Timestamp: 12/16 muted, centred on the 18 dp event line by 1 dp.
