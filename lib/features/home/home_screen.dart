@@ -14,16 +14,14 @@ import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/repositories/library_repository.dart';
-import '../../shared/widgets/shared_label_scale.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../library/detail_screens.dart';
 import '../library/media_context_menu.dart';
-import '../library/media_song_row.dart';
 import '../library/playable.dart';
 import '../music_player/playback_notifier.dart';
 
 /// The library feeds the dashboard listens to.
-enum _Feed { songs, recentlyPlayed, mostPlayed, recentlyAdded, recentVideos }
+enum _Feed { songs, recentlyPlayed, mostPlayed, recentlyAdded, liked, recentVideos }
 
 /// Home dashboard: the "नमस्ते" greeting with the time of day, the Volt
 /// "Continue listening" slab, quick actions and the recently played / most
@@ -37,20 +35,12 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  /// Song sections show this many rows until "Show all" is tapped.
-  static const int _collapsedCount = 5;
-
   /// The feeds rendered as song sections, in screen order.
-  static const List<_Feed> _songFeeds = [
-    _Feed.recentlyPlayed,
-    _Feed.mostPlayed,
-    _Feed.recentlyAdded,
-  ];
+  static const List<_Feed> _songFeeds = [_Feed.recentlyPlayed, _Feed.mostPlayed, _Feed.recentlyAdded, _Feed.liked];
 
   /// Latest value of every feed. A missing key means "still loading".
   final Map<_Feed, List<MediaItem>> _data = {};
   final List<StreamSubscription<List<MediaItem>>> _subscriptions = [];
-  final Set<_Feed> _expanded = {};
   DateTime? _lastShuffleTap;
 
   @override
@@ -84,11 +74,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // 2. Most played (top 20, playCount > 0)
     _listen(_Feed.mostPlayed, repo.watchMostPlayed(limit: 20));
     // 3. Recently added (music only, last 20)
-    _listen(
-      _Feed.recentlyAdded,
-      repo.watchRecentlyAdded(limit: 20, mediaType: MediaType.audio),
-    );
-    // 4. Recent videos row
+    _listen(_Feed.recentlyAdded, repo.watchRecentlyAdded(limit: 20, mediaType: MediaType.audio));
+    // 4. Liked songs rail
+    _listen(_Feed.liked, repo.watchFavorites());
+    // 5. Recent videos row
     _listen(_Feed.recentVideos, repo.watchRecentVideos(limit: 10));
   }
 
@@ -125,12 +114,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const LikedSongsScreen()));
   }
 
-  void _toggleExpanded(_Feed feed) {
-    setState(() {
-      if (!_expanded.remove(feed)) _expanded.add(feed);
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final hasCurrentItem = ref.watch(currentMediaItemProvider.select((item) => item != null));
@@ -139,8 +122,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final nothingAtAll = loaded && !hasCurrentItem && _data.values.every((items) => items.isEmpty);
     // Skeleton rows stand in for the song sections until one of them has rows
     // to show or all three have answered (possibly with nothing).
-    final sectionsPending = _songFeeds.any((feed) => !_data.containsKey(feed)) &&
-        _songFeeds.every((feed) => _data[feed]?.isEmpty ?? true);
+    final sectionsPending =
+        _songFeeds.any((feed) => !_data.containsKey(feed)) && _songFeeds.every((feed) => _data[feed]?.isEmpty ?? true);
 
     return Scaffold(
       appBar: AppBar(
@@ -167,18 +150,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: EntranceFade(
               index: 1,
               child: _QuickActions(
-              songsLoading: songs == null,
-              onShuffle: (songs == null || songs.isEmpty) ? null : () => _shuffleAll(songs),
-              onLiked: _openLiked,
+                songsLoading: songs == null,
+                onShuffle: (songs == null || songs.isEmpty) ? null : () => _shuffleAll(songs),
+                onLiked: _openLiked,
               ),
             ),
           ),
 
-          if (sectionsPending) const SliverToBoxAdapter(child: _SongSectionSkeleton()),
+          if (sectionsPending) const SliverToBoxAdapter(child: _RailSkeleton()),
 
-          ..._songSection('Recently played', 'Your history', _Feed.recentlyPlayed),
-          ..._songSection('Most played', 'On repeat', _Feed.mostPlayed),
-          ..._songSection('Recently added', 'New on this phone', _Feed.recentlyAdded),
+          ..._railSection('Recently played', 'Your history', _Feed.recentlyPlayed),
+          ..._railSection('Most played', 'On repeat', _Feed.mostPlayed),
+          ..._railSection('Recently added', 'New on this phone', _Feed.recentlyAdded),
+          ..._railSection(
+            'Liked',
+            'Your hearts',
+            _Feed.liked,
+            actionLabel: 'See all',
+            actionSemanticLabel: 'See all liked songs',
+            onAction: _openLiked,
+          ),
           ..._videoSection(context),
 
           if (nothingAtAll)
@@ -187,7 +178,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               child: EmptyHint(
                 icon: Icons.queue_music_rounded,
                 title: 'Nothing played yet',
-                message: 'Songs and videos you play or add will show up here. '
+                message:
+                    'Songs and videos you play or add will show up here. '
                     'Find something new in Online.',
               ),
             ),
@@ -198,44 +190,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  /// Header + rows for one song feed; nothing when the feed is empty.
-  ///
-  /// Long feeds (up to 20 rows) start collapsed to [_collapsedCount] rows with a
-  /// "Show all" toggle so the three song sections and the video rail all fit in
-  /// a few screens. Every row stays reachable and tapping one still queues the
-  /// whole feed.
-  List<Widget> _songSection(String title, String kicker, _Feed feed) {
+  /// One horizontal rail of large rounded covers; nothing when the feed is empty.
+  List<Widget> _railSection(
+    String title,
+    String kicker,
+    _Feed feed, {
+    String? actionLabel,
+    String? actionSemanticLabel,
+    VoidCallback? onAction,
+  }) {
     final items = _data[feed];
     if (items == null || items.isEmpty) return const [];
-
-    final canCollapse = items.length > _collapsedCount;
-    final expanded = _expanded.contains(feed);
-    final visibleCount = canCollapse && !expanded ? _collapsedCount : items.length;
-
     return [
       SliverToBoxAdapter(
         child: _SectionHeading(
           title: title,
           kicker: kicker,
-          actionLabel: canCollapse ? (expanded ? 'Show less' : 'Show all') : null,
-          // The visible label is the same in every section; the spoken one
-          // says which section it expands or collapses.
-          actionSemanticLabel: canCollapse
-              ? (expanded ? 'Show less of $title' : 'Show all ${items.length} in $title')
-              : null,
-          onAction: canCollapse ? () => _toggleExpanded(feed) : null,
+          actionLabel: actionLabel,
+          actionSemanticLabel: actionSemanticLabel,
+          onAction: onAction,
         ),
       ),
-      SliverList.builder(
-        itemCount: visibleCount,
-        itemBuilder: (context, index) {
-          return MediaSongRow(
-            item: items[index],
-            onTap: () {
-              playCollection(ref.read(playbackNotifierProvider.notifier), items, start: items[index]);
-            },
-          );
-        },
+      SliverToBoxAdapter(
+        child: _CoverRail(
+          items: items,
+          onPlay: (item) => playCollection(ref.read(playbackNotifierProvider.notifier), items, start: item),
+        ),
       ),
     ];
   }
@@ -278,13 +258,7 @@ class _SectionHeading extends StatelessWidget {
   final String? actionSemanticLabel;
   final VoidCallback? onAction;
 
-  const _SectionHeading({
-    required this.title,
-    this.kicker,
-    this.actionLabel,
-    this.actionSemanticLabel,
-    this.onAction,
-  });
+  const _SectionHeading({required this.title, this.kicker, this.actionLabel, this.actionSemanticLabel, this.onAction});
 
   static const EdgeInsets padding = EdgeInsets.fromLTRB(
     AppSpacing.lg16,
@@ -292,15 +266,6 @@ class _SectionHeading extends StatelessWidget {
     AppSpacing.lg16,
     AppSpacing.sm8,
   );
-
-  /// Height of the rule, the gaps and the kicker above the title row.
-  static double kickerBlockHeight(BuildContext context) {
-    final overline = context.typography.overline;
-    return SectionHeader.ruleThickness +
-        AppSpacing.md12 +
-        MediaQuery.textScalerOf(context).scale(overline.fontSize!) * overline.height! +
-        AppSpacing.xs4;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -317,15 +282,12 @@ class _SectionHeading extends StatelessWidget {
 
     final row = Row(
       children: [
+        const SparkMark(height: 22),
+        const SizedBox(width: AppSpacing.sm8),
         Expanded(
           child: Semantics(
             header: true,
-            child: Text(
-              title,
-              style: type.sectionTitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+            child: Text(title, style: type.sectionTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
         ),
         if (label != null)
@@ -350,8 +312,6 @@ class _SectionHeading extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(height: SectionHeader.ruleThickness, color: palette.rule),
-                  const SizedBox(height: AppSpacing.md12),
                   Text(
                     kicker.toUpperCase(),
                     semanticsLabel: kicker,
@@ -376,11 +336,7 @@ class _SkeletonBar extends StatelessWidget {
   final double height;
   final double radius;
 
-  const _SkeletonBar({
-    required this.width,
-    required this.height,
-    this.radius = defaultRadius,
-  });
+  const _SkeletonBar({required this.width, required this.height, this.radius = defaultRadius});
 
   static const double defaultRadius = AppSpacing.radiusBadge;
 
@@ -389,86 +345,7 @@ class _SkeletonBar extends StatelessWidget {
     return Container(
       width: width,
       height: height,
-      decoration: BoxDecoration(
-        color: context.palette.surfacePressed,
-        borderRadius: BorderRadius.circular(radius),
-      ),
-    );
-  }
-}
-
-/// Header + a few song rows shown while the song feeds are still loading.
-/// Mirrors [MediaSongRow]'s geometry so the real rows replace it in place.
-class _SongSectionSkeleton extends StatelessWidget {
-  const _SongSectionSkeleton();
-
-  /// Title-bar widths (as a share of the text column) for the placeholder rows.
-  static const List<double> _titleWidths = [0.72, 0.56, 0.64];
-  static const double _headerBarWidth = 132;
-  static const double _headerBarHeight = 14;
-  static const double _titleBarHeight = 12;
-  static const double _metaBarWidth = 96;
-  static const double _metaBarHeight = 10;
-
-  @override
-  Widget build(BuildContext context) {
-    final titleStyle = context.typography.sectionTitle;
-    final headerLine = MediaQuery.textScalerOf(context).scale(titleStyle.fontSize!) * titleStyle.height!;
-
-    return Semantics(
-      container: true,
-      label: 'Loading your music',
-      excludeSemantics: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: _SectionHeading.padding,
-            child: SizedBox(
-              height: _SectionHeading.kickerBlockHeight(context) + headerLine,
-              child: const Align(
-                alignment: AlignmentDirectional.bottomStart,
-                child: _SkeletonBar(width: _headerBarWidth, height: _headerBarHeight),
-              ),
-            ),
-          ),
-          for (final widthFactor in _titleWidths)
-            ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: MediaSongRow.minHeight),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.sm8),
-                child: Row(
-                  children: [
-                    const _SkeletonBar(
-                      width: MediaSongRow.artworkSize,
-                      height: MediaSongRow.artworkSize,
-                      radius: MediaSongRow.artworkRadius,
-                    ),
-                    const SizedBox(width: AppSpacing.md12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          FractionallySizedBox(
-                            widthFactor: widthFactor,
-                            child: const _SkeletonBar(
-                              width: double.infinity,
-                              height: _titleBarHeight,
-                            ),
-                          ),
-                          const SizedBox(height: AppSpacing.sm8),
-                          const _SkeletonBar(width: _metaBarWidth, height: _metaBarHeight),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
+      decoration: BoxDecoration(color: context.palette.surfacePressed, borderRadius: BorderRadius.circular(radius)),
     );
   }
 }
@@ -535,37 +412,47 @@ class _Greeting extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.sm8),
       child: EntranceFade(
         child: HeroBand(
+          glow: true,
+          padding: const EdgeInsets.fromLTRB(AppSpacing.xl20, AppSpacing.xxl24, AppSpacing.xl20, AppSpacing.xl20),
           child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Semantics(
-            header: true,
-            child: Text(namaste, style: type.greeting, maxLines: 1, overflow: TextOverflow.ellipsis),
-          ),
-          Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(text: greeting, style: const TextStyle(fontWeight: FontWeight.w600)),
-                TextSpan(text: ' · ', style: TextStyle(color: palette.textMuted)),
-                if (detail == null)
-                  const WidgetSpan(
-                    alignment: PlaceholderAlignment.middle,
-                    child: _SkeletonBar(width: _countBarWidth, height: _countBarHeight),
-                  )
-                else
-                  TextSpan(text: detail),
-              ],
-            ),
-            style: line,
-            // Every line is exactly one body line tall, whether it holds the
-            // count or the inline placeholder.
-            strutStyle: StrutStyle.fromTextStyle(line, forceStrutHeight: true),
-            semanticsLabel: spoken,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SparkMark(height: 4),
+              const SizedBox(height: AppSpacing.md12),
+              Semantics(
+                header: true,
+                child: Text(namaste, style: type.greeting, maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+              Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: greeting,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    TextSpan(
+                      text: ' · ',
+                      style: TextStyle(color: palette.textMuted),
+                    ),
+                    if (detail == null)
+                      const WidgetSpan(
+                        alignment: PlaceholderAlignment.middle,
+                        child: _SkeletonBar(width: _countBarWidth, height: _countBarHeight),
+                      )
+                    else
+                      TextSpan(text: detail),
+                  ],
+                ),
+                style: line,
+                // Every line is exactly one body line tall, whether it holds the
+                // count or the inline placeholder.
+                strutStyle: StrutStyle.fromTextStyle(line, forceStrutHeight: true),
+                semanticsLabel: spoken,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ),
         ),
       ),
@@ -657,122 +544,84 @@ class _ContinueListeningSlab extends ConsumerWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Quick actions
+// Cover rails
 // ---------------------------------------------------------------------------
 
-/// Shuffle all, Liked (songs), Online and Downloads: four across, or two by
-/// two when four would leave a tile narrower than [_minTileWidth] (a 320 dp
-/// phone).
-class _QuickActions extends StatelessWidget {
-  /// True until the songs feed first answers. The Shuffle slot then holds a
-  /// placeholder of the same size so the other tiles do not reflow.
-  final bool songsLoading;
+/// A horizontal rail of songs as large rounded covers (radius 24) with the
+/// title and artist under each. Tap plays the rail from that song, long press
+/// opens the media sheet.
+class _CoverRail extends ConsumerWidget {
+  final List<MediaItem> items;
+  final void Function(MediaItem item) onPlay;
 
-  /// Null hides the Shuffle tile (no songs in the library yet).
-  final VoidCallback? onShuffle;
+  const _CoverRail({required this.items, required this.onPlay});
 
-  /// Opens Liked songs.
-  final VoidCallback onLiked;
+  static const double cover = 136;
 
-  const _QuickActions({required this.songsLoading, required this.onShuffle, required this.onLiked});
-
-  static const double _gap = AppSpacing.md12;
-  static const double _minTileWidth = 72;
+  static double height(BuildContext context) {
+    final type = context.typography;
+    final scaler = MediaQuery.textScalerOf(context);
+    double line(TextStyle s) => scaler.scale(s.fontSize!) * s.height!;
+    return cover + AppSpacing.sm8 + line(type.bodyStrong) + line(type.metadata) + AppSpacing.xs4;
+  }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final palette = context.palette;
-    final shuffle = onShuffle;
-    final showShuffleSlot = songsLoading || shuffle != null;
-    final labels = [
-      if (shuffle != null && !songsLoading) 'Shuffle all',
-      'Liked',
-      'Online',
-      if (PlatformInfo.supportsDownloads) 'Downloads',
-    ];
-    final slots = (showShuffleSlot ? 1 : 0) + 2 + (PlatformInfo.supportsDownloads ? 1 : 0);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.lg16,
-        AppSpacing.lg16,
-        AppSpacing.lg16,
-        0,
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // One size for every label: when one has to shrink to fit its
-          // tile (320 dp at large text), they all shrink with it.
-          final across = slots > 3 && (constraints.maxWidth - _gap * (slots - 1)) / slots < _minTileWidth
-              ? 2
-              : slots;
-          final tileWidth = (constraints.maxWidth - _gap * (across - 1)) / across;
-          final labelScaler = sharedLabelScaler(
-            context,
-            labels: labels,
-            style: _QuickActionTile.labelStyle(context),
-            maxWidth: tileWidth - _QuickActionTile.padding.horizontal - 2,
-          );
-          final tiles = <Widget>[
-            if (songsLoading)
-              _QuickActionPlaceholder(labelScaler: labelScaler)
-            else if (shuffle != null)
-              _QuickActionTile(
-                icon: Icons.shuffle_rounded,
-                label: 'Shuffle all',
-                semanticLabel: 'Shuffle all songs',
-                color: palette.primary,
-                labelScaler: labelScaler,
-                onTap: shuffle,
+    final type = context.typography;
+    final radius = BorderRadius.circular(AppSpacing.radiusCover);
+    return SizedBox(
+      height: height(context),
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+        scrollDirection: Axis.horizontal,
+        itemCount: items.length,
+        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.md12),
+        itemBuilder: (context, index) {
+          final item = items[index];
+          final artist = item.artist ?? 'Unknown artist';
+          return Semantics(
+            button: true,
+            label: '${item.title} by $artist',
+            onTap: () => onPlay(item),
+            excludeSemantics: true,
+            child: SizedBox(
+              width: cover,
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  borderRadius: radius,
+                  onTap: () => onPlay(item),
+                  onLongPress: () => MediaContextMenu.show(context, ref, item),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      DecoratedBox(
+                        position: DecorationPosition.foreground,
+                        decoration: BoxDecoration(
+                          borderRadius: radius,
+                          border: Border.all(color: palette.divider),
+                        ),
+                        child: ArtworkThumbnail(
+                          uri: item.uri,
+                          artworkPath: item.artworkPath,
+                          size: cover,
+                          borderRadius: AppSpacing.radiusCover,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.sm8),
+                      Text(item.title, style: type.bodyStrong, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(
+                        artist,
+                        style: type.metadata.copyWith(color: palette.textSecondary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            _QuickActionTile(
-              icon: Icons.favorite_rounded,
-              label: 'Liked',
-              semanticLabel: 'Open Liked songs',
-              color: palette.favorite,
-              labelScaler: labelScaler,
-              onTap: onLiked,
             ),
-            _QuickActionTile(
-              icon: Icons.smart_display_rounded,
-              label: 'Online',
-              semanticLabel: 'Open Online',
-              color: palette.accent,
-              labelScaler: labelScaler,
-              onTap: () => context.go('/online'),
-            ),
-            if (PlatformInfo.supportsDownloads)
-              _QuickActionTile(
-                icon: Icons.file_download_rounded,
-                label: 'Downloads',
-                semanticLabel: 'Open Downloads',
-                color: palette.primary,
-                labelScaler: labelScaler,
-                onTap: () => context.go('/downloads'),
-              ),
-          ];
-          final rows = <Widget>[];
-          for (var start = 0; start < tiles.length; start += across) {
-            final row = tiles.sublist(start, (start + across).clamp(0, tiles.length));
-            rows.add(Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (var i = 0; i < across; i++) ...[
-                  if (i > 0) const SizedBox(width: _gap),
-                  Expanded(child: i < row.length ? row[i] : const SizedBox.shrink()),
-                ],
-              ],
-            ));
-          }
-          if (rows.length == 1) return rows.single;
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < rows.length; i++) ...[
-                if (i > 0) const SizedBox(height: _gap),
-                rows[i],
-              ],
-            ],
           );
         },
       ),
@@ -780,118 +629,216 @@ class _QuickActions extends StatelessWidget {
   }
 }
 
-/// A quick action: the glyph ([color]: primary, or accent for Online) on a
-/// primaryContainer disc, the same tile recipe as the Downloads type tiles
-/// (DESIGN.md 7.14), then the label.
-class _QuickActionTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String semanticLabel;
-  final Color color;
-  final TextScaler labelScaler;
-  final VoidCallback onTap;
-
-  const _QuickActionTile({
-    required this.icon,
-    required this.label,
-    required this.semanticLabel,
-    required this.color,
-    required this.labelScaler,
-    required this.onTap,
-  });
-
-  static const EdgeInsets padding = EdgeInsets.symmetric(
-    horizontal: AppSpacing.sm8,
-    vertical: AppSpacing.lg16,
-  );
-  static const double iconCircleSize = 44;
-  static const double _iconSize = 22;
-
-  static TextStyle labelStyle(BuildContext context) =>
-      context.typography.button.copyWith(color: context.palette.textPrimary);
-
-  /// Height of the label line at [scaler]. Every tile (and the placeholder)
-  /// reserves exactly this, so the row stays level.
-  static double labelHeight(BuildContext context, TextScaler scaler) {
-    final style = labelStyle(context);
-    return scaler.scale(style.fontSize!) * style.height!;
-  }
+/// Placeholder rail while the song feeds load.
+class _RailSkeleton extends StatelessWidget {
+  const _RailSkeleton();
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      button: true,
-      label: semanticLabel,
-      onTap: onTap,
+      container: true,
+      label: 'Loading your music',
       excludeSemantics: true,
-      child: SurfaceCard(
-        onTap: onTap,
-        padding: padding,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: iconCircleSize,
-              height: iconCircleSize,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: context.palette.primaryContainer,
-              ),
-              child: Icon(icon, size: _iconSize, color: color),
-            ),
-            const SizedBox(height: AppSpacing.sm8),
-            SizedBox(
-              height: labelHeight(context, labelScaler),
-              // The shared scaler already fits the label; this only guards
-              // against sub-pixel rounding.
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  label,
-                  style: labelStyle(context),
-                  textScaler: labelScaler,
-                  maxLines: 1,
-                ),
-              ),
-            ),
-          ],
+      child: Padding(
+        padding: const EdgeInsets.only(top: AppSpacing.xxl24),
+        child: SizedBox(
+          height: _CoverRail.cover,
+          child: ListView(
+            physics: const NeverScrollableScrollPhysics(),
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+            children: [
+              for (var i = 0; i < 3; i++) ...[
+                if (i > 0) const SizedBox(width: AppSpacing.md12),
+                const _SkeletonBar(width: _CoverRail.cover, height: _CoverRail.cover, radius: AppSpacing.radiusCover),
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-/// Same footprint as a [_QuickActionTile]; holds the Shuffle slot while the
-/// song count is loading.
-class _QuickActionPlaceholder extends StatelessWidget {
-  final TextScaler labelScaler;
+// ---------------------------------------------------------------------------
+// Quick actions (bento)
+// ---------------------------------------------------------------------------
 
-  const _QuickActionPlaceholder({required this.labelScaler});
+/// Quick actions as a bento grid: a tall Volt "Shuffle all" block on the
+/// start side, Liked and Online stacked beside it, then a full-width tonal
+/// Downloads strip. Without songs the Shuffle block goes and Liked / Online
+/// sit side by side.
+class _QuickActions extends StatelessWidget {
+  /// True until the songs feed first answers; the Shuffle block is then a
+  /// placeholder of the same size so nothing reflows.
+  final bool songsLoading;
 
-  static const double _labelBarWidth = 56;
-  static const double _labelBarHeight = 10;
+  /// Null hides the Shuffle block (no songs in the library yet).
+  final VoidCallback? onShuffle;
+  final VoidCallback onLiked;
+
+  const _QuickActions({required this.songsLoading, required this.onShuffle, required this.onLiked});
+
+  static const double _gap = AppSpacing.md12;
+
+  static double tileHeight(BuildContext context) {
+    final style = context.typography.button;
+    final line = MediaQuery.textScalerOf(context).scale(style.fontSize!) * style.height!;
+    final h = line + AppSpacing.md12 * 2;
+    return h < 56 ? 56 : h;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return ExcludeSemantics(
-      child: SurfaceCard(
-        padding: _QuickActionTile.padding,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const _SkeletonBar(
-              width: _QuickActionTile.iconCircleSize,
-              height: _QuickActionTile.iconCircleSize,
-              radius: _QuickActionTile.iconCircleSize / 2,
+    final palette = context.palette;
+    final shuffle = onShuffle;
+    final small = tileHeight(context);
+    final liked = _BentoTile(
+      icon: Icons.favorite_rounded,
+      label: 'Liked',
+      semanticLabel: 'Open Liked songs',
+      fill: palette.surfaceElevated,
+      iconColor: palette.favorite,
+      labelColor: palette.textPrimary,
+      height: small,
+      onTap: onLiked,
+    );
+    final online = _BentoTile(
+      icon: Icons.smart_display_rounded,
+      label: 'Online',
+      semanticLabel: 'Open Online',
+      fill: palette.surfaceElevated,
+      iconColor: palette.accent,
+      labelColor: palette.textPrimary,
+      height: small,
+      onTap: () => context.go('/online'),
+    );
+
+    final Widget top;
+    if (songsLoading || shuffle != null) {
+      final tall = small * 2 + _gap;
+      top = Row(
+        children: [
+          Expanded(
+            child: songsLoading || shuffle == null
+                ? ExcludeSemantics(
+                    child: _SkeletonBar(width: double.infinity, height: tall, radius: AppSpacing.cardRadius),
+                  )
+                : VoltTile(
+                    icon: Icons.shuffle_rounded,
+                    label: 'Shuffle all',
+                    semanticLabel: 'Shuffle all songs',
+                    height: tall,
+                    onTap: shuffle,
+                  ),
+          ),
+          const SizedBox(width: _gap),
+          Expanded(
+            child: Column(
+              children: [
+                liked,
+                const SizedBox(height: _gap),
+                online,
+              ],
             ),
-            const SizedBox(height: AppSpacing.sm8),
-            SizedBox(
-              height: _QuickActionTile.labelHeight(context, labelScaler),
-              child: const Center(
-                child: _SkeletonBar(width: _labelBarWidth, height: _labelBarHeight),
-              ),
+          ),
+        ],
+      );
+    } else {
+      top = Row(
+        children: [
+          Expanded(child: liked),
+          const SizedBox(width: _gap),
+          Expanded(child: online),
+        ],
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.lg16, AppSpacing.lg16, 0),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          top,
+          if (PlatformInfo.supportsDownloads) ...[
+            const SizedBox(height: _gap),
+            _BentoTile(
+              icon: Icons.file_download_rounded,
+              label: 'Downloads',
+              semanticLabel: 'Open Downloads',
+              fill: palette.secondaryContainer,
+              iconColor: palette.onSecondaryContainer,
+              labelColor: palette.onSecondaryContainer,
+              height: small,
+              trailing: true,
+              onTap: () => context.go('/downloads'),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One bento tile: a rounded fill with an icon and a one-line label (the big
+/// tile stacks a large icon over a Fraunces label).
+class _BentoTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String semanticLabel;
+  final Color fill;
+  final Color iconColor;
+  final Color labelColor;
+  final double height;
+  final bool trailing;
+  final VoidCallback onTap;
+
+  const _BentoTile({
+    required this.icon,
+    required this.label,
+    required this.semanticLabel,
+    required this.fill,
+    required this.iconColor,
+    required this.labelColor,
+    required this.height,
+    required this.onTap,
+    this.trailing = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final type = context.typography;
+    final radius = BorderRadius.circular(AppSpacing.cardRadius);
+    final text = Text(
+      label,
+      style: type.button.copyWith(color: labelColor),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    final Widget body = Row(
+      children: [
+        Icon(icon, size: 22, color: iconColor),
+        const SizedBox(width: AppSpacing.sm8),
+        Expanded(child: text),
+        if (trailing) Icon(Icons.chevron_right_rounded, color: iconColor),
+      ],
+    );
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: Material(
+        color: fill,
+        borderRadius: radius,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: SizedBox(
+            height: height,
+            width: double.infinity,
+            child: Padding(padding: const EdgeInsets.all(AppSpacing.md12), child: body),
+          ),
         ),
       ),
     );
@@ -964,7 +911,10 @@ class _VideoCard extends ConsumerWidget {
               children: [
                 DecoratedBox(
                   position: DecorationPosition.foreground,
-                  decoration: BoxDecoration(borderRadius: radius, border: Border.all(color: palette.divider)),
+                  decoration: BoxDecoration(
+                    borderRadius: radius,
+                    border: Border.all(color: palette.divider),
+                  ),
                   child: ClipRRect(
                     borderRadius: radius,
                     child: SizedBox(

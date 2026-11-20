@@ -116,15 +116,9 @@ void main() {
         expect(chip.labelStyle!.fontFamily, 'Poppins');
         final selectedSide = WidgetStateProperty.resolveAs<BorderSide?>(chip.side, selected)!;
         final idleSide = WidgetStateProperty.resolveAs<BorderSide?>(chip.side, {})!;
-        if (p.isDark) {
-          expect(selectedSide, BorderSide.none);
-          expect(idleSide.color, p.outlineVariant, reason: 'unselected: surface with a hairline outline');
-        } else {
-          expect(selectedSide.color, p.voltEdge);
-          expect(p.voltEdge, const Color(0xFF121214));
-          expect(selectedSide.width, 1.5);
-          expect(idleSide.color, p.outline);
-        }
+        // Sindur v2: the wine fill stands out on sand by itself, so no edge in either theme.
+        expect(selectedSide, BorderSide.none);
+        expect(idleSide.color, p.isDark ? p.outlineVariant : p.outline);
       });
 
       test('nav bar (inside the ink dock), slider, switch and progress', () {

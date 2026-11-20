@@ -318,12 +318,13 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                     active: activeCount,
                     saved: savedCount,
                     freeBytes: storageAsync.asData?.value.freeBytes,
-                  ),
-                  _UrlCard(
-                    controller: _urlController,
-                    handedLink: _handedLink,
-                    busy: _linkFlowBusy,
-                    onChooseQuality: (uri) => _openQualityChoice(uri),
+                    // The paste-link field is the hero's main element.
+                    child: _UrlCard(
+                      controller: _urlController,
+                      handedLink: _handedLink,
+                      busy: _linkFlowBusy,
+                      onChooseQuality: (uri) => _openQualityChoice(uri),
+                    ),
                   ),
                   if (inspection.errorMessage != null && !inspection.isInspecting) ...[
                     const SizedBox(height: AppSpacing.md12),
@@ -1241,7 +1242,10 @@ class _Header extends StatelessWidget {
   /// Free space on the phone; null until it is known.
   final int? freeBytes;
 
-  const _Header({required this.active, required this.saved, this.freeBytes});
+  /// The link field and its action, inside the hero.
+  final Widget? child;
+
+  const _Header({required this.active, required this.saved, this.freeBytes, this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -1266,9 +1270,12 @@ class _Header extends StatelessWidget {
       padding: const EdgeInsets.only(top: AppSpacing.md12, bottom: AppSpacing.lg16),
       child: EntranceFade(
         child: HeroBand(
+          glow: true,
           child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const SparkMark(height: 4),
+          const SizedBox(height: AppSpacing.md12),
           // One line, scaled down rather than clipped at large text sizes.
           Semantics(
             header: true,
@@ -1285,6 +1292,10 @@ class _Header extends StatelessWidget {
               semanticsLabel: spoken.join(', '),
               style: type.overline.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
             ),
+          ],
+          if (child != null) ...[
+            const SizedBox(height: AppSpacing.md12),
+            child!,
           ],
         ],
           ),
@@ -2116,13 +2127,14 @@ class _DownloadCard extends ConsumerWidget {
           ),
           if (showProgress) ...[
             const SizedBox(height: AppSpacing.md12),
-            // 4 dp primary on surfacePressed (the progress theme); a paused
-            // or waiting bar is muted, and its word says why.
+            // Sindur v2: a bold 8 dp bar in the slider colour (amber on ink,
+            // wine on sand); a paused or waiting bar is muted, and its word
+            // says why.
             LinearProgressIndicator(
               value: knownTotal ? progressVal : (isActive ? null : 0),
-              minHeight: 4,
-              borderRadius: BorderRadius.circular(2),
-              color: isActive ? palette.primary : palette.textMuted,
+              minHeight: 8,
+              borderRadius: BorderRadius.circular(4),
+              color: isActive ? palette.sliderActive : palette.textMuted,
               backgroundColor: palette.surfacePressed,
             ),
           ],

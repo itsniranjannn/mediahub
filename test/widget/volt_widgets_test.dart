@@ -13,7 +13,6 @@ import 'package:mediahub/shared/widgets/ui_kit.dart';
 
 import '../helpers/app_fonts.dart';
 
-const _ink = Color(0xFF121214);
 
 Future<void> _pump(
   WidgetTester tester,
@@ -73,7 +72,7 @@ void main() {
   setUpAll(loadAppFonts);
 
   group('the ink edge on paper', () {
-    testWidgets('VoltButton, VoltDisc and VoltSlab paint a 1.5 dp #121214 border in light', (tester) async {
+    testWidgets('Sindur v2: VoltButton, VoltDisc and VoltSlab draw no edge on sand either', (tester) async {
       await _pump(
         tester,
         Column(
@@ -86,17 +85,11 @@ void main() {
         ),
       );
 
-      final button = _shapeSide(_buttonFill(tester).shape);
-      expect(button.color, _ink);
-      expect(button.width, 1.5);
+      expect(AppPalette.light.voltEdge.a, 0, reason: 'the wine fill stands out on sand by itself');
+      expect(_shapeSide(_buttonFill(tester).shape), BorderSide.none);
 
-      final disc = _shapeSide(_discMaterial(tester).shape!);
-      expect(disc.color, _ink);
-      expect(disc.width, 1.5);
-
-      final slab = _shapeSide(_slabFill(tester).shape);
-      expect(slab.color, _ink);
-      expect(slab.width, 1.5);
+      expect(_shapeSide(_discMaterial(tester).shape!), BorderSide.none);
+      expect(_shapeSide(_slabFill(tester).shape), BorderSide.none);
       expect(_slabFill(tester).gradient, AppPalette.light.primaryGradient);
     });
 
@@ -119,7 +112,7 @@ void main() {
       expect(_buttonFill(tester).gradient, AppPalette.dark.primaryGradient);
     });
 
-    testWidgets('a selected chip in light wears the ink side and the Volt fill', (tester) async {
+    testWidgets('a selected chip in light wears the Volt fill and no edge', (tester) async {
       await _pump(
         tester,
         Row(
@@ -137,9 +130,7 @@ void main() {
         return material.shape!;
       }
 
-      final selected = _shapeSide(shapeOf('Folk'));
-      expect(selected.color, _ink);
-      expect(selected.width, 1.5);
+      expect(_shapeSide(shapeOf('Folk')), BorderSide.none);
       expect(_shapeSide(shapeOf('Pop')).color, AppPalette.light.outline);
       // The check mark keeps state from depending on colour alone.
       expect(find.descendant(of: find.widgetWithText(FilterChip, 'Folk'), matching: find.byType(CustomPaint)),
@@ -330,8 +321,8 @@ void main() {
       final slabRect = tester.getRect(find.byType(VoltSlab));
       final barRect = tester.getRect(find.byType(LinearProgressIndicator));
       expect(barRect.height, VoltSlab.progressHeight);
-      // Measured inside the 1.5 dp ink edge.
-      expect(slabRect.bottom - barRect.bottom, VoltSlab.progressInset + 1.5);
+      // Measured inside the edge (none in Sindur v2).
+      expect(slabRect.bottom - barRect.bottom, VoltSlab.progressInset + (palette.voltEdge.a == 0 ? 0 : 1.5));
 
       final disc = tester.widget<IconButton>(find.byType(IconButton));
       expect(disc.style!.backgroundColor!.resolve({}), palette.onVoltFill);

@@ -9,6 +9,24 @@ Appearance); its values are `AppPalette.classic`. Widget and token names keep th
 the brand sticker fill, crimson in Sindur and lime in Bijuli Classic. Sections 5-9 describe the Sindur fonts and
 components (Fraunces, Poppins, DM Mono; crimson glows on ink, soft shadows on paper).
 
+**Sindur v2 (2026-11-20, later the same day).** Palette and pages revised for a more distinctive look:
+
+- Dark: true black canvas (`#000000`, surfaces `#0A0A0A` / `#141216` / `#1E1A22`), dark red as the brand (wine
+  `#81021F` in the hero and print shadow, crimson `#CC324C` as the loud fill), dark purple as the second voice (plum
+  `#381932` and indigo `#32396F`: hero, tonal containers, dock tint), **amber `#F69E1C` as the spark** (selected nav
+  pill, sliders and progress, focus ring, resume lines, section marks), milk `#FFF3E6` text, blush / periwinkle tints.
+  `primary` as text is a lighter crimson step, `#FF7A92` (raw crimson is 4.0:1 on black, under the 4.5 floor).
+- Light: sand canvas `#F6EBCF` (surfaces `#FBF4E2`, `#FFFAF0`, pressed `#EFE2C2`), wine `#81021F` as primary and as
+  the brand fill with milk labels, lavender `#AAA6E3` / periwinkle `#C6CBE8` / `#E7EEFE` for containers and the hero,
+  plum `#381932` ink and indigo `#32396F` accent. Derived steps (raw colours failed as text): textSecondary
+  `#56404F`, textMuted `#5E4A58`, success `#0A6A40`, warning `#5A4F00`, error `#A8231C`, favourite `#9C1458` (dark:
+  `#FFA0B8`, moved off pink so it stays 6+ CIEDE2000 from lavender under protan vision).
+- No ink edge on paper any more (`voltEdge` none in both): the wine fill clears 3:1 on sand by itself, and no single
+  edge colour could reach 3:1 against both sand and wine. The sheen (`primaryGradient`) is `#C42A46 → #A8203A`,
+  dark enough for milk labels (5.1:1).
+- Pages: Home, Videos and Downloads redesigned (sections 7.18-7.20). The checker that produced the values is
+  re-implemented from `palette_contrast_test` / `card_contrast_test`: 490 pairs, 0 below their floor.
+
 Visual specimen (still showing the Bijuli look) with both themes side by side (open in a browser; fonts load from GitHub):
 `docs/design-specimen.html`.
 
@@ -117,67 +135,67 @@ extension PaletteX on BuildContext {
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| background | `#0B0B0D` | `#FFFFFF` | Scaffold canvas (dark: near-black; light: white). |
-| surface | `#121214` | `#FFFAFB` | Cards, sheets, list groups, search field (light: white). |
-| surfaceElevated | `#19191C` | `#FFFFFF` | Dialogs, menus, chips (dark), input fill, dark snackbar. |
-| surfacePressed | `#222226` | `#F8EAF0` | Pressed rows/cards, progress tracks, the floor every text colour is tested on. |
+| background | `#000000` | `#F6EBCF` | Scaffold canvas (dark: true black; light: sand). |
+| surface | `#0A0A0A` | `#FBF4E2` | Cards, sheets, list groups, search field (light: lighter sand). |
+| surfaceElevated | `#141216` | `#FFFAF0` | Dialogs, menus, chips (dark), input fill, dark snackbar. |
+| surfacePressed | `#1E1A22` | `#EFE2C2` | Pressed rows/cards, progress tracks, the floor every text colour is tested on. |
 
 **Brand (scheme roles)**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| primary | `#FF6E86` | `#81021F` | Text/icon accent: links, "See all", active toggles, now-playing title and bar, slider, progress, focus, FilledButton fill. Safe as text in both. |
+| primary | `#FF7A92` | `#81021F` | Text/icon accent: links, "See all", active toggles, now-playing title and bar, slider, progress, focus, FilledButton fill. Safe as text in both. |
 | primaryBase | `#CC324C` | `#9E0A2C` | Base for tints: ripple/highlight at 12%, empty-state halo at 28%. Never text. |
-| primaryPressed | `#E85A72` | `#5E0016` | Pressed fill for anything filled with `primary`. |
-| onPrimary | `#0B0B0D` | `#FFFFFF` | Label/glyph on `primary` fills. |
-| primaryContainer | `#3A1220` | `#F9E8F2` | Tonal brand fill: tonal buttons, Downloads type tiles, selected list row tint. |
-| onPrimaryContainer | `#F9E8F2` | `#5E0016` | Label on primaryContainer. |
-| secondary | `#B98FFF` | `#5B2FC2` | = accent (M3 `secondary`). |
-| onSecondary | `#0B0B0D` | `#FFFFFF` | Label on accent fills. |
-| secondaryContainer | `#3A1220` | `#F9E8F2` | Same as primaryContainer. `FilledButton.tonal` reads this slot. |
-| onSecondaryContainer | `#F9E8F2` | `#5E0016` | Tonal button label. |
+| primaryPressed | `#E8667E` | `#5E0016` | Pressed fill for anything filled with `primary`. |
+| onPrimary | `#000000` | `#FFF3E6` | Label/glyph on `primary` fills. |
+| primaryContainer | `#3D0612` | `#C6CBE8` | Tonal brand fill: tonal buttons, Downloads type tiles, selected list row tint. |
+| onPrimaryContainer | `#F9E8F2` | `#381932` | Label on primaryContainer. |
+| secondary | `#AAA6E3` | `#32396F` | = accent (M3 `secondary`). |
+| onSecondary | `#000000` | `#FFF3E6` | Label on accent fills. |
+| secondaryContainer | `#32396F` | `#AAA6E3` | Same as primaryContainer. `FilledButton.tonal` reads this slot. |
+| onSecondaryContainer | `#E7EEFE` | `#381932` | Tonal button label. |
 
 **Volt sticker (brand fills; only through `VoltButton`, `VoltDisc`, `VoltSlab`, `chipTheme`)**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| voltFill | `#CC324C` | same | The loud brand fill: Play all, play discs, Download, Continue card, selected chip (Crimson). Not a text colour: use primary. |
-| voltPressed | `#B32A42` | same | Pressed Volt fill. |
-| onVoltFill | `#FFFFFF` | same | White label and glyph on the crimson fill. |
-| onVoltMuted | `#FFF3E6` | same | Secondary text on Volt (Continue card artist, kicker). |
-| voltEdge | none (`#00000000`) | `#121214` | 1.5dp outline around every Volt fill on paper. |
+| voltFill | `#CC324C` | `#81021F` | The loud brand fill: Play all, play discs, Download, Continue card, selected chip (Crimson). Not a text colour: use primary. |
+| voltPressed | `#B32A42` | `#5E0016` | Pressed Volt fill. |
+| onVoltFill | `#FFF3E6` | same | Milk label and glyph on the crimson (dark) / wine (light) fill. |
+| onVoltMuted | `#FFF3E6` | `#F9E8F2` | Secondary text on Volt (Continue card artist, kicker). |
+| voltEdge | none (`#00000000`) | same | Sindur v2: no edge in either theme (wine clears 3:1 on sand). A non-transparent value would draw a 1.5dp outline. |
 | voltGlow | `#47CC324C` | none | Volt at 28%, blur 24, under the 72dp stage play disc only. |
 
 **Accent, favourite, text**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| accent | `#B98FFF` | `#5B2FC2` | Video kind, "Downloaded" glyph, info, downloads count dot. Small roles only, never a large fill. |
-| onAccent | `#0B0B0D` | `#FFFFFF` | On accent fills (count dot). |
-| favorite | `#FF8FD8` | `#A8126E` | Hearts only (filled heart = on). |
-| textPrimary | `#FFF3E6` | `#121214` | Titles, body. |
-| textSecondary | `#C9C3C6` | `#4A4250` | Metadata, secondary icons, all text on artwork tints and the stage. |
-| textMuted | `#A8A3AB` | `#645B66` | Captions, hints, durations in rows, unselected labels. Never on artwork tints or the stage. |
+| accent | `#AAA6E3` | `#32396F` | Video kind, "Downloaded" glyph, info, downloads count dot. Small roles only, never a large fill. |
+| onAccent | `#000000` | `#FFF3E6` | On accent fills (count dot). |
+| favorite | `#FFA0B8` | `#9C1458` | Hearts only (filled heart = on). |
+| textPrimary | `#FFF3E6` | `#381932` | Titles, body. |
+| textSecondary | `#D9CEC4` | `#56404F` | Metadata, secondary icons, all text on artwork tints and the stage. |
+| textMuted | `#ABA3AD` | `#5E4A58` | Captions, hints, durations in rows, unselected labels. Never on artwork tints or the stage. |
 
 **Lines and focus**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| divider | `#2A2A2F` | `#F0E2E6` | Decorative hairlines, card edges (1dp). Never the only boundary of a control. |
-| outlineVariant | `#2A2A2F` | `#F0E2E6` | = divider (M3 slot). |
-| outline | `#85828C` | `#8C7E84` | Control borders (outlined button, unselected light chip, switch off), drag handles, section rules. 3:1 or more on every surface. |
-| rule | `#85828C` | `#8C7E84` | The 2dp rule above section kickers (= outline). |
-| focusRing | `#B98FFF` | `#81021F` | 2dp keyboard/D-pad focus outline. |
-| dragHandle | `#85828C` | `#8C7E84` | Sheet handle, queue reorder handle. |
+| divider | `#26222A` | `#E6D7B2` | Decorative hairlines, card edges (1dp). Never the only boundary of a control. |
+| outlineVariant | `#26222A` | `#E6D7B2` | = divider (M3 slot). |
+| outline | `#857F8C` | `#857565` | Control borders (outlined button, unselected light chip, switch off), drag handles, section rules. 3:1 or more on every surface. |
+| rule | `#857F8C` | `#857565` | The 2dp rule above section kickers (= outline). |
+| focusRing | `#F69E1C` | `#81021F` | 2dp keyboard/D-pad focus outline. |
+| dragHandle | `#857F8C` | `#857565` | Sheet handle, queue reorder handle. |
 
 **States**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| success | `#4FD8C4` | `#0B7446` | Saved / complete. Always with a check icon. |
-| warning | `#F69E1C` | `#615600` | Queued, low storage, slow network. Always with an icon. |
-| error | `#FF9466` | `#B3261E` | Failed, destructive rows, field errors. Always icon + text. |
-| onError | `#0B0B0D` | `#FFFFFF` | On error fills. |
+| success | `#4FD8C4` | `#0A6A40` | Saved / complete. Always with a check icon. |
+| warning | `#F69E1C` | `#5A4F00` | Queued, low storage, slow network. Always with an icon. |
+| error | `#FF9466` | `#A8231C` | Failed, destructive rows, field errors. Always icon + text. |
+| onError | `#000000` | `#FFF3E6` | On error fills. |
 | errorContainer | `#3A1A16` | `#FCE4DC` | Error banners, destructive tonal buttons. |
 | onErrorContainer | `#FFDCCF` | `#5E1608` | Text on errorContainer. |
 | liveFill | `#B3132F` | same | Solid LIVE chip (replaces the red dot, which measured 2.89 on the chip). |
@@ -187,34 +205,34 @@ extension PaletteX on BuildContext {
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| scrim | `#CC000000` | `#99121214` | Behind sheets and dialogs. Stage veil uses the dark value. |
-| glass | `#EB121214` | `#E0FFFAFB` | Scrolled-under app bars (blur 24); light YouTube toolbar. |
-| overlay | `#B80B0B0D` | same | Ink at 72% behind badges on images and video frames. |
+| scrim | `#CC000000` | `#99381932` | Behind sheets and dialogs. Stage veil uses the dark value. |
+| glass | `#EB0A0A0A` | `#E0FBF4E2` | Scrolled-under app bars (blur 24); light YouTube toolbar. |
+| overlay | `#B8000000` | same | Ink at 72% behind badges on images and video frames. |
 | onOverlay | `#FFFFFF` | same | Text on overlay chips. |
 
 **Ink Dock (identical in both themes)**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| dock | `#F0141417` | same | Mini player + nav fill (94%), backdrop blur 24. |
+| dock | `#F00C0A10` | same | Mini player + nav fill (94%), backdrop blur 24. |
 | onDock | `#FFF3E6` | same | Dock titles, selected nav label, controls. |
-| onDockMuted | `#B4B1BA` | same | Artist line, unselected nav icon and label. |
-| dockLine | `#2E2B33` | same | 1dp top line, mini-player progress track. |
-| navIndicator | `#FF6E86` | same | 56x32 selected-tab pill. |
-| onNavIndicator | `#0B0B0D` | same | Filled icon in the pill. |
+| onDockMuted | `#B7AFBE` | same | Artist line, unselected nav icon and label. |
+| dockLine | `#2E2638` | same | 1dp top line, mini-player progress track. |
+| navIndicator | `#F69E1C` | same | 56x32 selected-tab pill; the amber spark (section marks, resume lines). |
+| onNavIndicator | `#000000` | same | Filled icon in the pill. |
 
 **Controls and depth**
 
 | Role | Dark | Light | Use |
 |---|---|---|---|
-| sliderActive | `#FF6E86` | `#81021F` | Active track (6dp). |
-| sliderInactive | `#2A2A2F` | `#EBD8DE` | Inactive track (4dp). |
+| sliderActive | `#F69E1C` | `#81021F` | Active track (6dp). |
+| sliderInactive | `#2E2836` | `#E2D2A8` | Inactive track (4dp). |
 | sliderThumb | `#FFF3E6` | `#81021F` | 14dp thumb (20dp while dragging). |
-| snackbar | `#19191C` | `#121214` | Snackbar and tooltip fill (light: ink, matching the dock). |
+| snackbar | `#141216` | `#381932` | Snackbar and tooltip fill (light: ink, matching the dock). |
 | onSnackbar | `#FFF3E6` | same | Snackbar text. |
 | snackbarAction | `#F69E1C` | same | Snackbar action (both sit on a dark fill). |
-| shadow | none (`#00000000`) | `#1A121214` | Light only: sheets, dialogs, menus, snackbars (0 8 24). |
-| printShadow | `#CC324C` | `#121214` | Hard 6x6dp offset, no blur, under hero and stage covers. |
+| shadow | none (`#00000000`) | `#1A381932` | Light only: sheets, dialogs, menus, snackbars (0 8 24). |
+| printShadow | `#81021F` | `#381932` | Hard 6x6dp offset, no blur, under hero and stage covers. |
 
 ### 2.3 ColorScheme mapping (both themes, from the palette)
 
@@ -243,14 +261,14 @@ All gradients run `topLeft → bottomRight` unless stated.
 
 | | Stops | Notes |
 |---|---|---|
-| Dark | `#4A0F24 → #1A0A12 → #0B0B0D` | Deep wine melting into the near-black canvas. |
-| Light | `#F9E8F2 → #FDF2F6 → #FFFFFF` | Blush wash fading into white. |
+| Dark | `#5A0418 → #2A1230 → #000000` | Deep wine through plum into the black canvas. `HeroBand(glow: true)` adds a soft crimson orb (top end) and an indigo one (bottom start), decorative only. |
+| Light | `#C6CBE8 → #E7EEFE → #F6EBCF` | Periwinkle wash fading into sand. |
 
 Items **with** a real cover use the brand hero. Items **without** a cover tint the hero and the stage with their own
 artwork pair (see `ArtworkTint` below), so per-song colour survives.
 
-**primaryGradient**: same in both themes, `#D23A54 → #C02D47` running `topCenter → bottomCenter`, a subtle crimson sheen for `VoltButton` and `VoltSlab`, white label.
-On paper it always carries the 1.5dp ink edge. Bijuli Classic keeps its Volt sheen (lime, in `AppPalette.classic`).
+**primaryGradient**: same in both themes, `#C42A46 → #A8203A` running `topCenter → bottomCenter`, a subtle crimson sheen for `VoltButton`, `VoltSlab` and `VoltTile`, milk label.
+Sindur v2 draws no edge around it on paper. Bijuli Classic keeps its Volt sheen (lime, in `AppPalette.classic`).
 
 **Artwork gradients**: 8 pairs, picked per item by uri hash. White glyph at 85%. The top stop is identical in both
 themes so an item keeps its colour when the phone switches theme; on paper the deep stop is lifted one step so tiles
@@ -261,11 +279,11 @@ orchid, jade).
 |---|---|---|---|---|
 | 1 | crimson | `#CC324C` | `#4A0A1A` | `#7A1028` |
 | 2 | wine | `#9A0A2C` | `#3A0010` | `#5E0016` |
-| 3 | lavender | `#7E4FD8` | `#2A1258` | `#46208A` |
-| 4 | navy | `#2E2CA0` | `#01004C` | `#14127A` |
+| 3 | plum | `#7A3A6E` | `#2A0F26` | `#4A1A40` |
+| 4 | indigo | `#4A54A8` | `#161A40` | `#252C6A` |
 | 5 | amber | `#B5600A` | `#4A2204` | `#6E3606` |
-| 6 | graphite | `#55525E` | `#121214` | `#2C2A32` |
-| 7 | ocean | `#1F6FA0` | `#0A2438` | `#0F3E5C` |
+| 6 | graphite | `#55525E` | `#0A0A0A` | `#2C2A32` |
+| 7 | lavender | `#7E6FD0` | `#241A50` | `#3E3488` |
 | 8 | rose | `#B0407A` | `#40102C` | `#6A1A48` |
 
 The floors (85% glyph 3:1 on top stops, 4.5:1 on midpoints, white 4.5:1 on deep stops) are checked by
@@ -372,6 +390,31 @@ Rules:
 
 ## 7. Components
 
+### 7.18 Home (Sindur v2)
+
+- Hero: `HeroBand(glow: true)` with a short amber `SparkMark`, "नमस्ते" in the greeting voice and the time of day.
+- The Volt "Continue listening" slab (unchanged behaviour and labels).
+- Bento quick actions: a tall `VoltTile` "Shuffle all" (as tall as the two tiles beside it), Liked and Online stacked
+  on `surfaceElevated`, then a full-width tonal (`secondaryContainer`) Downloads strip. Without songs the Shuffle
+  block goes; while songs load a skeleton holds its place.
+- Cover rails (136 dp covers, radius 24, title + artist): Recently played, Most played, Recently added, Liked (See
+  all opens Liked songs), then the Recent videos rail. Each heading is Fraunces with an amber `SparkMark`.
+
+### 7.19 Videos (Sindur v2)
+
+- Glowing hero with the count, refresh and sort; search field.
+- Featured "Continue watching" card: full-width 16:9 still with a 4 dp amber resume line, kicker, title, time left
+  and a play disc. More part-watched videos follow in a rail.
+- Filter chips: All / Downloaded / On this phone, then a two-column grid of 16:9 cards (duration badge, amber
+  resume line, two title lines; long press opens the media sheet). Cell height grows with the text scale.
+- Empty and permission states unchanged.
+
+### 7.20 Downloads (Sindur v2)
+
+- The link field and its main action live inside the glowing hero, under the title and the active / free summary.
+- Download cards: 8 dp progress bar in `sliderActive` (amber on ink, wine on sand), muted when paused or waiting.
+- Saved list keeps the 5 newest + "Show all N saved" toggle, kind chips and kind icons; settings area unchanged.
+
 ### 7.1 Shape, spacing, depth, motion (both themes)
 
 - **Grid:** 4dp. Phone gutter 16, tablet (600dp or wider) 24. Section header padding 24 top / 8 bottom. Card padding 16.
@@ -406,7 +449,7 @@ gets the same press / focus / hover wash: `primaryBase` (crimson) at 16 / 14 / 8
 
 | Kind | Dark | Light | Shape, size, states |
 |---|---|---|---|
-| **VoltButton** (play / get: Play all, Download, Save offline, Fetch link) | Crimson sheen (`primaryGradient`, top to bottom), white label, soft crimson glow | Same sheen, no glow, 1.5dp ink `voltEdge` | Stadium, 52dp (40 `compact`, 12dp side padding), 20dp icon. Pressed: `voltPressed`, scale 0.97, tighter glow. Disabled: `surfacePressed` fill, textMuted label, no glow (light keeps an `outline` edge). Focus: 2dp `onVoltFill` ring. |
+| **VoltButton** (play / get: Play all, Download, Save offline, Fetch link) | Crimson sheen (`primaryGradient`, top to bottom), white label, soft crimson glow | Same sheen, no glow, no edge (Sindur v2) | Stadium, 52dp (40 `compact`, 12dp side padding), 20dp icon. Pressed: `voltPressed`, scale 0.97, tighter glow. Disabled: `surfacePressed` fill, textMuted label, no glow (light keeps an `outline` edge). Focus: 2dp `onVoltFill` ring. |
 | FilledButton (Save, Retry, dialog confirm) | Rose fill, ink label | Wine fill, white label | Stadium, 48dp. |
 | FilledButton.tonal | `secondaryContainer` / `onSecondaryContainer` | same roles | Stadium, 48dp. |
 | ElevatedButton | `primary` / `onPrimary`; disabled textPrimary 12 % fill, 38 % label | same | Stadium, 48dp, no elevation. |

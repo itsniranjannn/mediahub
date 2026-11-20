@@ -322,7 +322,7 @@ abstract final class AppTheme {
         }),
         side: WidgetStateBorderSide.resolveWith((s) {
           if (s.contains(WidgetState.selected)) {
-            return dark ? BorderSide.none : BorderSide(color: p.voltEdge, width: 1.5);
+            return p.voltEdge.a == 0 ? BorderSide.none : BorderSide(color: p.voltEdge, width: 1.5);
           }
           // Unselected: the surface with an outline (a hairline on ink).
           return BorderSide(color: dark ? p.outlineVariant : p.outline);

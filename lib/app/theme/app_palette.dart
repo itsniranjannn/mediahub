@@ -904,80 +904,80 @@ abstract final class _Ink {
 
 /// Raw values of [AppPalette.dark] (docs/DESIGN.md 2.2, "Dark" column).
 abstract final class _Sindur {
-  static const Color background = Color(0xFF0B0B0D);
-  static const Color surface = Color(0xFF121214);
-  static const Color surfaceElevated = Color(0xFF19191C);
-  static const Color surfacePressed = Color(0xFF222226);
-  static const Color primary = Color(0xFFFF6E86);
+  static const Color background = Color(0xFF000000);
+  static const Color surface = Color(0xFF0A0A0A);
+  static const Color surfaceElevated = Color(0xFF141216);
+  static const Color surfacePressed = Color(0xFF1E1A22);
+  static const Color primary = Color(0xFFFF7A92);
   static const Color primaryBase = Color(0xFFCC324C);
-  static const Color primaryPressed = Color(0xFFE85A72);
-  static const Color onPrimary = Color(0xFF0B0B0D);
-  static const Color primaryContainer = Color(0xFF3A1220);
+  static const Color primaryPressed = Color(0xFFE8667E);
+  static const Color onPrimary = Color(0xFF000000);
+  static const Color primaryContainer = Color(0xFF3D0612);
   static const Color onPrimaryContainer = Color(0xFFF9E8F2);
-  static const Color secondary = Color(0xFFB98FFF);
-  static const Color onSecondary = Color(0xFF0B0B0D);
-  static const Color secondaryContainer = Color(0xFF3A1220);
-  static const Color onSecondaryContainer = Color(0xFFF9E8F2);
+  static const Color secondary = Color(0xFFAAA6E3);
+  static const Color onSecondary = Color(0xFF000000);
+  static const Color secondaryContainer = Color(0xFF32396F);
+  static const Color onSecondaryContainer = Color(0xFFE7EEFE);
   static const Color voltFill = Color(0xFFCC324C);
   static const Color voltPressed = Color(0xFFB32A42);
-  static const Color onVoltFill = Color(0xFFFFFFFF);
+  static const Color onVoltFill = Color(0xFFFFF3E6);
   static const Color onVoltMuted = Color(0xFFFFF3E6);
   static const Color voltEdge = Color(0x00000000);
   static const Color voltGlow = Color(0x47CC324C);
-  static const Color accent = Color(0xFFB98FFF);
-  static const Color onAccent = Color(0xFF0B0B0D);
-  static const Color favorite = Color(0xFFFF8FD8);
+  static const Color accent = Color(0xFFAAA6E3);
+  static const Color onAccent = Color(0xFF000000);
+  static const Color favorite = Color(0xFFFFA0B8);
   static const Color textPrimary = Color(0xFFFFF3E6);
-  static const Color textSecondary = Color(0xFFC9C3C6);
-  static const Color textMuted = Color(0xFFA8A3AB);
-  static const Color divider = Color(0xFF2A2A2F);
-  static const Color outlineVariant = Color(0xFF2A2A2F);
-  static const Color outline = Color(0xFF85828C);
-  static const Color rule = Color(0xFF85828C);
-  static const Color focusRing = Color(0xFFB98FFF);
-  static const Color dragHandle = Color(0xFF85828C);
+  static const Color textSecondary = Color(0xFFD9CEC4);
+  static const Color textMuted = Color(0xFFABA3AD);
+  static const Color divider = Color(0xFF26222A);
+  static const Color outlineVariant = Color(0xFF26222A);
+  static const Color outline = Color(0xFF857F8C);
+  static const Color rule = Color(0xFF857F8C);
+  static const Color focusRing = Color(0xFFF69E1C);
+  static const Color dragHandle = Color(0xFF857F8C);
   static const Color success = Color(0xFF4FD8C4);
   static const Color warning = Color(0xFFF69E1C);
   static const Color error = Color(0xFFFF9466);
-  static const Color onError = Color(0xFF0B0B0D);
+  static const Color onError = Color(0xFF000000);
   static const Color errorContainer = Color(0xFF3A1A16);
   static const Color onErrorContainer = Color(0xFFFFDCCF);
   static const Color liveFill = Color(0xFFB3132F);
   static const Color onLive = Color(0xFFFFFFFF);
   static const Color scrim = Color(0xCC000000);
-  static const Color glass = Color(0xEB121214);
-  static const Color overlay = Color(0xB80B0B0D);
+  static const Color glass = Color(0xEB0A0A0A);
+  static const Color overlay = Color(0xB8000000);
   static const Color onOverlay = Color(0xFFFFFFFF);
-  static const Color dock = Color(0xF0141417);
+  static const Color dock = Color(0xF00C0A10);
   static const Color onDock = Color(0xFFFFF3E6);
-  static const Color onDockMuted = Color(0xFFB4B1BA);
-  static const Color dockLine = Color(0xFF2E2B33);
-  static const Color navIndicator = Color(0xFFFF6E86);
-  static const Color onNavIndicator = Color(0xFF0B0B0D);
-  static const Color sliderActive = Color(0xFFFF6E86);
-  static const Color sliderInactive = Color(0xFF2A2A2F);
+  static const Color onDockMuted = Color(0xFFB7AFBE);
+  static const Color dockLine = Color(0xFF2E2638);
+  static const Color navIndicator = Color(0xFFF69E1C);
+  static const Color onNavIndicator = Color(0xFF000000);
+  static const Color sliderActive = Color(0xFFF69E1C);
+  static const Color sliderInactive = Color(0xFF2E2836);
   static const Color sliderThumb = Color(0xFFFFF3E6);
-  static const Color snackbar = Color(0xFF19191C);
+  static const Color snackbar = Color(0xFF141216);
   static const Color onSnackbar = Color(0xFFFFF3E6);
   static const Color snackbarAction = Color(0xFFF69E1C);
   static const Color shadow = Color(0x00000000);
-  static const Color printShadow = Color(0xFFCC324C);
-  static const Color onTertiary = Color(0xFF0B0B0D);
+  static const Color printShadow = Color(0xFF81021F);
+  static const Color onTertiary = Color(0xFF000000);
   static const Color schemeShadow = Color(0xFF000000);
   static const Color inverseSurface = Color(0xFFFFF3E6);
-  static const Color onInverseSurface = Color(0xFF0B0B0D);
+  static const Color onInverseSurface = Color(0xFF000000);
   static const Color inversePrimary = Color(0xFF81021F);
 
   static const LinearGradient heroGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [Color(0xFF4A0F24), Color(0xFF1A0A12), Color(0xFF0B0B0D)],
+    colors: [Color(0xFF5A0418), Color(0xFF2A1230), Color(0xFF000000)],
   );
 
   static const LinearGradient primaryGradient = LinearGradient(
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
-    colors: [Color(0xFFD23A54), Color(0xFFC02D47)],
+    colors: [Color(0xFFC42A46), Color(0xFFA8203A)],
   );
 
   static const List<LinearGradient> artworkGradients = [
@@ -997,13 +997,13 @@ abstract final class _Sindur {
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF7E4FD8), Color(0xFF2A1258)],
+      colors: [Color(0xFF7A3A6E), Color(0xFF2A0F26)],
     ),
     // navy
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF2E2CA0), Color(0xFF01004C)],
+      colors: [Color(0xFF4A54A8), Color(0xFF161A40)],
     ),
     // amber
     LinearGradient(
@@ -1015,13 +1015,13 @@ abstract final class _Sindur {
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF55525E), Color(0xFF121214)],
+      colors: [Color(0xFF55525E), Color(0xFF0A0A0A)],
     ),
     // ocean
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF1F6FA0), Color(0xFF0A2438)],
+      colors: [Color(0xFF7E6FD0), Color(0xFF241A50)],
     ),
     // rose
     LinearGradient(
@@ -1034,80 +1034,80 @@ abstract final class _Sindur {
 
 /// Raw values of [AppPalette.light] (docs/DESIGN.md 2.2, "Light" column).
 abstract final class _SindurPaper {
-  static const Color background = Color(0xFFFFFFFF);
-  static const Color surface = Color(0xFFFFFAFB);
-  static const Color surfaceElevated = Color(0xFFFFFFFF);
-  static const Color surfacePressed = Color(0xFFF8EAF0);
+  static const Color background = Color(0xFFF6EBCF);
+  static const Color surface = Color(0xFFFBF4E2);
+  static const Color surfaceElevated = Color(0xFFFFFAF0);
+  static const Color surfacePressed = Color(0xFFEFE2C2);
   static const Color primary = Color(0xFF81021F);
   static const Color primaryBase = Color(0xFF9E0A2C);
   static const Color primaryPressed = Color(0xFF5E0016);
-  static const Color onPrimary = Color(0xFFFFFFFF);
-  static const Color primaryContainer = Color(0xFFF9E8F2);
-  static const Color onPrimaryContainer = Color(0xFF5E0016);
-  static const Color secondary = Color(0xFF5B2FC2);
-  static const Color onSecondary = Color(0xFFFFFFFF);
-  static const Color secondaryContainer = Color(0xFFF9E8F2);
-  static const Color onSecondaryContainer = Color(0xFF5E0016);
-  static const Color voltFill = Color(0xFFCC324C);
-  static const Color voltPressed = Color(0xFFB32A42);
-  static const Color onVoltFill = Color(0xFFFFFFFF);
-  static const Color onVoltMuted = Color(0xFFFFF3E6);
-  static const Color voltEdge = Color(0xFF121214);
-  static const Color voltGlow = Color(0x00CC324C);
-  static const Color accent = Color(0xFF5B2FC2);
-  static const Color onAccent = Color(0xFFFFFFFF);
-  static const Color favorite = Color(0xFFA8126E);
-  static const Color textPrimary = Color(0xFF121214);
-  static const Color textSecondary = Color(0xFF4A4250);
-  static const Color textMuted = Color(0xFF645B66);
-  static const Color divider = Color(0xFFF0E2E6);
-  static const Color outlineVariant = Color(0xFFF0E2E6);
-  static const Color outline = Color(0xFF8C7E84);
-  static const Color rule = Color(0xFF8C7E84);
+  static const Color onPrimary = Color(0xFFFFF3E6);
+  static const Color primaryContainer = Color(0xFFC6CBE8);
+  static const Color onPrimaryContainer = Color(0xFF381932);
+  static const Color secondary = Color(0xFF32396F);
+  static const Color onSecondary = Color(0xFFFFF3E6);
+  static const Color secondaryContainer = Color(0xFFAAA6E3);
+  static const Color onSecondaryContainer = Color(0xFF381932);
+  static const Color voltFill = Color(0xFF81021F);
+  static const Color voltPressed = Color(0xFF5E0016);
+  static const Color onVoltFill = Color(0xFFFFF3E6);
+  static const Color onVoltMuted = Color(0xFFF9E8F2);
+  static const Color voltEdge = Color(0x00000000);
+  static const Color voltGlow = Color(0x0081021F);
+  static const Color accent = Color(0xFF32396F);
+  static const Color onAccent = Color(0xFFFFF3E6);
+  static const Color favorite = Color(0xFF9C1458);
+  static const Color textPrimary = Color(0xFF381932);
+  static const Color textSecondary = Color(0xFF56404F);
+  static const Color textMuted = Color(0xFF5E4A58);
+  static const Color divider = Color(0xFFE6D7B2);
+  static const Color outlineVariant = Color(0xFFE6D7B2);
+  static const Color outline = Color(0xFF857565);
+  static const Color rule = Color(0xFF857565);
   static const Color focusRing = Color(0xFF81021F);
-  static const Color dragHandle = Color(0xFF8C7E84);
-  static const Color success = Color(0xFF0B7446);
-  static const Color warning = Color(0xFF615600);
-  static const Color error = Color(0xFFB3261E);
-  static const Color onError = Color(0xFFFFFFFF);
+  static const Color dragHandle = Color(0xFF857565);
+  static const Color success = Color(0xFF0A6A40);
+  static const Color warning = Color(0xFF5A4F00);
+  static const Color error = Color(0xFFA8231C);
+  static const Color onError = Color(0xFFFFF3E6);
   static const Color errorContainer = Color(0xFFFCE4DC);
   static const Color onErrorContainer = Color(0xFF5E1608);
   static const Color liveFill = Color(0xFFB3132F);
   static const Color onLive = Color(0xFFFFFFFF);
-  static const Color scrim = Color(0x99121214);
-  static const Color glass = Color(0xE0FFFAFB);
-  static const Color overlay = Color(0xB80B0B0D);
+  static const Color scrim = Color(0x99381932);
+  static const Color glass = Color(0xE0FBF4E2);
+  static const Color overlay = Color(0xB8000000);
   static const Color onOverlay = Color(0xFFFFFFFF);
-  static const Color dock = Color(0xF0141417);
+  static const Color dock = Color(0xF00C0A10);
   static const Color onDock = Color(0xFFFFF3E6);
-  static const Color onDockMuted = Color(0xFFB4B1BA);
-  static const Color dockLine = Color(0xFF2E2B33);
-  static const Color navIndicator = Color(0xFFFF6E86);
-  static const Color onNavIndicator = Color(0xFF0B0B0D);
+  static const Color onDockMuted = Color(0xFFB7AFBE);
+  static const Color dockLine = Color(0xFF2E2638);
+  static const Color navIndicator = Color(0xFFF69E1C);
+  static const Color onNavIndicator = Color(0xFF000000);
   static const Color sliderActive = Color(0xFF81021F);
-  static const Color sliderInactive = Color(0xFFEBD8DE);
+  static const Color sliderInactive = Color(0xFFE2D2A8);
   static const Color sliderThumb = Color(0xFF81021F);
-  static const Color snackbar = Color(0xFF121214);
+  static const Color snackbar = Color(0xFF381932);
   static const Color onSnackbar = Color(0xFFFFF3E6);
   static const Color snackbarAction = Color(0xFFF69E1C);
-  static const Color shadow = Color(0x1A121214);
-  static const Color printShadow = Color(0xFF121214);
-  static const Color onTertiary = Color(0xFFFFFFFF);
-  static const Color schemeShadow = Color(0xFF121214);
-  static const Color inverseSurface = Color(0xFF121214);
+  static const Color shadow = Color(0x1A381932);
+  static const Color printShadow = Color(0xFF381932);
+  static const Color onTertiary = Color(0xFFFFF3E6);
+  static const Color schemeShadow = Color(0xFF381932);
+  static const Color inverseSurface = Color(0xFF381932);
   static const Color onInverseSurface = Color(0xFFFFF3E6);
-  static const Color inversePrimary = Color(0xFFFF6E86);
+  static const Color inversePrimary = Color(0xFFFF7A92);
 
   static const LinearGradient heroGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [Color(0xFFF9E8F2), Color(0xFFFDF2F6), Color(0xFFFFFFFF)],
+    colors: [Color(0xFFC6CBE8), Color(0xFFE7EEFE), Color(0xFFF6EBCF)],
   );
 
   static const LinearGradient primaryGradient = LinearGradient(
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
-    colors: [Color(0xFFD23A54), Color(0xFFC02D47)],
+    colors: [Color(0xFFC42A46), Color(0xFFA8203A)],
   );
 
   static const List<LinearGradient> artworkGradients = [
@@ -1127,13 +1127,13 @@ abstract final class _SindurPaper {
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF7E4FD8), Color(0xFF46208A)],
+      colors: [Color(0xFF7A3A6E), Color(0xFF4A1A40)],
     ),
     // navy
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF2E2CA0), Color(0xFF14127A)],
+      colors: [Color(0xFF4A54A8), Color(0xFF252C6A)],
     ),
     // amber
     LinearGradient(
@@ -1151,7 +1151,7 @@ abstract final class _SindurPaper {
     LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF1F6FA0), Color(0xFF0F3E5C)],
+      colors: [Color(0xFF7E6FD0), Color(0xFF3E3488)],
     ),
     // rose
     LinearGradient(

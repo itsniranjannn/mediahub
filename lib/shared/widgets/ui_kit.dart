@@ -1235,6 +1235,11 @@ class HeroBand extends StatelessWidget {
   final EdgeInsetsGeometry margin;
   final EdgeInsetsGeometry padding;
 
+  /// Adds the Sindur v2 glow: a soft wine orb in the top end corner and a
+  /// plum / indigo one at the bottom start, painted under the child. Purely
+  /// decorative; the text still sits on the verified hero gradient stops.
+  final bool glow;
+
   static const EdgeInsetsGeometry defaultPadding = EdgeInsets.fromLTRB(
     AppSpacing.xl20,
     AppSpacing.xl20,
@@ -1247,21 +1252,144 @@ class HeroBand extends StatelessWidget {
     required this.child,
     this.margin = EdgeInsets.zero,
     this.padding = defaultPadding,
+    this.glow = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final radius = BorderRadius.circular(AppSpacing.cardRadius);
+    Widget content = Padding(padding: padding, child: child);
+    if (glow) {
+      content = Stack(
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0.95, -1.1),
+                    radius: 1.1,
+                    colors: [palette.primaryBase.withValues(alpha: palette.isDark ? 0.30 : 0.10), palette.primaryBase.withValues(alpha: 0)],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(-1.1, 1.2),
+                    radius: 1.0,
+                    colors: [palette.secondaryContainer.withValues(alpha: palette.isDark ? 0.55 : 0.35), palette.secondaryContainer.withValues(alpha: 0)],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          content,
+        ],
+      );
+    }
     return Container(
       margin: margin,
       width: double.infinity,
-      padding: padding,
+      clipBehavior: glow ? Clip.antiAlias : Clip.none,
       decoration: BoxDecoration(
         gradient: palette.heroGradient,
-        borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+        borderRadius: radius,
         border: Border.all(color: palette.outlineVariant.withValues(alpha: 0.6)),
       ),
-      child: child,
+      child: content,
+    );
+  }
+}
+
+/// A large Volt block (Sindur v2 Home bento): a big glyph over a Fraunces
+/// label on the loud brand fill, the primary gradient sheen included.
+class VoltTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String semanticLabel;
+  final double height;
+  final VoidCallback onTap;
+
+  const VoltTile({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.semanticLabel,
+    required this.height,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = context.typography;
+    final radius = BorderRadius.circular(AppSpacing.cardRadius);
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: Material(
+        type: MaterialType.transparency,
+        child: Ink(
+          decoration: ShapeDecoration(
+            gradient: palette.primaryGradient,
+            shape: RoundedRectangleBorder(borderRadius: radius, side: _voltEdge(palette)),
+          ),
+          child: InkWell(
+            customBorder: RoundedRectangleBorder(borderRadius: radius),
+            onTap: onTap,
+            child: SizedBox(
+              height: height,
+              width: double.infinity,
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.lg16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Icon(icon, size: 32, color: palette.onVoltFill),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(label, style: type.cardTitle.copyWith(color: palette.onVoltFill), maxLines: 1),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The Sindur v2 spark: a short rounded amber bar that marks a section title.
+/// Decorative (never the only cue), so it skips the text contrast floors.
+class SparkMark extends StatelessWidget {
+  final double height;
+  const SparkMark({super.key, this.height = 18});
+
+  static const double width = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: context.palette.navIndicator,
+          borderRadius: BorderRadius.circular(width),
+        ),
+      ),
     );
   }
 }

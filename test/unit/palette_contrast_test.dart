@@ -155,11 +155,12 @@ void main() {
           ..check('sliderThumb vs surface', p.sliderThumb, p.surface, 3)
           ..check('primary glyph on the tonal tile', p.primary, p.secondaryContainer, 3)
           ..check('accent glyph on the tonal tile', p.accent, p.secondaryContainer, 3);
-        if (p.isDark) {
+        if (p.isDark) expect(p.voltEdge.a, 0, reason: 'no ink edge on ink');
+        if (p.voltEdge.a == 0) {
+          // No edge: the fill itself must stand out as a shape.
           for (final s in _surfaces(p).take(3)) {
             c.check('Volt fill as a shape on $s', p.voltFill, s, 3);
           }
-          expect(p.voltEdge.a, 0, reason: 'no ink edge on ink');
         } else {
           for (final s in [..._surfaces(p).take(3), p.voltFill]) {
             c.check('voltEdge on $s', p.voltEdge, s, 3);
@@ -273,12 +274,12 @@ void main() {
     const d = AppPalette.dark;
     const l = AppPalette.light;
     const k = AppPalette.classic;
-    expect(ratio(d.textPrimary, d.background), closeTo(17.99, 0.02));
-    expect(ratio(l.textPrimary, l.background), closeTo(18.71, 0.02));
-    expect(ratio(l.primary, l.surfaceElevated), closeTo(10.70, 0.02));
-    expect(ratio(d.onVoltFill, d.voltFill), closeTo(5.09, 0.02));
-    expect(ratio(l.outline, l.surfacePressed), closeTo(3.32, 0.02));
-    expect(ratio(MediaBadge.glyphColor, d.overlay, under: _white), closeTo(3.29, 0.03));
+    expect(ratio(d.textPrimary, d.background), closeTo(19.21, 0.02));
+    expect(ratio(l.textPrimary, l.background), closeTo(13.08, 0.02));
+    expect(ratio(l.primary, l.surfaceElevated), closeTo(10.29, 0.02));
+    expect(ratio(d.onVoltFill, d.voltFill), closeTo(4.65, 0.02));
+    expect(ratio(l.outline, l.surfacePressed), closeTo(3.45, 0.02));
+    expect(ratio(MediaBadge.glyphColor, d.overlay, under: _white), closeTo(4.10, 0.03));
     // Bijuli Classic: Volt on ink, and Volt on white paper would need an edge.
     expect(ratio(k.onVoltFill, k.voltFill), closeTo(15.99, 0.02));
     expect(ratio(_volt, _white), lessThan(1.2));
