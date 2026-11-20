@@ -47,6 +47,8 @@ and D).
 
 ### Helper tools in this repo
 
+- `tools/device/update_ytdlp_asset.py [version]` packs a current yt-dlp from PyPI into the app (run it
+  before a release).
 - `tools/device/build_apks.sh test|emulator|family|relx64|testrel` builds APKs from a scratch copy
   (`$BUILD_COPY`, default `~/.mediahub/build-copy`). Every mode except `family` uses the app id
   `com.mediahub.app.audit` ("MediaHub Test"), so it installs next to the real app without touching it.
@@ -360,8 +362,9 @@ app in place and keeps its data.
 8. A direct-link download's `<id>.part` is only removed at the next app start after you delete the row.
 9. Next features: ROADMAP section 4.
 10. The yt-dlp inside youtubedl-android 0.18.1 is 2025.11.12, a year old: YouTube refuses its 1080p
-    files part-way (HTTP 403). The app updates yt-dlp at the first start on Wi-Fi, or after the first
-    failed download (on any network), and then retries; until then a YouTube download can end as
-    "360p · lower quality". Current yt-dlp also asks for a JavaScript engine for YouTube;
+    files part-way (HTTP 403). MediaHub therefore ships its own newer yt-dlp (2026.10.26, Android
+    asset `assets/ytdlp/`, made by `python tools/device/update_ytdlp_asset.py [version]` from PyPI)
+    and installs it on first use; re-run that script before a release to ship the newest. The
+    self-update from GitHub still runs on top of it. Current yt-dlp also asks for a JavaScript engine for YouTube;
     youtubedl-android hands it the QuickJS it ships (`libqjs.so`). One hand-run with it crashed on the
     emulator; if YouTube lookups ever end in a crash on the phone, that is the first suspect.
