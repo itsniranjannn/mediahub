@@ -782,7 +782,7 @@ our chrome.
   | Back, forward | 48dp each. Disabled at 38% with no history. |
   | Address pill | Flexible, 40dp tall, stadium. Fill `surfaceElevated` (dark) or `#FFFFFF` + 1dp `outline` (light). 20dp search glyph and the page title or host in `metadata` textSecondary, 1 line. Tap opens YouTube's own search box (focus the page's search field via JS) or our search sheet. |
   | Reload | 48dp. Becomes "stop" (close glyph) while loading. |
-  | ⋮ | Reload · YouTube Music · Sign in to YouTube (opens Google's sign-in for YouTube in the tab) · Open Downloads · Background play (switch) · Auto picture-in-picture (switch) · Clear site data (confirm dialog; it also signs you out). The sheet is as tall as its rows. |
+  | ⋮ | Reload · YouTube Music · Sign in to YouTube (opens Google's sign-in for YouTube in the tab) · Open Downloads · Background play (switch) · Auto picture-in-picture (switch) · Block ads (switch; a change opens the page again) · Clear site data (confirm dialog; it also signs you out). The sheet is as tall as its rows. |
 
 - **Row 2, the "watch strip"** (52dp), shown on `/watch`, `/shorts/` and `/live` URLs:
   - It slides down in 240ms.
@@ -798,8 +798,12 @@ our chrome.
     | Auto PiP | FilterChip toggle; selected = Volt sticker + check | Enters PiP automatically when leaving the app during a video. |
 
   - Both toggles are also in ⋮ and in Settings → Online. Defaults: Background play on, Auto PiP on.
+  - Block ads lives only in ⋮ and Settings → Online (not on the strip). Default on.
 - **Loading:** a 2dp `primary` load line under the toolbar.
 - **Offline:** an EmptyHint "You're offline" with a Retry button.
+- **Secure connection blocked** (a certificate the phone does not trust, for the page itself): an EmptyHint
+  "Can't connect securely" (`gpp_bad` icon), "This network is blocking a secure connection to YouTube. Try another
+  Wi-Fi or mobile data.", with a Retry button.
 - **Platform notes** (not visual, listed so the design works):
 
   | Platform | Needs |

@@ -172,7 +172,12 @@ All of these are in the code with tests that act as an iPhone. None has run on a
 8. **Use a real iPhone and a release (or profile) build.** A debug build will not start from the home
    screen, and the iPhone simulator on an Apple Silicon Mac may fail to build the Online tab's plugin
    (it allows only Intel simulators).
-9. Then go through section 7 on the iPhone.
+9. **Online tab with Block ads on** (the default): YouTube must load. With Block ads on, the iPhone
+   first compiles a WebKit content rule list for ad addresses (`online_ad_block.dart`); if WebKit
+   cannot compile it, the plugin only prints the error to the Xcode console and loads nothing, so the
+   tab stays blank. If the tab is blank, turn Block ads off (Settings → Online): if YouTube then loads,
+   the rule list is the cause.
+10. Then go through section 7 on the iPhone.
 
 ## 7. What to try on the iPhone (first run)
 
@@ -183,6 +188,8 @@ All of these are in the code with tests that act as an iPhone. None has run on a
   outside links open Safari; a link that opens a new window; Clear site data; on an iPad, the mobile
   site.
 - Online: More options → Sign in to YouTube. Write down exactly what Google says if it refuses.
+- Online with Block ads on: a video with an ad plays the ad silently and skips it as soon as YouTube
+  offers Skip, then the video plays on with its sound; the lock screen shows the video, never the ad.
 - Downloads: a YouTube video and its audio (Choose quality), a direct MP3 and MP4 link, a WebM link
   (it should be refused). Pause one, close the app for an hour, come back and resume it.
 - Music: play a downloaded YouTube song; check its length, seeking and fast Next presses; the lock

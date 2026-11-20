@@ -9,11 +9,13 @@ things are built the way they are.
 ## Where things stand
 
 Everything the owner asked for is in the code, covered by tests and was driven by hand on the Android
-emulator (section B). What is left needs the family phone, a Mac, or a decision (sections B.3 and D).
+emulator (section B), except **Block ads** in the Online tab (A0): it has tests only and has not been
+tried with real YouTube yet. What is left needs the family phone, a Mac, or a decision (sections B.3
+and D).
 
 - `dart analyze lib test tools`: clean.
-- `flutter test`: 1549 pass (`flutter test --concurrency=3`, about 4 minutes).
-- `node --test "test/js/*_test.js"` (the YouTube page bridge): 44 pass.
+- `flutter test`: 1593 pass (`flutter test --concurrency=3`, about 4 minutes).
+- `node --test "test/js/*_test.js"` (the YouTube page bridge): 73 pass.
 - Emulator: release build (`relx64`) and the Online stand-in build (`emulator`), dark and light, on
   2026-11-18. The 2026-11-19 round was driven on the emulator too (section B.0); the phone checks are
   in B.3.
@@ -71,7 +73,7 @@ Online did not work; a 1080p YouTube download failed with "Requested format is n
 mini player should not sit on the Online and Videos tabs; music should pause for another app and come
 back after it; videos should land in Videos and audio in Music; downloads should work for any link.
 Five work packages and two reviews followed; everything below has tests and the Android parts were
-driven on the emulator (B.0). Nothing has run on a phone yet (B.3).
+driven on the emulator (B.0), except Block ads (tests only). Nothing has run on a phone yet (B.3).
 
 - **YouTube sign-in**: Google's sign-in pages (accounts.google.com, accounts.youtube.com,
   gds.google.com, https only, exact hosts) now load inside the Online tab, with a "Sign in to YouTube"
@@ -109,6 +111,20 @@ driven on the emulator (B.0). Nothing has run on a phone yet (B.3).
   `com.mediahub.app`. See `docs/IOS.md`.
 - **Error wording**: a failed download shows one plain sentence and what to do. The technical
   "Reason:" line is no longer on the card; the reason is kept in Settings → Diagnostics.
+- **Block ads** (Online tab; Settings → Online and the ⋮ menu, on by default; changing it opens the
+  page again): the page script takes the ad fields out of YouTube's player data, mutes an ad that
+  still plays and presses its Skip button (it is run to its end only when it is surely a short
+  mid-roll, never a pre-roll, an ad stitched into the video or anything around the next video), keeps
+  the video's own title in the notification, hides sponsored boxes, and fails the page's own ad
+  requests. iOS also gets a WebKit content rule list for ad addresses; Android has no native blocking
+  (the WebView plugin has no cheap way that works there). Tests only: not yet checked on the emulator
+  or a phone with real YouTube (B.3). ROADMAP section 3 has the limits. Reviewed in three rounds; one
+  narrow case is left: only media of 31.5 s or less is ever run to its end, so at worst a real clip
+  that short (a Short right after an ad, say) could be skipped; anything longer is only muted.
+- **Found on the emulator later that day, with real YouTube** (B.0b): direct links timing out on a
+  network where IPv4 or IPv6 is broken (now raced like a browser), YouTube pausing itself in
+  picture-in-picture (now keeps playing and shows only the video), and yt-dlp stalling on such a
+  network (now told which family works).
 
 ## A. What changed in the previous round
 
@@ -145,16 +161,69 @@ driven on the emulator (B.0). Nothing has run on a phone yet (B.3).
 | Direct link | a public 8.5 MB MP3 (soundhelix.com): Inspect, Download | Pass: saved, tagged Audio, listed in Music and not in Videos. Its title showed "….mp3"; a media extension is now dropped from the title (`DownloadEngine.libraryTitleFor`) |
 | Crashes | `logcat -b crash` after all of the above | None |
 
-Two things the emulator could not show:
-- **The YouTube download itself.** This PC's emulator network is extremely slow towards YouTube: the
-  quality lookup for RpkAZYU8AAA ran into the 85 s limit, and yt-dlp run by hand inside the app stalled
-  for 4 minutes on YouTube's replies (IPv4 forced made no difference). The same video on this PC with
-  the same yt-dlp (2025.11.12): the old 1080p selector fails with "Requested format is not available"
-  for the web_safari, mweb and tv_simply clients and works for the default and android_vr clients. The
-  new download tries three clients at the chosen quality and then the catch-all on the default client,
-  so it lands at 1080p (VP9 + AAC in MKV). The phone did get past the lookup before, so check it there.
-- **The Online stand-in page plays by itself** when the tab opens (it calls `play()` on load), which
-  takes the sound from a playing song. The real YouTube home page does not.
+The Online stand-in page plays by itself when the tab opens (it calls `play()` on load), which takes
+the sound from a playing song. The real YouTube home page does not.
+
+### B.0b Second emulator pass (2026-11-19 afternoon, release and debug x86_64, real YouTube)
+
+This PC could reach YouTube and Google this time (not GitHub), so the real site was tested. The emulator
+turned out to have a half-broken network: IPv4 to Google and Cloudflare hosts hangs while IPv6 works
+(the opposite of the usual phone case, where IPv6 is the broken one). That exposed two real bugs.
+
+| Area | Checked | Result |
+|------|---------|--------|
+| Music | 20 quick Next, 20 quick Previous, a mixed burst, notification player, 65 s screen off | Pass |
+| Resume after other apps | Chrome 40 s song; then the same with the setting off | Pass: resumed 9 s after Chrome went quiet; stayed paused with the setting off |
+| Mini player | every tab with a song playing | Pass: hidden on Videos and Online only |
+| Broken song | corrupted copy, tapped | Pass: `Can't play ...`, next song plays |
+| Direct links | MP4 and M4A and MP3 (filesamples.com, Cloudflare), MP4 (test-videos.co.uk, Cloudflare), MP3 (soundhelix.com) | **Was failing** ("Inspection timed out") on the Cloudflare hosts: fixed (1). After the fix: all saved; MP4s in Videos, MP3 and M4A in Music, titles without the extension, the MP4 plays |
+| Online, real YouTube | search, watch page, watch strip, 30 s screen off, no mini player | Pass |
+| Online picture-in-picture | by the PiP button and by pressing Home while playing | **Was failing**: YouTube paused itself the moment the window shrank, and its top bar and "Next" banner covered the video. Fixed (2): keeps playing (193 s → 205 s in PiP, 222 s → 234 s after Home), only the video shows |
+| YouTube download, RpkAZYU8AAA at 1080p | lookup and download in the app | **Lookup was stalling** (85 s limit): fixed (3), now 24 s. With the bundled yt-dlp 2025.11.12 the 1080p file fails at about 13% (HTTP 403); the app then saved YouTube's own 360p file, labelled "360p · lower quality". With yt-dlp 2026.10.26 put in place by hand (what the self-update does; GitHub is blocked on this PC): **saved at 1080p**, 65.3 MB, in 85 s, MKV (VP9 + AAC), plays |
+
+What was fixed:
+1. **Direct links on a network with one broken address family** (`SafeHttpClient`): the checked
+   addresses were tried one after another, 10 s each, so two dead addresses ran past the 15 s Inspect
+   limit. Now TCP is raced the way browsers do (RFC 8305: families interleaved, next address after
+   250 ms, losers cancelled), then one TLS handshake on the winner; a TLS failure moves on to the
+   addresses not yet tried. Every address is still checked against the private-network block first.
+   Two independent reviews; tests in `safe_http_happy_eyeballs_test.dart` (fake races and real HTTPS).
+2. **YouTube pausing in picture-in-picture** (`youtube_bridge.js`): YouTube compares the window's outer
+   size with the screen on every resize and pauses non-Premium playback when the window is much
+   smaller (found with the WebView's DevTools: `pauseVideo()` from that check). The page now sees an
+   outer size at least as large as the screen (the layout still follows the real window), and the PiP
+   layout hides everything but the video (and its captions, when turned on).
+3. **yt-dlp stalling on a network with one broken address family** (`ExtractorChannel.kt`): yt-dlp has
+   no IPv4/IPv6 race, so it waited out timeouts (4+ minutes for one lookup). Before each run, one TCP
+   connection per family is tried at once (1.5 s at most, cached 5 minutes per host); when only one
+   answers, yt-dlp gets `--force-ipv4` or `--force-ipv6`. The answer is kept per network (Wi-Fi and
+   mobile data are asked separately) and only when it is clear; a run with a forced family that
+   fails as "offline" asks again and carries on.
+
+Also learned: current yt-dlp versions want a JavaScript engine for YouTube. youtubedl-android ships
+QuickJS (`libqjs.so`) and passes it to yt-dlp itself (`--js-runtimes quickjs:...`, seen in the
+process list); a hand-run on the emulator with it crashed once (segmentation fault), the app's own
+runs did not (D.10). yt-dlp 2026.10.26 downloaded this video at 1080p on this PC with no engine at all.
+
+### B.0c Later the same day: a network that inspects HTTPS
+
+The owner moved to another network. There, IPv6 is refused and IPv4 connections to YouTube fail the
+certificate check ("unable to get local issuer certificate": the network inspects HTTPS); GitHub
+was unreachable too. Every yt-dlp run then failed in about 7 s, the app treated it as "the site may
+have changed" (other clients, an update, the fallback) and the lookup ended with a vague message;
+the Diagnostics log showed nothing about lookups. Not an app bug, but two changes came out of it:
+- **`NETWORK_BLOCKED`**: a certificate failure is its own code (`ExtractorChannel.mapException`,
+  checked early) and message: "This network is blocking a secure connection to the site. Try another
+  Wi-Fi or mobile data." No other client, update or fallback is tried for it.
+- **Lookups in Diagnostics**: every quality lookup logs `extractor_lookup_ok` (host, time) or
+  `extractor_lookup_failed` (host, code, yt-dlp's short reason, time), and an update it triggers.
+Also seen: youtubedl-android passes `--js-runtimes quickjs:<libqjs.so>` to yt-dlp by itself.
+- **Online tab on such a network**: it stayed blank black. Android's WebView already refused the bad
+  certificate (the plugin's default when the app does not answer), but nothing told the screen, so
+  the page just stayed blank. Now the app refuses it explicitly, and when it is the page's own (its
+  host, or before any page loaded) the tab says "This network is blocking a secure connection to
+  YouTube. Try another Wi-Fi or mobile data." with Retry; one on a picture or a video segment never
+  covers a working page. iOS: WebKit refuses it itself, and its certificate errors show the same words.
 
 ### B.1 Checked on the emulator (2026-11-18, Pixel AVD, Android 14, release build)
 
@@ -221,10 +290,24 @@ From the 2026-11-19 round (install a new build first):
   while the other app plays (must stay paused); turn the setting off (must stay paused). A YouTube
   playlist with autoplay must not make the music start and stop between every video. Notifications,
   Maps directions and phone calls work as before.
+- **YouTube picture-in-picture**: play a video in Online, tap the PiP button, then press Home on another
+  video: both keep playing in the small window and show only the video (no YouTube bars).
+- **First YouTube download after installing**: open the app once on Wi-Fi first (it updates yt-dlp at
+  start; Settings → Personal tools then says "Updated ..."), then download RpkAZYU8AAA at 1080p.
 - **Mini player**: play a song, switch to Videos and Online: the bar slides away, the music and the
   notification keep going; back on Home, Music and Downloads it slides back.
 - **Broken song**: rename one downloaded song in a file manager and play its album: the next song plays
   by itself and "Can't play ..." shows once.
+- **Online on a network that inspects HTTPS** (B.0c): the tab shows "This network is blocking a secure
+  connection to YouTube..." instead of a blank page; on mobile data YouTube loads.
+- **Block ads** (A0, on by default): play a few videos in Online until one shows an ad. The ad must be
+  silent and skipped as soon as YouTube offers Skip (a short unskippable one may play on silently),
+  the video must then play from where it was with its sound, and the notification must show the
+  video's title, never the ad's. Let autoplay or a playlist run into the next video: it must play from
+  the start, never jump to its end. In YouTube Music, after an ad the notification must show the
+  song's own title and artist. Sponsored boxes on Home and under the player are gone. Turn Block ads
+  off and on (Settings → Online and the ⋮ menu): the page opens again each time and still plays. If
+  YouTube shows "Ad blockers are not allowed" or will not play, write down what it said.
 
 From earlier rounds:
 
@@ -276,3 +359,9 @@ app in place and keeps its data.
    is not kept for a later retry.
 8. A direct-link download's `<id>.part` is only removed at the next app start after you delete the row.
 9. Next features: ROADMAP section 4.
+10. The yt-dlp inside youtubedl-android 0.18.1 is 2025.11.12, a year old: YouTube refuses its 1080p
+    files part-way (HTTP 403). The app updates yt-dlp at the first start on Wi-Fi, or after the first
+    failed download (on any network), and then retries; until then a YouTube download can end as
+    "360p · lower quality". Current yt-dlp also asks for a JavaScript engine for YouTube;
+    youtubedl-android hands it the QuickJS it ships (`libqjs.so`). One hand-run with it crashed on the
+    emulator; if YouTube lookups ever end in a crash on the phone, that is the first suspect.
