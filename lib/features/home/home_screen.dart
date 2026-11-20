@@ -20,6 +20,8 @@ import '../library/detail_screens.dart';
 import '../library/media_context_menu.dart';
 import '../library/playable.dart';
 import '../music_player/playback_notifier.dart';
+import '../settings/user_name_setting.dart';
+import 'greeting_name.dart';
 
 /// The library feeds the dashboard listens to.
 enum _Feed { songs, recentlyPlayed, mostPlayed, recentlyAdded, liked, recentVideos }
@@ -141,7 +143,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       body: CustomScrollView(
         slivers: [
-          SliverToBoxAdapter(child: _Greeting(songCount: songs?.length)),
+          SliverToBoxAdapter(child: _Greeting(songCount: songs?.length, name: ref.watch(userNameProvider))),
 
           // Continue listening: the one Volt block on the screen.
           if (hasCurrentItem) const SliverToBoxAdapter(child: _ContinueListeningSlab()),
@@ -361,7 +363,10 @@ class _Greeting extends StatelessWidget {
   /// Number of songs in the library, or null while it is still loading.
   final int? songCount;
 
-  const _Greeting({required this.songCount});
+  /// The name from Settings → You, or empty for the plain greeting.
+  final String name;
+
+  const _Greeting({required this.songCount, this.name = ''});
 
   static const String namaste = 'नमस्ते';
 
@@ -421,10 +426,13 @@ class _Greeting extends StatelessWidget {
             children: [
               const SparkMark(height: 4),
               const SizedBox(height: AppSpacing.md12),
-              Semantics(
-                header: true,
-                child: Text(namaste, style: type.greeting, maxLines: 1, overflow: TextOverflow.ellipsis),
-              ),
+              if (name.isEmpty)
+                Semantics(
+                  header: true,
+                  child: Text(namaste, style: type.greeting, maxLines: 1, overflow: TextOverflow.ellipsis),
+                )
+              else
+                GreetingName(name: name),
               Text.rich(
                 TextSpan(
                   children: [

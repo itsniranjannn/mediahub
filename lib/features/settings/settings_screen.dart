@@ -18,6 +18,7 @@ import '../online/online_settings.dart';
 import '../online/online_web_view.dart' show onlineDataClearerProvider;
 import 'settings_notifier.dart';
 import 'theme_mode_setting.dart';
+import 'user_name_setting.dart';
 
 const String _appVersion = '1.0.0';
 
@@ -116,6 +117,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             const _Header(),
             const SizedBox(height: AppSpacing.xxl24),
+            const EntranceFade(index: 1, child: _YouCard()),
+            const SizedBox(height: _cardGap),
             const EntranceFade(index: 1, child: _AppearanceCard()),
             const SizedBox(height: _cardGap),
             const EntranceFade(index: 2, child: _PlaybackCard()),
@@ -172,6 +175,91 @@ class _Header extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Groups
 // ---------------------------------------------------------------------------
+
+/// Settings → You: the name Home greets with. Tap opens [_NameDialog].
+class _YouCard extends ConsumerWidget {
+  const _YouCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final name = ref.watch(userNameProvider);
+    return _SettingsCard(
+      children: [
+        const _CardHeading(
+          icon: Icons.person_rounded,
+          title: 'You',
+          subtitle: 'Kept on this phone only.',
+        ),
+        const _CardDivider.underHeading(),
+        _NavRow(
+          key: const ValueKey('settings_user_name'),
+          icon: Icons.badge_outlined,
+          title: 'Your name',
+          subtitle: name.isEmpty ? 'Not set. Home says just नमस्ते.' : name,
+          trailingIcon: Icons.edit_rounded,
+          onTap: () async {
+            final result = await showDialog<String>(
+              context: context,
+              builder: (_) => _NameDialog(initial: name),
+            );
+            if (result != null) ref.read(userNameProvider.notifier).set(result);
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// Name editor: returns the new name, '' for Clear, or null for dismiss.
+class _NameDialog extends StatefulWidget {
+  final String initial;
+
+  const _NameDialog({required this.initial});
+
+  @override
+  State<_NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<_NameDialog> {
+  late final TextEditingController _text = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _save() => Navigator.of(context).pop(UserNameNotifier.normalize(_text.text));
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Your name'),
+      content: TextField(
+        key: const ValueKey('user_name_field'),
+        controller: _text,
+        autofocus: true,
+        maxLength: UserNameNotifier.maxLength,
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(hintText: 'How Home greets you'),
+        onSubmitted: (_) => _save(),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('user_name_clear'),
+          onPressed: () => Navigator.of(context).pop(''),
+          child: const Text('Clear'),
+        ),
+        FilledButton(
+          key: const ValueKey('user_name_save'),
+          onPressed: _save,
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
 
 /// Settings → Appearance: follow the phone (the default), always dark, always
 /// light or Bijuli Classic ([appearanceSettingProvider]).
@@ -771,6 +859,7 @@ class _NavRow extends StatelessWidget {
   final VoidCallback onTap;
 
   const _NavRow({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
