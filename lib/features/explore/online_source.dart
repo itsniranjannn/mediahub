@@ -66,6 +66,9 @@ class YoutubeExplodeSource implements OnlineSource {
               ))
           .toList();
 
+      // Sort audio streams by bitrate descending so the highest quality (e.g. 160 kbps, 128 kbps) is preferred
+      audio.sort((a, b) => (b.bitrateKbps ?? 0).compareTo(a.bitrateKbps ?? 0));
+
       final video = manifest.muxed
           .map((s) => OnlineStream(
                 url: s.url.toString(),
@@ -77,6 +80,9 @@ class YoutubeExplodeSource implements OnlineSource {
                 height: s.videoResolution.height,
               ))
           .toList();
+
+      // Sort video streams by resolution height descending (720p, 480p, 360p)
+      video.sort((a, b) => (b.height ?? 0).compareTo(a.height ?? 0));
 
       if (audio.isEmpty && video.isEmpty) {
         throw const OnlineException('This video has no playable streams.');

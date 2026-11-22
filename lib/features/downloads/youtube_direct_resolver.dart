@@ -182,18 +182,22 @@ class YoutubeDirectOptions {
         _videoChoice(h, byHeight[h]!.$1, byHeight[h]!.$2),
     ];
 
-    // --- audio only: the best M4A (plays everywhere); WebM only without one ---
-    (OnlineStream, Uri)? bestAudio;
+    // --- audio only: list all distinct audio qualities available ---
+    final audioChoices = <YoutubeDirectChoice>[];
+    final seenBitrates = <int>{};
     for (final s in streams.audio) {
       final container = s.container.toLowerCase();
       if (!playable(container)) continue;
       final uri = accept(s);
       if (uri == null) continue;
-      if (bestAudio == null || _betterAudio(s, bestAudio.$1)) bestAudio = (s, uri);
+      final kbps = s.bitrateKbps ?? 0;
+      if (seenBitrates.add(kbps)) {
+        audioChoices.add(_audioChoice(s, uri));
+      }
     }
     final choices = [
       ...video,
-      if (bestAudio != null) _audioChoice(bestAudio.$1, bestAudio.$2),
+      ...audioChoices,
     ];
     if (choices.isNotEmpty) return choices;
     if (tooLarge > 0) throw YoutubeDirectException.tooLarge;
