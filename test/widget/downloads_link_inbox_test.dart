@@ -19,6 +19,7 @@ import 'package:mediahub/features/downloads/download_link_inbox.dart';
 import 'package:mediahub/features/downloads/download_providers.dart';
 import 'package:mediahub/features/downloads/downloads_notifier.dart';
 import 'package:mediahub/features/downloads/downloads_screen.dart';
+import 'package:mediahub/features/downloads/fast_youtube_extractor_resolver.dart';
 import 'package:mediahub/features/downloads/youtube_direct_flow.dart';
 import 'package:mediahub/features/downloads/youtube_direct_resolver.dart';
 import 'package:mediahub/features/explore/online_models.dart';
@@ -158,9 +159,11 @@ void main() {
     // iPhone unless a test says otherwise: no yt-dlp.
     PlatformInfo.debugIsAndroid = false;
     PlatformInfo.debugIsIOS = true;
+    FastYoutubeExtractorResolver.overrideResolver = (uri) async => null;
   });
 
   tearDown(() async {
+    FastYoutubeExtractorResolver.overrideResolver = null;
     PlatformInfo.resetForTests();
     await db.close();
   });
