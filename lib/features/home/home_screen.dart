@@ -130,8 +130,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        // The app's own name: an app-written heading, so Fraunces.
-        title: Text(AppConfig.appName, style: context.typography.sectionTitle),
+        // The app's own name and author tagline: Fraunces with Poppins byline.
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(AppConfig.appName, style: context.typography.sectionTitle),
+            Text(
+              'by Niranjan',
+              style: context.typography.caption.copyWith(
+                color: context.palette.primary,
+                letterSpacing: 0.4,
+                fontWeight: FontWeight.w600,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: 'Settings',

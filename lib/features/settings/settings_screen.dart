@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -665,15 +666,17 @@ class _AboutCard extends StatelessWidget {
           title: 'Crafted with precision by',
           body: 'Niranjan',
         ),
-        const _CardDivider.betweenRows(),
-        _NavRow(
-          icon: Icons.bug_report_rounded,
-          title: 'Diagnostics log',
-          subtitle: 'Recent app events (playback, downloads, network), handy when something goes wrong.',
-          onTap: () {
-            context.push('/diagnostics');
-          },
-        ),
+        if (kDebugMode) ...[
+          const _CardDivider.betweenRows(),
+          _NavRow(
+            icon: Icons.bug_report_rounded,
+            title: 'Diagnostics log',
+            subtitle: 'Recent app events (playback, downloads, network), handy when something goes wrong.',
+            onTap: () {
+              context.push('/diagnostics');
+            },
+          ),
+        ],
         const _CardDivider.betweenRows(),
         _NavRow(
           icon: Icons.description_rounded,
