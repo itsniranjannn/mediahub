@@ -20,6 +20,7 @@ import '../../personal/personal_tools_notifier.dart';
 import '../../shared/widgets/ui_kit.dart';
 import 'download_providers.dart';
 import 'downloads_notifier.dart';
+import 'fast_youtube_extractor_resolver.dart';
 
 /// "Choose a quality, then download" for web links (YouTube, Instagram ...).
 /// Used by the Downloads screen, for pasted links and links sent from the
@@ -239,15 +240,31 @@ class WebLinkDownloadFlow {
       // Each read has its own [infoTimeout]; this covers two reads and a
       // yt-dlp update in between.
       timeout: infoTimeout * 2 + updater.updateTimeout,
-      lookup: () => lookupWithUpdate(
-        backend: backend,
-        updater: updater,
-        uri: uri,
-        requestId: requestId,
-        abandoned: () => stopped,
-        downloadsRunning: downloadsRunning,
-        onGaveUp: stopLookup,
-      ),
+      lookup: () async {
+        // Fast path for YouTube: use native Dart youtube_explode_dart manifest
+        // fetching over HTTPS (~1s), bypassing Python/yt-dlp startup overhead.
+        try {
+          final fastMeta = await FastYoutubeExtractorResolver.resolve(uri);
+          if (fastMeta != null && fastMeta.formats.isNotEmpty) {
+            DiagnosticsService.instance.logEvent('fast_youtube_lookup_ok', {
+              'host': uri.host,
+            });
+            return fastMeta;
+          }
+        } catch (_) {
+          // If fast lookup throws or fails, transparently fall through to yt-dlp.
+        }
+
+        return lookupWithUpdate(
+          backend: backend,
+          updater: updater,
+          uri: uri,
+          requestId: requestId,
+          abandoned: () => stopped,
+          downloadsRunning: downloadsRunning,
+          onGaveUp: stopLookup,
+        );
+      },
       onAbandoned: stopLookup,
     );
     if (outcome == null || !context.mounted) return;

@@ -17,6 +17,7 @@ import 'package:mediahub/personal/extractor_errors.dart';
 import 'package:mediahub/personal/format_options.dart';
 import 'package:mediahub/personal/format_selection_sheet.dart';
 import 'package:mediahub/personal/personal_tools_notifier.dart';
+import 'package:mediahub/features/downloads/fast_youtube_extractor_resolver.dart';
 
 import '../unit/fake_extractor_backend.dart';
 
@@ -83,8 +84,12 @@ void main() {
     coordinator = _FakeQueueCoordinator();
     flowDone = false;
     queuedCallbacks = 0;
+    FastYoutubeExtractorResolver.overrideResolver = (uri) async => null;
   });
-  tearDown(PlatformInfo.resetForTests);
+  tearDown(() {
+    FastYoutubeExtractorResolver.overrideResolver = null;
+    PlatformInfo.resetForTests();
+  });
 
   /// A phone-width surface tall enough to show the whole quality sheet.
   void usePhone(WidgetTester tester) {
