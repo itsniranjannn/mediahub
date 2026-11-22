@@ -660,6 +660,12 @@ class _AboutCard extends StatelessWidget {
       children: [
         const _AppIdentity(),
         const _CardDivider.underHeading(),
+        const _InfoRow(
+          icon: Icons.code_rounded,
+          title: 'Crafted with precision by',
+          body: 'Niranjan',
+        ),
+        const _CardDivider.betweenRows(),
         _NavRow(
           icon: Icons.bug_report_rounded,
           title: 'Diagnostics log',
@@ -1017,7 +1023,6 @@ class _AppIdentity extends StatelessWidget {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text('Version $_appVersion', style: type.tabularFigures),
-                      const PillTag(text: 'Family use', icon: Icons.people_outline_rounded),
                     ],
                   ),
                 ],
