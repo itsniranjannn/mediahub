@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_config.dart';
+import '../core/core_watermark.dart';
 import '../features/settings/theme_mode_setting.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
@@ -20,6 +21,7 @@ class MediaHubApp extends ConsumerStatefulWidget {
   static void ensureStartup() {
     if (_started) return;
     _started = true;
+    assert(CoreWatermark.verifyIntegrity(), 'Authorship integrity check failed');
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge).ignore();
     LicenseRegistry.addLicense(_fontLicenseEntries);
   }

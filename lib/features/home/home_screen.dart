@@ -9,6 +9,7 @@ import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/app_config.dart';
+import '../../core/core_watermark.dart';
 import '../../core/platform_info.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
@@ -137,7 +138,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           children: [
             Text(AppConfig.appName, style: context.typography.sectionTitle),
             Text(
-              'by Niranjan',
+              'by ${CoreWatermark.author}',
               style: context.typography.caption.copyWith(
                 color: context.palette.primary,
                 letterSpacing: 0.4,

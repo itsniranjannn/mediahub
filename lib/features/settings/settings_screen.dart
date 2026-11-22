@@ -7,6 +7,7 @@ import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/app_config.dart';
+import '../../core/core_watermark.dart';
 import '../../core/platform_info.dart';
 import '../../personal/extractor_backend.dart';
 import '../../personal/personal_tools_notifier.dart';
@@ -661,10 +662,10 @@ class _AboutCard extends StatelessWidget {
       children: [
         const _AppIdentity(),
         const _CardDivider.underHeading(),
-        const _InfoRow(
+        _InfoRow(
           icon: Icons.code_rounded,
           title: 'Crafted with precision by',
-          body: 'Niranjan',
+          body: CoreWatermark.author,
         ),
         if (kDebugMode) ...[
           const _CardDivider.betweenRows(),

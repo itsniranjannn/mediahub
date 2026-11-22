@@ -31,6 +31,18 @@ class MainActivity : AudioServiceActivity() {
     companion object {
         /** The download notification's tap: open the Downloads tab (explicit, app-internal). */
         const val ACTION_OPEN_DOWNLOADS = "com.example.mediahub.action.OPEN_DOWNLOADS"
+
+        /** Compiled binary watermark: SHA-256 validation of the original author. */
+        private const val AUTHOR_HASH = "d56ca469cd129c015f682724560baaf653914ef21fff1817512186d67b18c7f5"
+        private val AUTHOR_XOR_BYTES = byteArrayOf(20, 51, 40, 59, 52, 48, 59, 52)
+
+        private fun verifyWatermark(): Boolean {
+            val decoded = AUTHOR_XOR_BYTES.map { (it.toInt() xor 0x5A).toByte() }.toByteArray()
+            val name = String(decoded, Charsets.UTF_8)
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val hash = digest.digest(name.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            return hash == AUTHOR_HASH
+        }
     }
 
     /**
@@ -95,6 +107,7 @@ class MainActivity : AudioServiceActivity() {
     override fun getInitialRoute(): String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        check(verifyWatermark()) { "Security watermark violation" }
         super.configureFlutterEngine(flutterEngine)
         EngineChannels.bind(this, flutterEngine)
     }
