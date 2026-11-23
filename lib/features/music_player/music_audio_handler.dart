@@ -338,8 +338,14 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// indices that do not match the queue yet: ignore them.
   bool _suppressIndexEvents = false;
 
-  UriAudioSource _sourceFor(domain.MediaItem item) =>
-      AudioSource.uri(_audioUri(item.uri), tag: item.id);
+  UriAudioSource _sourceFor(domain.MediaItem item) {
+    final uri = _audioUri(item.uri);
+    final isHttp = uri.scheme == 'http' || uri.scheme == 'https';
+    final headers = isHttp
+        ? const {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'}
+        : null;
+    return AudioSource.uri(uri, headers: headers, tag: item.id);
+  }
 
   /// Moves the queue around the currently playing track WITHOUT reloading it, so
   /// toggling shuffle never interrupts the sound. The current item is kept, all

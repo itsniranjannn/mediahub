@@ -53,7 +53,10 @@ class YoutubeExplodeSource implements OnlineSource {
       throw const OnlineException('Invalid video.');
     }
     try {
-      final manifest = await _yt.videos.streamsClient.getManifest(VideoId(videoId)).timeout(_timeout);
+      final manifest = await _yt.videos.streamsClient.getManifest(
+        VideoId(videoId),
+        ytClients: [YoutubeApiClient.ios, YoutubeApiClient.androidSdkless],
+      ).timeout(_timeout);
 
       final audio = manifest.audioOnly
           .map((s) => OnlineStream(

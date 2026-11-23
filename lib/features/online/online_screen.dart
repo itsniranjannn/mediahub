@@ -486,7 +486,11 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
         _session.send(const BridgeCommand.requestState());
         _updatePipEligibility();
       case AppLifecycleState.detached:
-        break;
+        _reachedHidden = true;
+        final inPip = DeviceControls.inPip.value || _session.browserPipActive.value;
+        if (!ref.read(onlineBackgroundPlayProvider) && !inPip) {
+          _session.send(const BridgeCommand.pause());
+        }
     }
   }
 
@@ -579,11 +583,17 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
           'Picture-in-picture is off',
           action: SnackBarAction(label: 'Settings', onPressed: _openAppSettings),
         );
+      } else if (mounted) {
+        _snack('Entering picture-in-picture');
       }
       return;
     }
     final ok = await _session.send(const BridgeCommand.enterPip());
-    if (!ok && mounted) _snack('Picture-in-picture is not available for this video');
+    if (ok && mounted) {
+      _snack('Entering picture-in-picture');
+    } else if (!ok && mounted) {
+      _snack('Picture-in-picture is not available for this video');
+    }
   }
 
   Future<void> _openAppSettings() async {
@@ -594,10 +604,12 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
 
   void _setBackgroundPlay(bool on) {
     ref.read(onlineBackgroundPlayProvider.notifier).set(on);
+    _snack(on ? 'Background play on' : 'Background play off');
   }
 
   void _setAutoPip(bool on) {
     ref.read(onlineAutoPipProvider.notifier).set(on);
+    _snack(on ? 'Auto picture-in-picture on' : 'Auto picture-in-picture off');
   }
 
   Future<void> _reloadOrStop() async {
@@ -937,28 +949,6 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
   Widget _buildWatchStrip(BuildContext context) {
     final background = ref.watch(onlineBackgroundPlayProvider);
     final autoPip = ref.watch(onlineAutoPipProvider);
-    // Picture-in-picture, Save and Copy link are round icon buttons (their
-    // names in the tooltip and for screen readers), so Download, PiP and
-    // Background play, what this tab is for, stay in view on a 360 dp phone.
-    Widget iconAction(String key, IconData icon, String label, VoidCallback onPressed) => Semantics(
-          label: label,
-          button: true,
-          excludeSemantics: true,
-          onTap: onPressed,
-          child: Tooltip(
-            message: label,
-            child: OutlinedButton(
-              key: ValueKey(key),
-              onPressed: onPressed,
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(40, 40),
-                padding: EdgeInsets.zero,
-                shape: const CircleBorder(),
-              ),
-              child: Icon(icon, size: 20),
-            ),
-          ),
-        );
     final items = <Widget>[
       if (PlatformInfo.supportsDownloads)
         VoltButton.compact(
@@ -967,47 +957,221 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
           icon: Icons.download_rounded,
           onPressed: _download,
         ),
-      iconAction('online_pip', Icons.picture_in_picture_alt_rounded, 'Picture-in-picture', _enterPip),
-      FilterChip(
+      _WatchActionPill(
+        key: const ValueKey('online_pip'),
+        icon: Icons.picture_in_picture_alt_rounded,
+        tooltip: 'Picture-in-picture',
+        semanticsLabel: 'Picture-in-picture',
+        onPressed: _enterPip,
+      ),
+      _WatchTogglePill(
         key: const ValueKey('online_background_chip'),
-        // Short on screen; read and shown in full ("Background play").
-        label: const Text('Background', semanticsLabel: 'Background play'),
+        semanticsLabel: 'Background play',
         tooltip: 'Background play: keeps playing with the screen off',
         selected: background,
         onSelected: _setBackgroundPlay,
+        icon: Icons.headphones_outlined,
+        selectedIcon: Icons.headphones_rounded,
       ),
-      iconAction('online_save', Icons.library_add_rounded, 'Save to Favourites or a playlist', _save),
-      iconAction('online_copy_link', Icons.link_rounded, 'Copy link', _copyLink),
-      FilterChip(
+      _WatchActionPill(
+        key: const ValueKey('online_save'),
+        icon: Icons.library_add_rounded,
+        tooltip: 'Save to Favourites or a playlist',
+        semanticsLabel: 'Save to Favourites or a playlist',
+        onPressed: _save,
+      ),
+      _WatchActionPill(
+        key: const ValueKey('online_copy_link'),
+        icon: Icons.link_rounded,
+        tooltip: 'Copy link',
+        semanticsLabel: 'Copy link',
+        onPressed: _copyLink,
+      ),
+      _WatchTogglePill(
         key: const ValueKey('online_autopip_chip'),
-        label: const Text('Auto PiP'),
+        semanticsLabel: 'Auto picture-in-picture',
+        tooltip: 'Auto Picture-in-picture when leaving the app',
         selected: autoPip,
         onSelected: _setAutoPip,
+        icon: Icons.branding_watermark_outlined,
+        selectedIcon: Icons.branding_watermark_rounded,
       ),
     ];
     return SizedBox(
       key: const ValueKey('online_watch_strip'),
       height: _stripHeight,
-      child: ShaderMask(
-        // A 24 dp fade at the end hints that the strip scrolls.
-        shaderCallback: (rect) {
-          final stop = rect.width <= 0 ? 1.0 : (1 - 24 / rect.width).clamp(0.0, 1.0);
-          return LinearGradient(
-            colors: const [Colors.white, Colors.white, Colors.transparent],
-            stops: [0, stop, 1],
-          ).createShader(rect);
-        },
-        blendMode: BlendMode.dstIn,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          // 52 - 2 x 2 = 48 dp across: the 40 dp buttons and chips keep their
-          // full 48 dp tap targets (DESIGN.md 7.1).
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: 2),
-          itemCount: items.length,
-          // 4 dp between the 48 dp targets: the round buttons and chips sit
-          // inside theirs, so the visible gaps stay about 8 dp.
-          separatorBuilder: (context, index) => const SizedBox(width: AppSpacing.xs4),
-          itemBuilder: (context, index) => Center(child: items[index]),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        // 52 - 2 x 2 = 48 dp across: 40 dp visual pills inside 48 dp tap targets.
+        // All 6 actions fit comfortably across standard phone viewports.
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md12, vertical: 2),
+        itemCount: items.length,
+        separatorBuilder: (context, index) => const SizedBox(width: AppSpacing.sm8),
+        itemBuilder: (context, index) => Center(child: items[index]),
+      ),
+    );
+  }
+}
+
+/// Unified 40 dp circular action pill with 48 dp touch target for watch strip actions.
+class _WatchActionPill extends StatelessWidget {
+  const _WatchActionPill({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.semanticsLabel,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final String semanticsLabel;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    final isDark = p.isDark;
+
+    return Semantics(
+      button: true,
+      label: semanticsLabel,
+      excludeSemantics: true,
+      onTap: onPressed,
+      child: Tooltip(
+        message: tooltip,
+        child: SizedBox(
+          width: 40,
+          height: 48,
+          child: Center(
+            child: Material(
+              color: isDark ? p.surfaceElevated : Colors.white,
+              shape: StadiumBorder(
+                side: isDark ? BorderSide.none : BorderSide(color: p.outline),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onPressed,
+                splashColor: p.primaryBase.withValues(alpha: 0.16),
+                highlightColor: p.primaryBase.withValues(alpha: 0.08),
+                customBorder: const StadiumBorder(),
+                child: SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: Center(
+                    child: Icon(
+                      icon,
+                      size: 20,
+                      color: p.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Unified 40 dp stadium toggle pill with 48 dp touch target for watch strip toggles.
+class _WatchTogglePill extends StatelessWidget {
+  const _WatchTogglePill({
+    super.key,
+    this.label,
+    required this.selected,
+    required this.onSelected,
+    this.semanticsLabel,
+    this.tooltip,
+    this.icon,
+    this.selectedIcon,
+  });
+
+  final String? label;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
+  final String? semanticsLabel;
+  final String? tooltip;
+  final IconData? icon;
+  final IconData? selectedIcon;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    final isDark = p.isDark;
+    final type = AppTypography.of(p);
+    final hasLabel = label != null && label!.isNotEmpty;
+
+    final backgroundColor = selected
+        ? (isDark ? p.primaryContainer : p.primaryContainer.withValues(alpha: 0.55))
+        : (isDark ? p.surfaceElevated : Colors.white);
+
+    final borderSide = selected
+        ? BorderSide(
+            color: isDark ? p.primaryBase.withValues(alpha: 0.7) : p.primary.withValues(alpha: 0.5),
+            width: 1.2,
+          )
+        : (isDark ? BorderSide.none : BorderSide(color: p.outline));
+
+    final foregroundColor = selected
+        ? (isDark ? p.onPrimaryContainer : p.primary)
+        : p.textPrimary;
+
+    final effectiveIcon = selected ? (selectedIcon ?? icon) : icon;
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: semanticsLabel ?? (hasLabel ? label! : ''),
+      excludeSemantics: true,
+      onTap: () => onSelected(!selected),
+      child: Tooltip(
+        message: tooltip ?? (hasLabel ? label! : ''),
+        child: SizedBox(
+          width: hasLabel ? null : 40,
+          height: 48,
+          child: Center(
+            child: Material(
+              color: backgroundColor,
+              shape: StadiumBorder(side: borderSide),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: () => onSelected(!selected),
+                splashColor: p.primaryBase.withValues(alpha: 0.16),
+                highlightColor: p.primaryBase.withValues(alpha: 0.08),
+                customBorder: const StadiumBorder(),
+                child: Container(
+                  width: hasLabel ? null : 40,
+                  height: 40,
+                  padding: EdgeInsets.symmetric(horizontal: hasLabel ? AppSpacing.md12 : 0),
+                  alignment: Alignment.center,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (effectiveIcon != null)
+                        Icon(
+                          effectiveIcon,
+                          size: 20,
+                          color: foregroundColor,
+                        ),
+                      if (hasLabel) ...[
+                        if (effectiveIcon != null) const SizedBox(width: AppSpacing.xs4 + 2),
+                        Text(
+                          label!,
+                          semanticsLabel: semanticsLabel,
+                          style: (type.chipLabel ?? type.label).copyWith(
+                            color: foregroundColor,
+                            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );

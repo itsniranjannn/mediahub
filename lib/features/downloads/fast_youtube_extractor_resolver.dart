@@ -55,7 +55,10 @@ class FastYoutubeExtractorResolver {
       // a details lookup that fails or lags no longer throws the whole fast
       // result away (which sent the lookup on to the much slower yt-dlp).
       final (manifest, video) = await manifestWithDetails(
-        yt.videos.streamsClient.getManifest(videoId).timeout(_timeout),
+        yt.videos.streamsClient.getManifest(
+          videoId,
+          ytClients: [YoutubeApiClient.ios, YoutubeApiClient.androidSdkless],
+        ).timeout(_timeout),
         yt.videos.get(videoId).timeout(_timeout),
       );
 

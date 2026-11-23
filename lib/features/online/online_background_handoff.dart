@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart' show PlayerState, ProcessingState;
 
 import '../../core/logging/diagnostics_service.dart';
+import '../../core/platform/device_controls.dart';
 import '../../core/platform_info.dart';
 import '../../domain/models/media_item.dart' as domain;
 import '../../domain/models/playback_state.dart' as domain;
@@ -71,8 +72,10 @@ class MusicHandoffPlayer implements HandoffPlayer {
 
   /// How long the stream gets to load and start playing. Short: iOS gives an
   /// app that left the screen only seconds, and a failure still has to leave
-  /// time for the second try and for the page to play on.
+  /// time for the second try and for the page to play on. Android allows more
+  /// buffering time for ExoPlayer.
   static const Duration defaultStartTimeout = Duration(seconds: 4);
+  static const Duration defaultAndroidStartTimeout = Duration(seconds: 12);
   final Duration startTimeout;
 
   /// The user's repeat mode while the hand-off plays with repeat off.
@@ -290,6 +293,7 @@ class OnlineBackgroundHandoff {
         if (!_left) _playingWhenInactive = session.media.value?.isPlaying ?? false;
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
         if (_left) return;
         _left = true;
         _onLeft();
@@ -299,8 +303,6 @@ class OnlineBackgroundHandoff {
         _pipTimer?.cancel();
         _pipTimer = null;
         unawaited(_onReturned());
-      case AppLifecycleState.detached:
-        break;
     }
   }
 
@@ -322,7 +324,7 @@ class OnlineBackgroundHandoff {
 
   void _decide() {
     if (_phase != _Phase.idle || _disposed || !_enabled()) return;
-    if (session.browserPipActive.value) return; // picture-in-picture plays on
+    if (session.browserPipActive.value || DeviceControls.inPip.value) return; // picture-in-picture plays on
     final s = session.media.value;
     final videoId = s?.videoId;
     if (s == null || videoId == null || !session.isActive) return;
@@ -477,10 +479,29 @@ class OnlineBackgroundHandoff {
       return;
     }
     if (now.itemId == ours) {
-      await session.send(BridgeCommand.seekTo(now.position));
-      if (now.playing) {
-        session.expectPagePlay();
-        await session.send(const BridgeCommand.play());
+      if (session.hasSender) {
+        await session.send(BridgeCommand.seekTo(now.position));
+        if (now.playing) {
+          session.expectPagePlay();
+          await session.send(const BridgeCommand.play());
+        }
+      } else {
+        // App was swiped away and reopened: WebView hasn't loaded the page yet.
+        // Handover once the page is ready so music continues playing seamlessly!
+        session.handoverOnNextPage(
+          position: now.position,
+          play: now.playing,
+          onHandover: () async {
+            try {
+              await player.pause();
+              await player.restoreLocal(saved);
+            } catch (e) {
+              debugPrint('[Online] hand-off restore failed: $e');
+            }
+          },
+        );
+        DiagnosticsService.instance.logEvent('online_handoff_back', {'synced': true, 'waiting_bridge': true});
+        return;
       }
     }
     try {
@@ -490,6 +511,22 @@ class OnlineBackgroundHandoff {
       debugPrint('[Online] hand-off restore failed: $e');
     }
     DiagnosticsService.instance.logEvent('online_handoff_back', {'synced': now.itemId == ours});
+  }
+
+  /// Starts native stream playback when the phone's controls are pressed while
+  /// the app is detached (swiped away from recents).
+  Future<bool> startDetachedPlay() async {
+    if (_disposed || !_enabled()) return false;
+    final s = session.media.value;
+    final videoId = s?.videoId;
+    if (videoId == null || !isValidYouTubeVideoId(videoId)) return false;
+    _left = true;
+    _leftPlaying = true;
+    session.holdPage = true;
+    _phase = _Phase.resolving;
+    final generation = ++_generation;
+    await _start(generation, videoId);
+    return _phase == _Phase.native;
   }
 
   // --- stream links ----------------------------------------------------------
@@ -552,12 +589,24 @@ class OnlineBackgroundHandoff {
 
 /// One hand-off for the app's lifetime, next to the media session.
 final onlineBackgroundHandoffProvider = Provider<OnlineBackgroundHandoff>((ref) {
+  final session = ref.watch(onlineMediaSessionProvider);
   final handoff = OnlineBackgroundHandoff(
-    session: ref.watch(onlineMediaSessionProvider),
-    player: MusicHandoffPlayer(ref),
+    session: session,
+    player: MusicHandoffPlayer(
+      ref,
+      startTimeout: PlatformInfo.isIOS
+          ? MusicHandoffPlayer.defaultStartTimeout
+          : MusicHandoffPlayer.defaultAndroidStartTimeout,
+    ),
     resolveStreams: (videoId) => ref.read(onlineSourceProvider).streams(videoId),
-    enabled: () => PlatformInfo.isIOS && ref.read(onlineBackgroundPlayProvider),
+    enabled: () => ref.read(onlineBackgroundPlayProvider),
   );
-  ref.onDispose(handoff.dispose);
+  session.onDetachedPlay = handoff.startDetachedPlay;
+  ref.onDispose(() {
+    if (identical(session.onDetachedPlay, handoff.startDetachedPlay)) {
+      session.onDetachedPlay = null;
+    }
+    handoff.dispose();
+  });
   return handoff;
 });

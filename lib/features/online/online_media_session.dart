@@ -176,10 +176,26 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
         break; // the Online screen's toolbar and orientation, not the media session
       case BridgeReadyMessage(:final pageUrl):
         documentReplaced(pageUrl);
-        if (_playOnNextPage) {
+        final pos = _handoverPosition;
+        _handoverPosition = null;
+        final play = _handoverPlay;
+        _handoverPlay = false;
+        final handoverCb = _onHandover;
+        _onHandover = null;
+        _handoverTimeout?.cancel();
+        _handoverTimeout = null;
+
+        if (pos != null) {
+          send(BridgeCommand.seekTo(pos));
+        }
+        if (play || _playOnNextPage) {
           _playOnNextPage = false;
+          expectPagePlay();
           DiagnosticsService.instance.logEvent('online_play_restored_page');
           send(const BridgeCommand.play());
+        }
+        if (handoverCb != null) {
+          unawaited(handoverCb());
         }
     }
   }
@@ -421,20 +437,59 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
 
   // --- ExternalPlaybackDelegate: the notification's buttons --------------
 
+  Duration? _handoverPosition;
+  bool _handoverPlay = false;
+  Future<void> Function()? _onHandover;
+  Timer? _handoverTimeout;
+
+  /// A hand-off is keeping native audio playing while the WebView reloads the
+  /// page (e.g. app reopened after swipe-away). When the page's bridge is
+  /// ready, the video seeks, plays, and [onHandover] is called so the native
+  /// player can pause and restore local music.
+  void handoverOnNextPage({
+    required Duration position,
+    required bool play,
+    required Future<void> Function() onHandover,
+  }) {
+    _handoverPosition = position;
+    _handoverPlay = play;
+    _onHandover = onHandover;
+    _handoverTimeout?.cancel();
+    _handoverTimeout = Timer(const Duration(seconds: 15), () {
+      _handoverTimeout = null;
+      final cb = _onHandover;
+      _onHandover = null;
+      cb?.call();
+    });
+  }
+
+  /// When a play from the phone's controls cannot start in a detached WebView
+  /// (swiped away from recents), this starts native stream playback instead.
+  Future<bool> Function()? onDetachedPlay;
+
   @override
   Future<void> externalPlay() async {
     final sent = await send(const BridgeCommand.play());
     if (!_detached || _disposed) return;
     // No window: some WebViews (Samsung, Android 13) will not start a video
-    // in a page that lost its window. Check, and if it did not start, say
-    // so in the notification and play once MediaHub is opened.
+    // in a page that lost its window. Check, and if it did not start, try
+    // native detached playback; if that is unavailable, say so in the
+    // notification and play once MediaHub is opened.
     _playCheckTimer?.cancel();
     if (!sent) {
+      if (onDetachedPlay != null) {
+        final started = await onDetachedPlay!();
+        if (started) return;
+      }
       _waitForWindow();
       return;
     }
-    _playCheckTimer = Timer(playCheckAfter, () {
+    _playCheckTimer = Timer(playCheckAfter, () async {
       if (_disposed || !_detached || (media.value?.isPlaying ?? false)) return;
+      if (onDetachedPlay != null) {
+        final started = await onDetachedPlay!();
+        if (started) return;
+      }
       _waitForWindow();
     });
   }
@@ -503,6 +558,10 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   void dispose() {
     if (_disposed) return;
     _playCheckTimer?.cancel();
+    _handoverTimeout?.cancel();
+    _handoverTimeout = null;
+    _onHandover = null;
+    onDetachedPlay = null;
     detachPage();
     _disposed = true;
     media.dispose();
