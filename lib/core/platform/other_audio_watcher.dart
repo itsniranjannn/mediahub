@@ -56,13 +56,22 @@ class MethodChannelOtherAudioWatcher implements OtherAudioWatcher {
   @override
   Stream<OtherAudioState> get events => _events.stream;
 
+  /// Never throws: where there is no native side (iPhone, where the system
+  /// itself says when music may come back) nothing is watched and no report
+  /// arrives.
   @override
   Future<void> start() async {
     if (!_handlerSet) {
       _handlerSet = true;
       _channel.setMethodCallHandler(handlePlatformCall);
     }
-    await _channel.invokeMethod<void>('start');
+    try {
+      await _channel.invokeMethod<void>('start');
+    } on MissingPluginException {
+      // No native side (iPhone, tests): nothing to watch.
+    } on PlatformException {
+      // The phone refused: nothing is watched either.
+    }
   }
 
   @override

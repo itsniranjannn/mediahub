@@ -53,11 +53,17 @@ void main() {
     expect(MethodChannelOtherAudioWatcher.parse({'playing': false}), const OtherAudioState(otherPlaying: false));
   });
 
-  test('no native side (another platform): start fails, stop does not', () async {
+  test('no native side (iPhone): neither start nor stop throws', () async {
     messenger.setMockMethodCallHandler(channel, null);
     final watcher = MethodChannelOtherAudioWatcher(channel: channel);
-    await expectLater(watcher.start(), throwsA(isA<MissingPluginException>()));
+    await watcher.start();
     await watcher.stop();
+  });
+
+  test('the phone refusing start does not throw either', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async => throw PlatformException(code: 'ERR'));
+    final watcher = MethodChannelOtherAudioWatcher(channel: channel);
+    await watcher.start();
   });
 
   test('Settings: "Resume after other apps" is on by default and the choice is kept', () async {

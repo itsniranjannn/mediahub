@@ -64,6 +64,7 @@ class MainActivity : AudioServiceActivity() {
         var share: ShareChannel? = null
         var otherAudio: OtherAudioChannel? = null
         var backupFiles: BackupFilesChannel? = null
+        var network: NetworkChannel? = null
 
         fun bind(activity: MainActivity, flutterEngine: FlutterEngine) {
             if (engine?.get() !== flutterEngine) {
@@ -77,6 +78,7 @@ class MainActivity : AudioServiceActivity() {
                 share = ShareChannel(app, messenger)
                 otherAudio = OtherAudioChannel(app, messenger)
                 backupFiles = BackupFilesChannel(messenger)
+                network = NetworkChannel(app, messenger)
                 if (ExtractorChannel.PERSONAL_TOOLS) extractor = ExtractorChannel(app, messenger)
                 engine = WeakReference(flutterEngine)
             }
@@ -93,6 +95,7 @@ class MainActivity : AudioServiceActivity() {
             runCatching { share?.cleanup() }
             runCatching { otherAudio?.cleanup() }
             runCatching { backupFiles?.cleanup() }
+            runCatching { network?.cleanup() }
             mediaStore = null
             downloadService = null
             extractor = null
@@ -100,6 +103,7 @@ class MainActivity : AudioServiceActivity() {
             share = null
             otherAudio = null
             backupFiles = null
+            network = null
         }
     }
 

@@ -18,8 +18,8 @@ final libraryBackupServiceProvider = Provider<LibraryBackupService>(
   (ref) => LibraryBackupService(ref.watch(databaseProvider), SettingsStore.instance),
 );
 
-/// Shown on an iPhone, where there is no file picker yet.
-const String backupIosMessage = 'Backups work on Android for now. On iPhone this needs a file picker MediaHub does not have yet.';
+/// Shown where there is no system file picker (not Android or iPhone).
+const String backupIosMessage = 'Backups need the phone’s file picker, which this device does not have.';
 
 /// Settings → Backup & restore → "Save a backup".
 Future<void> saveLibraryBackup(BuildContext context, WidgetRef ref) async {

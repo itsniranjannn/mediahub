@@ -5,10 +5,11 @@ import '../platform_info.dart';
 
 /// Lets the user pick where a backup is saved, or which backup to read, with
 /// the system's own file picker (Android's Storage Access Framework:
-/// ACTION_CREATE_DOCUMENT / ACTION_OPEN_DOCUMENT). No storage permission is
-/// needed: the app only touches the one file the user picked.
+/// ACTION_CREATE_DOCUMENT / ACTION_OPEN_DOCUMENT; iPhone's
+/// UIDocumentPickerViewController in AppDelegate.swift). No storage permission
+/// is needed: the app only touches the one file the user picked.
 abstract class BackupFilePicker {
-  /// False where there is no picker yet (iPhone: no document-picker plugin).
+  /// False where there is no native picker (desktop, tests).
   bool get isSupported;
 
   /// Asks where to save [bytes] as [fileName]. True when saved, false when
@@ -24,7 +25,7 @@ class MethodChannelBackupFilePicker implements BackupFilePicker {
   static const MethodChannel _channel = MethodChannel('mediahub/backup_files');
 
   @override
-  bool get isSupported => PlatformInfo.isAndroid;
+  bool get isSupported => PlatformInfo.isAndroid || PlatformInfo.isIOS;
 
   @override
   Future<bool> save(String fileName, Uint8List bytes) async {

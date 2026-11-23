@@ -1,6 +1,6 @@
 # MediaHub on iPhone
 
-Last updated: 2026-11-20. Branch: `main`.
+Last updated: 2026-11-23. Branch: `feat/size-backup-data`.
 
 **Read this first.** The iPhone app has never been built or run, because building it needs a Mac.
 Everything below comes from reading MediaHub's code and the plugins' own iPhone code, plus tests that
@@ -147,6 +147,27 @@ All of these are in the code with tests that act as an iPhone. None has run on a
 - The app id is now `com.mediahub.app` (`com.mediahub.app.RunnerTests` for the tests), the same as on
   Android. No team is set: you pick yours in Xcode (section 6).
 
+## 5a. Added 2026-11-23, iPhone side
+
+Swift lives in `ios/Runner/AppDelegate.swift` (no new Xcode files), registered in
+`didInitializeImplicitFlutterEngine` next to the plugins. Dart tests pass; the Swift has not been compiled.
+
+- **Backup & restore** (Settings): "Save a backup" writes the file to a temporary folder and opens the
+  iPhone's "Save to Files" picker (`UIDocumentPickerViewController(forExporting:asCopy:)`). "Restore from
+  backup" opens the Files picker for JSON files (`forOpeningContentTypes: [.json, .data]`), reads the
+  picked file with security-scoped access (an iCloud Drive file is fetched first) and refuses one over the
+  size limit (`TOO_LARGE`), exactly like Android's `mediahub/backup_files`. Backing out of either picker
+  says nothing, as on Android.
+- **"Ask before big downloads on mobile data"** (Settings → Downloads) now shows on iPhone. A new channel,
+  `mediahub/network` `isMetered`, answers from `NWPathMonitor`: mobile data, an expensive network (a
+  personal hotspot) or Low Data Mode count as metered. Android answers the same channel from
+  `ConnectivityManager` (`NetworkChannel.kt`), so the question no longer needs the personal tools
+  (yt-dlp) on either phone. No answer = no question.
+- **Resume after other apps**: starting the watcher no longer throws on iPhone (there is no native side;
+  the iPhone itself says when music may come back).
+- **Choose quality**: audio rows say "M4A (AAC) · 128 kbps" on iPhone, and there are never MP3 rows.
+- The launch image was already the app glyph (not Flutter's placeholder), so it was left as it is.
+
 ## 6. First build on a Mac (checklist)
 
 1. **A Mac with Xcode 16 or newer** (the video plugin needs it) and the command line tools:
@@ -199,6 +220,15 @@ All of these are in the code with tests that act as an iPhone. None has run on a
 - Install a new build over the old one: songs and videos must still play and keep their covers.
 - Video: ±10 s, double tap, swipe to seek near the left edge, rotation modes, an MKV file (plain message).
 - Settings: Privacy wording, Clear YouTube data, Resume when headphones reconnect.
+- Backup: Save a backup → save it to On My iPhone and to iCloud Drive; cancel once (nothing should be
+  said). Restore from backup → pick that file (also once from iCloud Drive while it is not downloaded
+  yet), then a big non-backup file (should say it is too large), then cancel. Try it on an iPad too (the
+  picker is presented from the top screen).
+- Mobile data: with Wi-Fi off, start a YouTube download over 100 MB: the question must appear. Then on
+  Wi-Fi (no question), on a personal hotspot, and with Low Data Mode on (both should ask).
+- Music with another app's audio: start and stop another app's sound while MediaHub waits to resume;
+  nothing should crash or show an error.
+- Choose quality on a YouTube link: the audio rows say "M4A (AAC) · ... kbps", no MP3.
 
 ## 8. Still needs Swift or a Mac (with sizes)
 

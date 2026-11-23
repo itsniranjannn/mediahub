@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/platform/network_status.dart';
 import '../../core/storage/settings_store.dart';
-import '../../personal/personal_tools_notifier.dart' show extractorBackendProvider;
 
 /// "Ask before big downloads on mobile data": before a download whose size is
 /// known and over [bigDownloadBytes] starts while the phone is on metered data
@@ -38,13 +38,14 @@ class AskBeforeBigDownloadsNotifier extends Notifier<bool> {
 final askBeforeBigDownloadsProvider =
     NotifierProvider<AskBeforeBigDownloadsNotifier, bool>(AskBeforeBigDownloadsNotifier.new);
 
-/// Whether the active network is metered: the same check the yt-dlp updater
-/// uses (Android's ConnectivityManager.isActiveNetworkMetered); null = unknown.
+/// Whether the active network is metered ("mediahub/network": Android's
+/// ConnectivityManager, iPhone's NWPathMonitor), with or without the personal
+/// tools; null = unknown (then no question is asked).
 final meteredNetworkCheckProvider = Provider<Future<bool?> Function()>((ref) {
-  final backend = ref.watch(extractorBackendProvider);
+  final network = ref.watch(networkStatusProvider);
   return () async {
     try {
-      return await backend.isMeteredNetwork();
+      return await network.isMetered();
     } catch (_) {
       return null;
     }

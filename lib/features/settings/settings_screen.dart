@@ -8,6 +8,7 @@ import '../../app/theme/app_typography.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/app_config.dart';
 import '../../core/core_watermark.dart';
+import '../../core/platform/backup_file_picker.dart';
 import '../../core/platform_info.dart';
 import '../../personal/extractor_backend.dart';
 import '../../personal/personal_tools_notifier.dart';
@@ -132,7 +133,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SizedBox(height: _cardGap),
               _PersonalToolsCard(),
             ],
-            if (PlatformInfo.isAndroid) ...const [
+            if (PlatformInfo.isAndroid || PlatformInfo.isIOS) ...const [
               SizedBox(height: _cardGap),
               EntranceFade(index: 4, child: _DownloadsDataCard()),
             ],
@@ -373,7 +374,8 @@ class _PlaybackCard extends ConsumerWidget {
   }
 }
 
-/// Settings → Downloads (Android: the phone can tell when data is metered).
+/// Settings → Downloads (Android and iPhone: the phone can tell when data is
+/// metered, through "mediahub/network").
 class _DownloadsDataCard extends ConsumerWidget {
   const _DownloadsDataCard();
 
@@ -415,7 +417,7 @@ class _BackupCard extends ConsumerWidget {
           subtitle: 'Favourites, playlists, play history and settings. Not the songs and videos themselves.',
         ),
         const _CardDivider.underHeading(),
-        if (PlatformInfo.isAndroid) ...[
+        if (ref.watch(backupFilePickerProvider).isSupported) ...[
           _NavRow(
             icon: Icons.save_alt_rounded,
             title: 'Save a backup',
@@ -432,7 +434,7 @@ class _BackupCard extends ConsumerWidget {
         ] else
           const _InfoRow(
             icon: Icons.info_outline_rounded,
-            title: 'Android only for now',
+            title: 'Not on this device',
             body: backupIosMessage,
           ),
       ],

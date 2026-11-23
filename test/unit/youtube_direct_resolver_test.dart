@@ -92,6 +92,15 @@ void main() {
       expect(choices.map((c) => c.label), ['360p']);
     });
 
+    test('iOS: audio rows say M4A (AAC), never MP3', () {
+      final choices = YoutubeDirectOptions.build(
+        OnlineStreams(video: const [], audio: [_audio(kbps: 128), _audio(kbps: 48, size: 300)]),
+        mp4Only: true,
+      );
+      expect(choices.map((c) => c.label), ['M4A (AAC) · 128 kbps', 'M4A (AAC) · 48 kbps']);
+      expect(choices.any((c) => c.label.contains('MP3')), isFalse);
+    });
+
     test('Android: a WebM audio fills in when there is no M4A', () {
       final choices = YoutubeDirectOptions.build(OnlineStreams(
         video: const [],

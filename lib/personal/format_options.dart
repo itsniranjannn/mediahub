@@ -1,3 +1,4 @@
+import '../core/platform_info.dart';
 import '../core/utils/formatters.dart';
 import 'extractor_backend.dart';
 
@@ -236,9 +237,14 @@ class FormatOptions {
     }
 
     // --- audio ---
+    // iOS: AAC wording ("M4A (AAC) · 128 kbps") and no MP3 rows, so nobody
+    // looks for an MP3 there.
+    final apple = PlatformInfo.isIOS;
     final audioLabel = audio == null
         ? 'Original audio'
-        : 'Original · ${_audioName(audio.ext)}${audio.abr > 0 ? ' (~${audio.abr.round()} kbps)' : ''}';
+        : apple && audio.ext == 'm4a'
+            ? 'M4A (AAC)${audio.abr > 0 ? ' · ${audio.abr.round()} kbps' : ''}'
+            : 'Original · ${_audioName(audio.ext)}${audio.abr > 0 ? ' (~${audio.abr.round()} kbps)' : ''}';
     out.add(FormatChoice(
       id: 'audio_best',
       label: audioLabel,
@@ -272,7 +278,7 @@ class FormatOptions {
       }
     }
 
-    for (final kbps in AudioConversion.mp3Bitrates) {
+    for (final kbps in apple ? const <int>[] : AudioConversion.mp3Bitrates) {
       final bytes = duration > 0 ? duration * kbps * 125 : 0;
       out.add(FormatChoice(
         id: 'audio_mp3_$kbps',

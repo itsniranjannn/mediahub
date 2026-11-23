@@ -40,7 +40,7 @@ MusicAudioHandler _handler() {
 
 class _FakePicker implements BackupFilePicker {
   @override
-  bool get isSupported => PlatformInfo.isAndroid;
+  bool get isSupported => PlatformInfo.isAndroid || PlatformInfo.isIOS;
   Uint8List? saved;
   String? savedName;
   Uint8List? toOpen;
@@ -103,14 +103,24 @@ void main() {
     await SettingsStore.instance.remove(AskBeforeBigDownloadsNotifier.prefKey);
   });
 
-  testWidgets('iPhone: Android-only message, no mobile-data switch', (tester) async {
+  testWidgets('iPhone: backup rows and the mobile-data switch too', (tester) async {
     PlatformInfo.debugIsAndroid = false;
     PlatformInfo.debugIsIOS = true;
     await pump(tester);
     expect(find.text('Backup & restore'), findsOneWidget);
+    expect(find.text('Save a backup'), findsOneWidget);
+    expect(find.text('Restore from backup'), findsOneWidget);
+    expect(find.text('Android only for now'), findsNothing);
+    expect(find.text('Not on this device'), findsNothing);
+    expect(find.text('Ask before big downloads on mobile data'), findsOneWidget);
+  });
+
+  testWidgets('no system file picker: a plain message instead of the rows', (tester) async {
+    PlatformInfo.debugIsAndroid = false;
+    PlatformInfo.debugIsIOS = false;
+    await pump(tester);
     expect(find.text('Save a backup'), findsNothing);
-    expect(find.text('Android only for now'), findsOneWidget);
-    expect(find.text('Ask before big downloads on mobile data'), findsNothing);
+    expect(find.text('Not on this device'), findsOneWidget);
   });
 
   testWidgets('Save a backup hands a versioned JSON file to the picker', (tester) async {

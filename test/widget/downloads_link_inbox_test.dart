@@ -38,6 +38,8 @@ const _linkA = 'https://youtu.be/$_idA';
 const _linkB = 'https://youtu.be/$_idB';
 const _dialogText = 'Finding available qualities...';
 const _audioLabel = 'Audio only (M4A, 128 kbps)';
+/// iOS wording for the same stream (no MP3 there, so AAC is named).
+const _iosAudioLabel = 'M4A (AAC) · 128 kbps';
 
 /// Records what would be downloaded; nothing touches the network or disk.
 class _RecordingEngine extends Fake implements DownloadEngine {
@@ -256,11 +258,11 @@ void main() {
     // Audio choices sit in the sheet's Audio section.
     await tester.tap(find.text('Audio'));
     await tester.pump();
-    expect(find.text(_audioLabel), findsOneWidget);
+    expect(find.text(_iosAudioLabel), findsOneWidget);
     expect(find.text(YoutubeDirectDownloadFlow.sheetNote), findsOneWidget);
     expect(find.text('Platform Link'), findsOneWidget, reason: 'the card stays behind the sheet');
 
-    await tester.tap(find.text(_audioLabel));
+    await tester.tap(find.text(_iosAudioLabel));
     await animate(tester);
 
     expect(find.byType(FormatSelectionSheet), findsNothing);

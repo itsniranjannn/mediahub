@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/personal/extractor_backend.dart';
 import 'package:mediahub/personal/format_options.dart';
 
@@ -77,6 +78,15 @@ const _legacySelectors = [
 ];
 
 void main() {
+  test('iPhone: audio rows say M4A (AAC), no MP3 rows', () {
+    PlatformInfo.debugIsAndroid = false;
+    PlatformInfo.debugIsIOS = true;
+    addTearDown(PlatformInfo.resetForTests);
+    final audio = FormatOptions.build(_wide).where((c) => c.isAudio).toList();
+    expect(audio.first.label, startsWith('M4A (AAC)'));
+    expect(audio.any((c) => c.label.contains('MP3') || c.audioFormat != null), isFalse);
+  });
+
   group('format selectors never fail outright (the 1080p "Requested format is not available")', () {
     test('a video quality is capped at its height and ends with the catch-all', () {
       expect(FormatOptions.videoSelector(1080), 'bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b');

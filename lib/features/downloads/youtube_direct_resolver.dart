@@ -195,7 +195,7 @@ class YoutubeDirectOptions {
       if (uri == null) continue;
       final key = '${s.container.toLowerCase()}${s.bitrateKbps ?? 0}';
       if (!seen.add(key)) continue;
-      audioChoices.add(_audioChoice(s, uri, id: audioChoices.isEmpty ? 'yt_audio' : 'yt_audio_$key'));
+      audioChoices.add(_audioChoice(s, uri, id: audioChoices.isEmpty ? 'yt_audio' : 'yt_audio_$key', apple: mp4Only));
     }
     final choices = [
       ...video,
@@ -251,16 +251,20 @@ class YoutubeDirectOptions {
     );
   }
 
-  static YoutubeDirectChoice _audioChoice(OnlineStream s, Uri uri, {String id = 'yt_audio'}) {
+  /// [apple] (iOS): "M4A (AAC) · 128 kbps", so nobody looks for an MP3 there.
+  static YoutubeDirectChoice _audioChoice(OnlineStream s, Uri uri, {String id = 'yt_audio', bool apple = false}) {
     final container = s.container.toLowerCase();
     final ext = container == 'mp4' ? 'm4a' : container;
     final kbps = s.bitrateKbps;
     final rate = kbps != null && kbps > 0 ? ', $kbps kbps' : '';
+    final label = apple && ext == 'm4a'
+        ? 'M4A (AAC)${kbps != null && kbps > 0 ? ' · $kbps kbps' : ''}'
+        : 'Audio only (${ext.toUpperCase()}$rate)';
     return YoutubeDirectChoice(
       id: id,
       uri: uri,
       isAudio: true,
-      label: 'Audio only (${ext.toUpperCase()}$rate)',
+      label: label,
       container: container,
       fileExtension: ext,
       qualityLabel: kbps != null && kbps > 0 ? 'Audio $kbps kbps' : 'Audio',

@@ -9,6 +9,8 @@
 
     <!-- Audio playback and foreground service permissions -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- "mediahub/network": is the active network metered (normal permission, no prompt) -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
