@@ -380,7 +380,14 @@ InAppWebViewSettings onlineWebViewSettings({
       supportZoom: false,
       allowsBackForwardNavigationGestures: true,
       isInspectable: kDebugMode,
-      useHybridComposition: true,
+      // Texture-layer composition, not hybrid composition. With hybrid
+      // composition Flutter runs its raster work on the platform thread while
+      // the WebView is on screen; when the task was swiped away (the engine
+      // lives on in the audio service) and MediaHub reopened, the GL context
+      // stayed current on that thread and every frame failed (EGL_BAD_ACCESS:
+      // "context current to another thread"), leaving only the WebView on
+      // screen. Reproduced and fixed on the emulator with Impeller GLES.
+      useHybridComposition: false,
       preferredContentMode: isIOS ? UserPreferredContentMode.MOBILE : UserPreferredContentMode.RECOMMENDED,
       allowsLinkPreview: !isIOS,
     );

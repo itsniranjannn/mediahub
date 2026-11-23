@@ -18,6 +18,7 @@ import 'package:mediahub/personal/format_options.dart';
 import 'package:mediahub/personal/format_selection_sheet.dart';
 import 'package:mediahub/personal/personal_tools_notifier.dart';
 import 'package:mediahub/features/downloads/fast_youtube_extractor_resolver.dart';
+import 'package:mediahub/features/downloads/mobile_data_guard.dart';
 
 import '../unit/fake_extractor_backend.dart';
 
@@ -72,6 +73,7 @@ void main() {
   late _FakeQueueCoordinator coordinator;
   late bool flowDone;
   late int queuedCallbacks;
+  late int meteredChecks;
 
   setUp(() {
     // Lookups are logged; no 3 s write timer may outlive a widget test.
@@ -84,6 +86,7 @@ void main() {
     coordinator = _FakeQueueCoordinator();
     flowDone = false;
     queuedCallbacks = 0;
+    meteredChecks = 0;
     FastYoutubeExtractorResolver.overrideResolver = (uri) async => null;
   });
   tearDown(() {
@@ -137,6 +140,10 @@ void main() {
           downloadQueueCoordinatorProvider.overrideWith(() => coordinator),
           if (noticeAgreed) downloadNoticeAgreedProvider.overrideWithBuild((ref, notifier) => true),
           if (updater != null) extractorAutoUpdaterProvider.overrideWithValue(updater),
+          meteredNetworkCheckProvider.overrideWithValue(() async {
+            meteredChecks++;
+            return false;
+          }),
         ],
         child: MaterialApp(
           navigatorKey: navigatorKey,
@@ -176,6 +183,30 @@ void main() {
     expect(coordinator.triggers, 0);
     expect(queuedCallbacks, 0);
   }
+
+  testWidgets('A YouTube link takes the fast path first: nothing slow runs before the sheet', (tester) async {
+    final order = <String>[];
+    FastYoutubeExtractorResolver.overrideResolver = (uri) async {
+      order.add('fast');
+      return FakeExtractorBackend.sampleMetadata();
+    };
+    backend.onGetInfo = (url) {
+      order.add('yt-dlp');
+      return Completer<ExtractorMetadata>().future;
+    };
+    await pumpHost(tester, noticeAgreed: true);
+    await tester.tap(find.text('Download'));
+    // One frame for the dialog, one for the sheet: no timer or extra await
+    // stands between the tap and the qualities.
+    await tester.pump();
+    await tester.pump();
+    await animate(tester);
+
+    expect(find.byType(FormatSelectionSheet), findsOneWidget);
+    expect(order, ['fast'], reason: 'yt-dlp is never asked when the fast lookup answered');
+    expect(backend.infoCalls, isEmpty);
+    expect(meteredChecks, 0, reason: 'the mobile-data check waits for the Download tap');
+  });
 
   testWidgets('Cancel closes a lookup that never finishes and nothing is queued', (tester) async {
     backend.onGetInfo = (_) => Completer<ExtractorMetadata>().future; // never completes

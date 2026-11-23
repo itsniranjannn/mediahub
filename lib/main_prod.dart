@@ -86,6 +86,10 @@ Future<void> _bootstrap() async {
     // background the phone's controls must not start downloaded songs.
     loadExternalHeld: () => SettingsStore.instance.getBool(MusicAudioHandler.externalHeldPrefKey),
     saveExternalHeld: (held) => SettingsStore.instance.setBool(MusicAudioHandler.externalHeldPrefKey, held),
+    loadExternalResume: () => SettingsStore.instance.getString(MusicAudioHandler.externalResumePrefKey),
+    saveExternalResume: (encoded) => encoded == null
+        ? SettingsStore.instance.remove(MusicAudioHandler.externalResumePrefKey)
+        : SettingsStore.instance.setString(MusicAudioHandler.externalResumePrefKey, encoded),
     // Music another app paused plays again when that app stops (Android,
     // Settings → Resume after other apps).
     otherAudio: PlatformInfo.isAndroid ? MethodChannelOtherAudioWatcher() : null,

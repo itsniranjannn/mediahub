@@ -49,6 +49,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
     this.idleRelease = const Duration(seconds: 15),
     this.staleAfter = const Duration(seconds: 6),
     this.claimAfter = const Duration(seconds: 3),
+    this.playCheckAfter = const Duration(seconds: 3),
     this.resumeBackgroundInterruptions = false,
     Stream<void> Function()? becomingNoisy,
     DateTime Function()? clock,
@@ -68,6 +69,15 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   /// Unmuted playing this long on a YouTube page that is not a video page
   /// claims the session.
   final Duration claimAfter;
+
+  /// How long a play from the phone's controls gets to start the page's
+  /// video while MediaHub has no window (swiped away from recents).
+  final Duration playCheckAfter;
+
+  /// The notification's second line while a play is waiting for the app's
+  /// window: the page could not start without it, and a tap on the
+  /// notification opens MediaHub, which then plays.
+  static const String tapToResumeLine = 'Tap to resume in MediaHub';
 
   /// iOS: WebKit pauses the page's video as the app leaves the screen. A
   /// pause within [backgroundInterruptWindow] of that is undone once.
@@ -103,6 +113,15 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   StreamSubscription<void>? _noisySub;
 
   bool _appInForeground = true;
+
+  /// The Flutter view has no Activity (the task was swiped away; the engine
+  /// and this page live on in the audio service's process).
+  bool _detached = false;
+
+  /// A play from the phone's controls that the page could not carry out
+  /// without a window: done as soon as the app is back on screen.
+  bool _playWaitsForWindow = false;
+  Timer? _playCheckTimer;
   DateTime? _backgroundedAt;
   DateTime? _lastCommandedPauseAt;
   DateTime? _lastAutoResumeAt;
@@ -157,6 +176,11 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
         break; // the Online screen's toolbar and orientation, not the media session
       case BridgeReadyMessage(:final pageUrl):
         documentReplaced(pageUrl);
+        if (_playOnNextPage) {
+          _playOnNextPage = false;
+          DiagnosticsService.instance.logEvent('online_play_restored_page');
+          send(const BridgeCommand.play());
+        }
     }
   }
 
@@ -170,6 +194,10 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   }
 
   void _onState(OnlineMediaState s) {
+    if (s.isPlaying && _playWaitsForWindow) {
+      _playWaitsForWindow = false; // it started after all
+      _playCheckTimer?.cancel();
+    }
     final previous = media.value;
     final now = _clock();
     media.value = s;
@@ -233,6 +261,13 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       case AppLifecycleState.resumed:
         _appInForeground = true;
         _backgroundedAt = null;
+        _detached = false;
+        if (_playWaitsForWindow) {
+          _playWaitsForWindow = false;
+          _playCheckTimer?.cancel();
+          DiagnosticsService.instance.logEvent('online_play_after_window');
+          send(const BridgeCommand.play());
+        }
       case AppLifecycleState.inactive:
         // Android picture-in-picture, a system dialog, iOS Control Center:
         // not on screen for the page's purposes, but not left either.
@@ -241,6 +276,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
         _appInForeground = false;
+        if (state == AppLifecycleState.detached) _detached = true;
         if (_backgroundedAt == null) {
           _backgroundedAt = _clock();
           // A pause that came just before the app finished leaving counts too.
@@ -365,13 +401,13 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   }
 
   /// What the notification shows for [s].
-  static ExternalMediaSnapshot snapshotOf(OnlineMediaState s) {
+  static ExternalMediaSnapshot snapshotOf(OnlineMediaState s, {bool waitingForWindow = false}) {
     final id = s.videoId;
     final art = s.artworkUrl;
     return ExternalMediaSnapshot(
       id: id != null ? 'online:$id' : 'online:${s.pageUrl?.path ?? ''}',
       title: s.title.isNotEmpty ? s.title : addressLabel(url: s.pageUrl),
-      artist: s.artist.isEmpty ? null : s.artist,
+      artist: waitingForWindow ? tapToResumeLine : (s.artist.isEmpty ? null : s.artist),
       artUri: art == null ? null : Uri.tryParse(art),
       playing: s.isPlaying,
       buffering: s.status == OnlineMediaStatus.buffering,
@@ -379,16 +415,57 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       duration: s.duration,
       speed: s.rate,
       canSkipNext: s.hasNext,
+      pageUrl: s.pageUrl,
     );
   }
 
   // --- ExternalPlaybackDelegate: the notification's buttons --------------
 
   @override
-  Future<void> externalPlay() => send(const BridgeCommand.play());
+  Future<void> externalPlay() async {
+    final sent = await send(const BridgeCommand.play());
+    if (!_detached || _disposed) return;
+    // No window: some WebViews (Samsung, Android 13) will not start a video
+    // in a page that lost its window. Check, and if it did not start, say
+    // so in the notification and play once MediaHub is opened.
+    _playCheckTimer?.cancel();
+    if (!sent) {
+      _waitForWindow();
+      return;
+    }
+    _playCheckTimer = Timer(playCheckAfter, () {
+      if (_disposed || !_detached || (media.value?.isPlaying ?? false)) return;
+      _waitForWindow();
+    });
+  }
+
+  void _waitForWindow() {
+    _playWaitsForWindow = true;
+    DiagnosticsService.instance.logEvent('online_play_waits_for_window');
+    final s = media.value;
+    if (s == null || !_active) return;
+    host.updateExternalMedia(this, snapshotOf(s, waitingForWindow: true));
+  }
+
+  /// The app opened a video the notification brought back after a restart,
+  /// and the controls had asked for it to play: the next page plays once its
+  /// bridge is ready.
+  void playOnNextPage() => _playOnNextPage = true;
+  bool _playOnNextPage = false;
+
+  /// A play is waiting for MediaHub to be opened (see [externalPlay]).
+  bool get playWaitsForWindow => _playWaitsForWindow;
 
   @override
-  Future<void> externalPause() => send(const BridgeCommand.pause());
+  Future<void> externalPause() {
+    if (_playWaitsForWindow) {
+      _playWaitsForWindow = false;
+      _playCheckTimer?.cancel();
+      final st = media.value;
+      if (st != null && _active) host.updateExternalMedia(this, snapshotOf(st));
+    }
+    return send(const BridgeCommand.pause());
+  }
 
   @override
   Future<void> externalSeek(Duration position) => send(BridgeCommand.seekTo(position));
@@ -425,6 +502,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
 
   void dispose() {
     if (_disposed) return;
+    _playCheckTimer?.cancel();
     detachPage();
     _disposed = true;
     media.dispose();

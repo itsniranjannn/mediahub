@@ -7,7 +7,11 @@ import '../core/services/download_service_controller.dart';
 import '../features/downloads/download_providers.dart';
 import '../features/downloads/downloads_screen.dart';
 import '../features/home/home_screen.dart';
+import '../features/music_player/music_audio_handler.dart';
 import '../features/music_player/music_screen.dart';
+import '../features/music_player/playback_notifier.dart';
+import '../features/online/online_media_session.dart';
+import '../features/online/online_open_request.dart';
 import '../features/online/online_screen.dart';
 import '../features/settings/diagnostics_screen.dart';
 import '../features/settings/settings_screen.dart';
@@ -119,6 +123,45 @@ final routerProvider = Provider<GoRouter>((ref) {
     });
     ref.onDispose(sub.cancel);
   }
+
+  // After a process restart the notification shows the YouTube video that
+  // last played (the audio handler restores it). Once MediaHub is on screen
+  // the Online tab opens that video where it was, and plays it when the
+  // controls asked for that meanwhile.
+  // (Widget tests build the router without an audio handler: nothing to restore.)
+  MusicAudioHandler? handlerOrNull() {
+    try {
+      return ref.read(audioHandlerProvider);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  final handler = handlerOrNull();
+  void openRestored({bool playPressed = false}) {
+    if (handler == null) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+    if (handler.restoredAwaitingPage) {
+      if (!playPressed) return;
+      // Opened already; the page is loading or paused: play it there.
+      ref.read(onlineMediaSessionProvider).externalPlay();
+      return;
+    }
+    final request = handler.takeRestoredExternal();
+    if (request == null) return;
+    DiagnosticsService.instance.logEvent('online_restored_opened', {'play': request.play});
+    if (!ref.read(onlineOpenRequestProvider.notifier).open(request.item.resumeUri)) return;
+    if (request.play) ref.read(onlineMediaSessionProvider).playOnNextPage();
+    router.go('/online');
+  }
+
+  final restoredSub = handler?.restoredRequests.listen((_) => openRestored(playPressed: true));
+  final lifecycle = AppLifecycleListener(onResume: openRestored);
+  Future.microtask(openRestored);
+  ref.onDispose(() {
+    restoredSub?.cancel();
+    lifecycle.dispose();
+  });
   return router;
 });
 

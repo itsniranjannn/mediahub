@@ -526,4 +526,72 @@ void main() {
     push(state(OnlineMediaStatus.playing, event: 'play'));
     expect(host.log.where((e) => e == 'set').length, 2);
   });
+
+  group('play from the controls after MediaHub was swiped away', () {
+    test('a page that does not start without a window: the notification says so, opening the app plays', () {
+      fakeAsync((async) {
+        push(state(OnlineMediaStatus.playing, event: 'play'));
+        push(state(OnlineMediaStatus.paused, event: 'pause'));
+        session.appLifecycleChanged(AppLifecycleState.detached);
+        sent.clear();
+        host.active!.externalPlay();
+        async.flushMicrotasks();
+        expect(sent, [const BridgeCommand.play()]);
+        async.elapse(const Duration(seconds: 3));
+        expect(session.playWaitsForWindow, isTrue);
+        expect(host.last!.artist, OnlineMediaSession.tapToResumeLine);
+        expect(host.active, same(session), reason: 'the notification stays on the video, never local music');
+        sent.clear();
+        session.appLifecycleChanged(AppLifecycleState.resumed);
+        expect(sent, [const BridgeCommand.play()]);
+        expect(session.playWaitsForWindow, isFalse);
+        push(state(OnlineMediaStatus.playing, event: 'play'));
+        expect(host.last!.artist, 'Channel');
+      });
+    });
+
+    test('a page that plays without a window needs nothing more', () {
+      fakeAsync((async) {
+        push(state(OnlineMediaStatus.playing, event: 'play'));
+        push(state(OnlineMediaStatus.paused, event: 'pause'));
+        session.appLifecycleChanged(AppLifecycleState.detached);
+        host.active!.externalPlay();
+        async.flushMicrotasks();
+        push(state(OnlineMediaStatus.playing, event: 'play'));
+        async.elapse(const Duration(seconds: 5));
+        expect(session.playWaitsForWindow, isFalse);
+        expect(host.last!.artist, 'Channel');
+        sent.clear();
+        session.appLifecycleChanged(AppLifecycleState.resumed);
+        expect(sent, isNot(contains(const BridgeCommand.play())));
+      });
+    });
+
+    test('a pause from the controls cancels the waiting play', () {
+      fakeAsync((async) {
+        push(state(OnlineMediaStatus.playing, event: 'play'));
+        push(state(OnlineMediaStatus.paused, event: 'pause'));
+        session.appLifecycleChanged(AppLifecycleState.detached);
+        host.active!.externalPlay();
+        async.elapse(const Duration(seconds: 3));
+        host.active!.externalPause();
+        async.flushMicrotasks();
+        expect(session.playWaitsForWindow, isFalse);
+        expect(host.last!.artist, 'Channel');
+        sent.clear();
+        session.appLifecycleChanged(AppLifecycleState.resumed);
+        expect(sent, isNot(contains(const BridgeCommand.play())));
+      });
+    });
+
+    test('with the app on screen a play is just a play', () {
+      fakeAsync((async) {
+        push(state(OnlineMediaStatus.playing, event: 'play'));
+        push(state(OnlineMediaStatus.paused, event: 'pause'));
+        host.active!.externalPlay();
+        async.elapse(const Duration(seconds: 5));
+        expect(session.playWaitsForWindow, isFalse);
+      });
+    });
+  });
 }

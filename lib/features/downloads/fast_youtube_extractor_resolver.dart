@@ -17,6 +17,26 @@ class FastYoutubeExtractorResolver {
   /// For unit/widget tests: allows mocking or replacing the resolver function.
   static Future<ExtractorMetadata?> Function(Uri uri)? overrideResolver;
 
+  /// How long the details (title, length) may lag behind a finished
+  /// manifest before the qualities show without them.
+  static const Duration detailsGrace = Duration(seconds: 2);
+
+  /// Waits for [manifest] (its error is thrown) and then at most [grace]
+  /// more for [details]; details that fail or lag come back as null. Both
+  /// futures are already running, so neither waits for the other.
+  static Future<(M, D?)> manifestWithDetails<M, D>(
+    Future<M> manifest,
+    Future<D> details, {
+    Duration grace = detailsGrace,
+  }) async {
+    // Handled now, so a details error while the manifest is awaited is
+    // never reported as unhandled.
+    final safeDetails = details.then<D?>((d) => d, onError: (Object _) => null);
+    final m = await manifest;
+    final d = await safeDetails.timeout(grace, onTimeout: () => null);
+    return (m, d);
+  }
+
   /// Resolves an [ExtractorMetadata] for [uri] if it is a valid YouTube video link.
   /// Returns null if [uri] is not a YouTube link.
   static Future<ExtractorMetadata?> resolve(Uri uri) async {
@@ -31,11 +51,13 @@ class FastYoutubeExtractorResolver {
 
     final yt = YoutubeExplode();
     try {
-      final videoFuture = yt.videos.get(videoId).timeout(_timeout);
-      final manifestFuture = yt.videos.streamsClient.getManifest(videoId).timeout(_timeout);
-
-      final video = await videoFuture;
-      final manifest = await manifestFuture;
+      // Both requests start at once. Only the stream manifest is required:
+      // a details lookup that fails or lags no longer throws the whole fast
+      // result away (which sent the lookup on to the much slower yt-dlp).
+      final (manifest, video) = await manifestWithDetails(
+        yt.videos.streamsClient.getManifest(videoId).timeout(_timeout),
+        yt.videos.get(videoId).timeout(_timeout),
+      );
 
       final formats = <ExtractorFormat>[];
 
@@ -91,10 +113,10 @@ class FastYoutubeExtractorResolver {
 
       return ExtractorMetadata(
         id: videoId,
-        title: video.title.trim().isNotEmpty ? video.title.trim() : 'YouTube Video',
-        uploader: video.author.trim(),
-        durationSec: video.duration?.inSeconds ?? 0,
-        thumbnailUrl: video.thumbnails.highResUrl,
+        title: (video?.title.trim().isNotEmpty ?? false) ? video!.title.trim() : 'YouTube Video',
+        uploader: video?.author.trim() ?? '',
+        durationSec: video?.duration?.inSeconds ?? 0,
+        thumbnailUrl: video?.thumbnails.highResUrl ?? 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
         formats: formats,
         extractorArgs: null,
       );

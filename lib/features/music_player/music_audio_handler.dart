@@ -1,5 +1,6 @@
 // ignore_for_file: experimental_member_use
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
@@ -29,6 +30,7 @@ class ExternalMediaSnapshot {
     this.duration,
     this.speed = 1.0,
     this.canSkipNext = false,
+    this.pageUrl,
   });
 
   /// Stable id of what is playing (e.g. `online:<videoId>`).
@@ -55,6 +57,10 @@ class ExternalMediaSnapshot {
   /// The source has a "next" (shows the Next control).
   final bool canSkipNext;
 
+  /// The page it plays on (a YouTube watch page): kept so the controls can
+  /// bring the same video back after the process restarts.
+  final Uri? pageUrl;
+
   /// [album], or "YouTube".
   String get albumOrDefault => (album == null || album!.isEmpty) ? 'YouTube' : album!;
 
@@ -71,11 +77,142 @@ class ExternalMediaSnapshot {
       other.position == position &&
       other.duration == duration &&
       other.speed == speed &&
-      other.canSkipNext == canSkipNext;
+      other.canSkipNext == canSkipNext &&
+      other.pageUrl == pageUrl;
 
   @override
   int get hashCode =>
-      Object.hash(id, title, artist, album, artUri, playing, buffering, position, duration, speed, canSkipNext);
+      Object.hash(id, title, artist, album, artUri, playing, buffering, position, duration, speed, canSkipNext, pageUrl);
+}
+
+/// The external item (a YouTube video) that last owned the media session,
+/// saved so the notification can show it again after the process restarted.
+@immutable
+class ExternalResumeItem {
+  const ExternalResumeItem({
+    required this.id,
+    required this.pageUrl,
+    required this.title,
+    this.artist,
+    this.album,
+    this.artUri,
+    this.position = Duration.zero,
+    this.duration,
+  });
+
+  final String id;
+  final Uri pageUrl;
+  final String title;
+  final String? artist;
+  final String? album;
+  final Uri? artUri;
+  final Duration position;
+  final Duration? duration;
+
+  static ExternalResumeItem? fromSnapshot(ExternalMediaSnapshot s) {
+    final url = s.pageUrl;
+    if (url == null) return null;
+    return ExternalResumeItem(
+      id: s.id,
+      pageUrl: url,
+      title: s.title,
+      artist: s.artist,
+      album: s.album,
+      artUri: s.artUri,
+      position: s.position,
+      duration: s.duration,
+    );
+  }
+
+  /// The page to open: a watch page gets `t=<seconds>s` (YouTube starts
+  /// there); other pages open as they were.
+  Uri get resumeUri {
+    final secs = position.inSeconds;
+    if (secs < 2 || !pageUrl.queryParameters.containsKey('v')) return pageUrl;
+    final q = Map<String, String>.of(pageUrl.queryParameters)..['t'] = '${secs}s';
+    return pageUrl.replace(queryParameters: q);
+  }
+
+  ExternalMediaSnapshot toSnapshot({String? artistLine}) => ExternalMediaSnapshot(
+        id: id,
+        title: title,
+        artist: artistLine ?? artist,
+        album: album,
+        artUri: artUri,
+        playing: false,
+        position: position,
+        duration: duration,
+        pageUrl: pageUrl,
+      );
+
+  String encode() => jsonEncode({
+        'id': id,
+        'url': pageUrl.toString(),
+        'title': title,
+        if (artist != null) 'artist': artist,
+        if (album != null) 'album': album,
+        if (artUri != null) 'art': artUri.toString(),
+        'pos': position.inMilliseconds,
+        if (duration != null) 'dur': duration!.inMilliseconds,
+      });
+
+  /// Null for anything that is not a saved item (missing, corrupt, not https).
+  static ExternalResumeItem? decode(String? json) {
+    if (json == null || json.isEmpty) return null;
+    try {
+      final m = jsonDecode(json);
+      if (m is! Map) return null;
+      final url = Uri.tryParse(m['url'] is String ? m['url'] as String : '');
+      final id = m['id'];
+      final title = m['title'];
+      if (url == null || url.scheme != 'https' || id is! String || title is! String) return null;
+      final art = m['art'] is String ? Uri.tryParse(m['art'] as String) : null;
+      final pos = m['pos'] is int ? m['pos'] as int : 0;
+      final dur = m['dur'] is int ? m['dur'] as int : null;
+      return ExternalResumeItem(
+        id: id,
+        pageUrl: url,
+        title: title,
+        artist: m['artist'] is String ? m['artist'] as String : null,
+        album: m['album'] is String ? m['album'] as String : null,
+        artUri: art,
+        position: Duration(milliseconds: pos < 0 ? 0 : pos),
+        duration: dur == null ? null : Duration(milliseconds: dur),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// What the app should do with a restored external item once it is on
+/// screen: open the page, and play it when the controls asked for that.
+@immutable
+class ExternalResumeRequest {
+  const ExternalResumeRequest(this.item, {required this.play});
+  final ExternalResumeItem item;
+  final bool play;
+}
+
+/// Stands in for the YouTube page after a process restart: the notification
+/// shows the saved video, and its buttons ask for the app to be opened.
+class _RestoredExternal implements ExternalPlaybackDelegate {
+  _RestoredExternal(this._handler, this.item);
+  final MusicAudioHandler _handler;
+  final ExternalResumeItem item;
+
+  @override
+  Future<void> externalPlay() async => _handler._restoredWants(play: true);
+  @override
+  Future<void> externalPause() async => _handler._restoredWants(play: false);
+  @override
+  Future<void> externalSeek(Duration position) async {}
+  @override
+  Future<void> externalSkipToNext() async => _handler._restoredWants(play: true);
+  @override
+  Future<void> externalSkipToPrevious() async => _handler._restoredWants(play: true);
+  @override
+  void onExternalSourceReleased() {}
 }
 
 /// Receives the notification / lock screen / headset commands while it is the
@@ -571,12 +708,114 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   /// Where main.dart saves [externalHeld].
   static const String externalHeldPrefKey = 'media_controls_external_held';
+
+  /// Where main.dart saves the last external item (see [ExternalResumeItem]).
+  static const String externalResumePrefKey = 'media_controls_external_resume';
+
+  /// The notification's second line while a play waits for the app.
+  static const String tapToResumeLine = 'Tap to resume in MediaHub';
+
+  final String? Function()? loadExternalResume;
+  final void Function(String? encoded)? saveExternalResume;
+  ExternalResumeItem? _lastSavedResume;
+
+  _RestoredExternal? _restored;
+  bool _restoredPlayPending = false;
+  bool _restoredTaken = false;
+  final _restoredRequests = StreamController<void>.broadcast();
+
+  /// The saved video the notification shows after a restart (null once the
+  /// app took it, the page itself took over, or local music did).
+  ExternalResumeItem? get restoredExternal {
+    final r = _restored;
+    return r != null && !_restoredTaken && identical(_external, r) ? r.item : null;
+  }
+
+  /// The app opened the restored video and its page has not taken the
+  /// session yet: a play from the controls goes to that page.
+  bool get restoredAwaitingPage {
+    final r = _restored;
+    return r != null && _restoredTaken && identical(_external, r);
+  }
+
+  /// A play (or next) from the controls is waiting for the app to open.
+  bool get restoredPlayPending => restoredExternal != null && _restoredPlayPending;
+
+  /// Emits when play (or next) was pressed on the restored item (the app, if
+  /// it is on screen, opens the page then).
+  Stream<void> get restoredRequests => _restoredRequests.stream;
+
+  /// For the app once on screen: the restored item to open (and whether to
+  /// play it); null when there is none. The item stays on the notification
+  /// until the page claims the session.
+  ExternalResumeRequest? takeRestoredExternal() {
+    final r = _restored;
+    if (r == null || _restoredTaken || !identical(_external, r)) return null;
+    final play = _restoredPlayPending;
+    _restoredPlayPending = false;
+    _restoredTaken = true; // the page takes it from here
+    return ExternalResumeRequest(r.item, play: play);
+  }
+
+  void _restoredWants({required bool play}) {
+    final r = _restored;
+    if (r == null || !identical(_external, r)) return;
+    DiagnosticsService.instance.logEvent('play', {'caller': 'system', 'target': 'external_restored', 'play': play});
+    _restoredPlayPending = play;
+    _applyExternal(r.item.toSnapshot(artistLine: play ? tapToResumeLine : null));
+    if (play && !_restoredRequests.isClosed) _restoredRequests.add(null);
+  }
+
+  void _restoreSavedExternal() {
+    ExternalResumeItem? item;
+    try {
+      item = ExternalResumeItem.decode(loadExternalResume?.call());
+    } catch (_) {
+      item = null;
+    }
+    if (item == null) return;
+    _lastSavedResume = item;
+    DiagnosticsService.instance.logEvent('external_source_restored');
+    final r = _RestoredExternal(this, item);
+    _restored = r;
+    setExternalSource(r, item.toSnapshot());
+  }
+
+  void _saveResume(ExternalMediaSnapshot s) {
+    final r = _restored;
+    if (r != null && identical(_external, r)) return; // only a real page's state
+    final item = ExternalResumeItem.fromSnapshot(s);
+    if (item == null) return;
+    final last = _lastSavedResume;
+    if (last != null &&
+        last.id == item.id &&
+        last.title == item.title &&
+        last.pageUrl == item.pageUrl &&
+        (item.position - last.position).inMilliseconds.abs() < 5000 &&
+        s.playing) {
+      return;
+    }
+    _lastSavedResume = item;
+    try {
+      saveExternalResume?.call(item.encode());
+    } catch (e) {
+      debugPrint('[MusicAudioHandler] saving the external item failed: $e');
+    }
+  }
   ExternalPlaybackDelegate? _lastExternal;
 
   bool get externalHeld => _externalHeld;
 
   void _setExternalHeld(bool held) {
-    if (!held) _lastExternal = null;
+    if (!held) {
+      _lastExternal = null;
+      if (_lastSavedResume != null || _externalHeld) {
+        _lastSavedResume = null;
+        try {
+          saveExternalResume?.call(null);
+        } catch (_) {}
+      }
+    }
     if (_externalHeld == held) return;
     _externalHeld = held;
     try {
@@ -627,6 +866,8 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     this.loadLastSession,
     this.loadExternalHeld,
     this.saveExternalHeld,
+    this.loadExternalResume,
+    this.saveExternalResume,
     Duration? mediaButtonMultiClickWindow,
     Duration? pausedIdleTimeout,
     Duration? sleepFade,
@@ -663,6 +904,9 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       _externalHeld = false;
     }
     _init();
+    // The controls belonged to YouTube when the process went away: show that
+    // video again (paused) instead of a dead player or local music.
+    if (_externalHeld) _restoreSavedExternal();
   }
 
   static bool _always() => true;
@@ -1708,6 +1952,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   }
 
   void _applyExternal(ExternalMediaSnapshot s, {bool force = false}) {
+    _saveResume(s);
     final previous = _externalMedia;
     _externalMedia = s;
     if (previous != null && previous.id == s.id && previous.playing && !s.playing) _externalStoppedAt = _clock();

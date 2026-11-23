@@ -63,6 +63,8 @@ ExternalMediaSnapshot _yt({
       canSkipNext: canSkipNext,
     );
 
+final Uri _watch = Uri.parse('https://m.youtube.com/watch?v=dQw4w9WgXcQ');
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -426,6 +428,95 @@ void main() {
       await h.playLocal();
       expect(writes, [true, false]);
       await h.dispose();
+    });
+      group('the last YouTube video survives a process restart', () {
+      ExternalMediaSnapshot page({bool playing = true, int secs = 30}) => ExternalMediaSnapshot(
+            id: 'online:dQw4w9WgXcQ',
+            title: 'A YouTube video',
+            artist: 'A Channel',
+            playing: playing,
+            position: Duration(seconds: secs),
+            duration: const Duration(minutes: 3),
+            pageUrl: Uri.parse('https://m.youtube.com/watch?v=dQw4w9WgXcQ'),
+          );
+
+      test('the item is saved while YouTube owns the session, cleared by local music', () async {
+        String? saved;
+        final h = MusicAudioHandler(player: player, saveExternalResume: (v) => saved = v);
+        h.setExternalSource(yt, page());
+        final item = ExternalResumeItem.decode(saved)!;
+        expect(item.pageUrl.toString(), 'https://m.youtube.com/watch?v=dQw4w9WgXcQ');
+        expect(item.position, const Duration(seconds: 30));
+        h.updateExternalMedia(yt, page(secs: 33));
+        expect(ExternalResumeItem.decode(saved)!.position, const Duration(seconds: 30), reason: 'throttled while playing');
+        h.updateExternalMedia(yt, page(playing: false, secs: 40));
+        expect(ExternalResumeItem.decode(saved)!.position, const Duration(seconds: 40), reason: 'a pause is saved at once');
+        await h.loadQueue([_song('1')], autoPlay: false);
+        await h.playLocal();
+        expect(saved, isNull);
+        await h.dispose();
+      });
+
+      test('after a restart the notification shows the video; play asks for the app, never local music', () async {
+        final saved = ExternalResumeItem(
+          id: 'online:dQw4w9WgXcQ',
+          pageUrl: _watch,
+          title: 'A YouTube video',
+          artist: 'A Channel',
+          position: const Duration(seconds: 95),
+        ).encode();
+        final h = MusicAudioHandler(
+          player: player,
+          loadExternalHeld: () => true,
+          loadExternalResume: () => saved,
+        );
+        expect(h.isExternalActive, isTrue);
+        expect(h.mediaItem.value?.title, 'A YouTube video');
+        expect(h.playbackState.value.playing, isFalse);
+        expect(h.playbackState.value.controls, contains(MediaControl.play));
+        expect(h.restoredExternal!.resumeUri.queryParameters['t'], '95s');
+        final requests = <void>[];
+        final sub = h.restoredRequests.listen(requests.add);
+        await h.play();
+        await Future<void>.delayed(Duration.zero);
+        verifyNever(() => player.play());
+        expect(requests, hasLength(1));
+        expect(h.mediaItem.value?.artist, MusicAudioHandler.tapToResumeLine);
+        expect(h.restoredPlayPending, isTrue);
+        final request = h.takeRestoredExternal()!;
+        expect(request.play, isTrue);
+        expect(request.item.id, 'online:dQw4w9WgXcQ');
+        expect(h.takeRestoredExternal(), isNull, reason: 'taken once');
+        expect(h.restoredAwaitingPage, isTrue);
+        // The page plays and takes the session from the stand-in.
+        h.setExternalSource(yt, page());
+        expect(h.restoredAwaitingPage, isFalse);
+        await h.play();
+        expect(yt.calls, contains('play'));
+        await sub.cancel();
+        await h.dispose();
+      });
+
+      test('pause on the restored item takes the waiting play back', () async {
+        final h = MusicAudioHandler(
+          player: player,
+          loadExternalHeld: () => true,
+          loadExternalResume: () => ExternalResumeItem(id: 'online:x', pageUrl: _watch, title: 'T', artist: 'C').encode(),
+        );
+        await h.play();
+        await h.pause();
+        expect(h.restoredPlayPending, isFalse);
+        expect(h.mediaItem.value?.artist, 'C');
+        await h.dispose();
+      });
+
+      test('nothing saved, or a corrupt item: no stand-in', () async {
+        for (final value in [null, '', '{', '{"id":"a","url":"http://x","title":"t"}']) {
+          final h = MusicAudioHandler(player: player, loadExternalHeld: () => true, loadExternalResume: () => value);
+          expect(h.isExternalActive, isFalse, reason: '$value');
+          await h.dispose();
+        }
+      });
     });
   });
 }
