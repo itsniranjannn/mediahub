@@ -7,7 +7,7 @@ import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/personal/extractor_backend.dart';
 import 'package:mediahub/personal/format_selection_sheet.dart';
 
-Future<void> _pumpOpener(WidgetTester tester, WidgetBuilder sheet) async {
+Future<void> _pumpOpener(WidgetTester tester, WidgetBuilder sheet, {bool? showDragHandle}) async {
   await tester.pumpWidget(MaterialApp(
     theme: AppTheme.darkTheme,
     home: Scaffold(
@@ -20,6 +20,7 @@ Future<void> _pumpOpener(WidgetTester tester, WidgetBuilder sheet) async {
               useRootNavigator: true,
               isScrollControlled: true,
               backgroundColor: Colors.transparent,
+              showDragHandle: showDragHandle,
               builder: sheet,
             ),
             child: const Text('open'),
@@ -60,6 +61,32 @@ void main() {
       ),
     );
     expect(find.byType(FormatSelectionSheet), findsOneWidget);
+    await _activateDismiss(tester);
+    expect(find.byType(FormatSelectionSheet), findsNothing);
+    handle.dispose();
+  });
+
+  // As Downloads opens it (web_link_download_flow, youtube_direct_flow).
+  Future<void> pumpQuality(WidgetTester tester) => _pumpOpener(
+        tester,
+        (_) => FormatSelectionSheet(
+          metadata: const ExtractorMetadata(id: 'x', title: 'T', uploader: 'U', durationSec: 60, thumbnailUrl: '', formats: []),
+          onSelect: (_) {},
+        ),
+        showDragHandle: false,
+      );
+
+  testWidgets('Choose quality from Downloads: a plain tap on the handle closes it', (tester) async {
+    await pumpQuality(tester);
+    expect(find.byType(FormatSelectionSheet), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('format_sheet_handle')));
+    await tester.pumpAndSettle();
+    expect(find.byType(FormatSelectionSheet), findsNothing);
+  });
+
+  testWidgets('Choose quality from Downloads: one Dismiss handle, and it closes the sheet', (tester) async {
+    final handle = tester.ensureSemantics();
+    await pumpQuality(tester);
     await _activateDismiss(tester);
     expect(find.byType(FormatSelectionSheet), findsNothing);
     handle.dispose();

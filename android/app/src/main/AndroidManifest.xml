@@ -34,13 +34,17 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- No taskAffinity="" (the Flutter template's): with it every tap on the
+             media notification (NEW_TASK) opened another MainActivity in a new
+             task, each taking over the one cached engine, while the old one
+             stayed alive behind it. The package's own affinity brings the
+             existing task back instead (singleTop: onNewIntent). -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
-            android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -52,6 +56,18 @@
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
+              />
+            <!-- Skia, not Impeller. On Adreno phones whose Vulkan driver Flutter
+                 deny-lists (Galaxy M52, driver 2021) Impeller falls back to its
+                 OpenGL ES backend, and that one lost its EGL context
+                 (EGL_BAD_ACCESS on every frame: a frozen picture over a live
+                 UI) and then aborted in blit_pass_gles.cc when the cached
+                 engine moved to a new Activity after a long background
+                 listen. The opt-out is deprecated but still built into Flutter
+                 3.47's engine (GPUSurfaceGLSkia). -->
+            <meta-data
+              android:name="io.flutter.embedding.android.EnableImpeller"
+              android:value="false"
               />
             <!-- No deep links: other apps cannot push routes into MediaHub. -->
             <meta-data

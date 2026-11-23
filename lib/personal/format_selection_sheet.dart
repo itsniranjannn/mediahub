@@ -104,7 +104,20 @@ class FormatSelectionSheet extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _GrabHandle(),
+        // Our own handle: a tap closes the sheet, and a screen reader reads
+        // it as the "Dismiss" button the route's handle would be.
+        Semantics(
+          button: true,
+          label: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+          onTap: () => Navigator.of(context).maybePop(),
+          excludeSemantics: true,
+          child: GestureDetector(
+            key: const ValueKey('format_sheet_handle'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => Navigator.of(context).maybePop(),
+            child: const _GrabHandle(),
+          ),
+        ),
         Flexible(child: content),
       ],
     );

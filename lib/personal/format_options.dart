@@ -150,14 +150,29 @@ class FormatOptions {
   /// "webm" sound is Opus; other kinds by their extension (M4A, MP3 ...).
   static String _audioName(String ext) => ext == 'webm' ? 'Opus' : ext.toUpperCase();
 
-  static ExtractorFormat? _bestVideoAt(List<ExtractorFormat> formats, int height) {
+  static bool _isH264(ExtractorFormat f) {
+    final c = f.vcodec.toLowerCase();
+    return c.startsWith('avc') || c.startsWith('h264');
+  }
+
+    static ExtractorFormat? _bestVideoAt(List<ExtractorFormat> formats, int height) {
     final candidates = formats.where((f) => f.hasVideo && f.height == height).toList();
     if (candidates.isEmpty) return null;
-    // Prefer video-only streams (they get merged with the best audio) with the highest bitrate.
+    // The stream the download really takes (formatSortFor: height, then
+    // H.264, then the default order: more fps, then bitrate), video-only
+    // first (it is merged with the best audio). Picking the highest bitrate
+    // alone sized VP9 / AV1 or a 60 fps stream the download never uses, so
+    // the same video's 720p read about 99 MB one time and 210 MB another
+    // depending on which streams the lookup listed.
     candidates.sort((a, b) {
       final ao = a.hasAudio ? 0 : 1;
       final bo = b.hasAudio ? 0 : 1;
       if (ao != bo) return bo.compareTo(ao);
+      final ah = _isH264(a) ? 1 : 0;
+      final bh = _isH264(b) ? 1 : 0;
+      if (ah != bh) return bh.compareTo(ah);
+      final f = b.fps.compareTo(a.fps);
+      if (f != 0) return f;
       return b.tbr.compareTo(a.tbr);
     });
     return candidates.first;

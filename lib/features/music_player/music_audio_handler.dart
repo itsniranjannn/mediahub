@@ -143,6 +143,13 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// quick-settings player after the app was closed).
   final Future<domain.PlaybackState?> Function()? loadLastSession;
 
+  /// Whether the phone's media controls last belonged to an external source
+  /// (the Online tab), saved across process restarts: read once at start.
+  final bool Function()? loadExternalHeld;
+
+  /// Saves [externalHeld] whenever it changes.
+  final void Function(bool held)? saveExternalHeld;
+
   /// Paused this long, the session ends: the foreground service, its wake
   /// lock and the notification go (docs: ONL-8). Shared with the Online tab.
   static const Duration defaultPausedIdleTimeout = Duration(minutes: 30);
@@ -553,6 +560,35 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// Emits on every external change, and null when the handler is back to local music.
   Stream<ExternalMediaSnapshot?> get externalMediaStream => _externalController.stream;
 
+  /// The last source the user played was an external one (YouTube in the
+  /// Online tab) and it went away by itself: paused past its release, its
+  /// page frozen or gone, or the whole process restarted in the background.
+  /// While true the phone's controls (notification play, a headset click,
+  /// media resumption) never start local music on their own; only a local
+  /// start made in the app clears it. A play from the controls goes to that
+  /// source again if it is still there.
+  bool _externalHeld = false;
+
+  /// Where main.dart saves [externalHeld].
+  static const String externalHeldPrefKey = 'media_controls_external_held';
+  ExternalPlaybackDelegate? _lastExternal;
+
+  bool get externalHeld => _externalHeld;
+
+  void _setExternalHeld(bool held) {
+    if (!held) _lastExternal = null;
+    if (_externalHeld == held) return;
+    _externalHeld = held;
+    try {
+      saveExternalHeld?.call(held);
+    } catch (e) {
+      debugPrint('[MusicAudioHandler] saving the media source failed: $e');
+    }
+  }
+
+  /// A local start the user made in the app: local music owns the controls again.
+  void _localChosen() => _setExternalHeld(false);
+
   // --- favourite (the notification's heart) ----------------------------------
   StreamSubscription<bool>? _favoriteSub;
   String? _favoriteFor;
@@ -589,6 +625,8 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     this.onToggleFavorite,
     this.watchFavorite,
     this.loadLastSession,
+    this.loadExternalHeld,
+    this.saveExternalHeld,
     Duration? mediaButtonMultiClickWindow,
     Duration? pausedIdleTimeout,
     Duration? sleepFade,
@@ -619,6 +657,11 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       }
     });
     DiagnosticsService.instance.logEvent('service_start');
+    try {
+      _externalHeld = loadExternalHeld?.call() ?? false;
+    } catch (_) {
+      _externalHeld = false;
+    }
     _init();
   }
 
@@ -1490,7 +1533,10 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     // none of them seeks the old source first.
     _skipGeneration++;
     // Starting local music hands the session back from YouTube (which pauses).
-    if (autoPlay && items.isNotEmpty) _releaseExternal(reason: 'local_queue');
+    if (autoPlay && items.isNotEmpty) {
+      _localChosen();
+      _releaseExternal(reason: 'local_queue');
+    }
     _pendingLoads++;
     // A skip or seek waiting on a slow load stands down now (it meant the old
     // queue), so the new one starts at once.
@@ -1593,6 +1639,8 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     // another app.
     _endOtherAppWait('taken_over');
     _external = delegate;
+    _lastExternal = delegate;
+    _setExternalHeld(true);
     if (previous == null) {
       DiagnosticsService.instance.logEvent('external_source_start');
       // Local music pauses (it stays queued and resumes from its own controls).
@@ -1903,6 +1951,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   /// In-app "play" for the local queue (Music, Now Playing, local mini player).
   Future<void> playLocal() {
+    _localChosen();
     _releaseExternal(reason: 'local_play');
     return _playLocalImpl(caller: 'in_app');
   }
@@ -1926,12 +1975,14 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   /// In-app "next" for the local queue (starts local playback).
   Future<void> skipToNextLocal() {
+    _localChosen();
     _releaseExternal(reason: 'local_next');
     return _requestNext();
   }
 
   /// In-app "previous" for the local queue (starts local playback).
   Future<void> skipToPreviousLocal() {
+    _localChosen();
     _releaseExternal(reason: 'local_previous');
     return _requestPrevious();
   }
@@ -1981,6 +2032,14 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       _clearInterruptionResume();
       return ext.externalPlay();
     }
+    if (_externalHeld) {
+      // The controls belong to YouTube, which went quiet: ask it to play
+      // again (if its page is still there), never start local music instead.
+      DiagnosticsService.instance.logEvent('play', {'caller': caller ?? 'system', 'target': 'external_held'});
+      final last = _lastExternal;
+      if (last != null) _safeDelegateCall(last.externalPlay);
+      return;
+    }
     // Media resumption: the system's player after the app was closed.
     if (_playOrderQueue.isEmpty) await _ensureRestored();
     return _playLocalImpl(caller: caller);
@@ -2008,6 +2067,8 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   @override
   Future<List<MediaItem>> getChildren(String parentMediaId, [Map<String, dynamic>? options]) async {
     if (parentMediaId != AudioService.recentRootId) return const [];
+    // The last thing played was YouTube: no local song to offer.
+    if (_externalHeld) return const [];
     domain.MediaItem? item = _virtualCurrentItem;
     if (item == null && loadLastSession != null) {
       try {
@@ -2309,6 +2370,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   Future<void> skipToNext() {
     final ext = _external;
     if (ext != null) return ext.externalSkipToNext();
+    if (_externalHeld) return _heldSkip(next: true);
     return _requestNext();
   }
 
@@ -2316,7 +2378,17 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   Future<void> skipToPrevious() {
     final ext = _external;
     if (ext != null) return ext.externalSkipToPrevious();
+    if (_externalHeld) return _heldSkip(next: false);
     return _requestPrevious();
+  }
+
+  /// Next / previous from the phone's controls while they still belong to a
+  /// source that went quiet: that source's, never a local track change.
+  Future<void> _heldSkip({required bool next}) async {
+    DiagnosticsService.instance.logEvent(next ? 'skip_next' : 'skip_previous', {'target': 'external_held'});
+    final last = _lastExternal;
+    if (last == null) return;
+    _safeDelegateCall(next ? last.externalSkipToNext : last.externalSkipToPrevious);
   }
 
   /// A track picked from the queue (the app's queue sheet, or a car / watch
@@ -2327,6 +2399,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   @override
   Future<void> skipToQueueItem(int index, {String? expectedId}) {
     _userInteractedSinceNoisy = true;
+    _localChosen(); // a song picked from the queue is a local choice
     if (_pendingLoads > 0) return _afterPendingLoad(() => skipToQueueItem(index, expectedId: expectedId));
     final q = _virtualQueue;
     var target = index;

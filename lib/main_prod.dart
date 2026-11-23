@@ -82,6 +82,10 @@ Future<void> _bootstrap() async {
       if (saved == null) return null;
       return PlaybackNotifier.alignIndexWithCurrentItem(PlaybackNotifier.withoutOnlineItems(saved));
     },
+    // YouTube in the Online tab was the last source: after a restart in the
+    // background the phone's controls must not start downloaded songs.
+    loadExternalHeld: () => SettingsStore.instance.getBool(MusicAudioHandler.externalHeldPrefKey),
+    saveExternalHeld: (held) => SettingsStore.instance.setBool(MusicAudioHandler.externalHeldPrefKey, held),
     // Music another app paused plays again when that app stops (Android,
     // Settings → Resume after other apps).
     otherAudio: PlatformInfo.isAndroid ? MethodChannelOtherAudioWatcher() : null,

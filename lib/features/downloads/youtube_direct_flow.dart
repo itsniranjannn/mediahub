@@ -85,6 +85,9 @@ class YoutubeDirectDownloadFlow {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      // The sheet draws its own handle, which a tap also closes (the
+      // route's handle only answers a screen reader's activation).
+      showDragHandle: false,
       builder: (_) => FormatSelectionSheet(
         metadata: sheetMetadata(result),
         choices: [for (final c in result.choices) formatChoiceFor(c)],

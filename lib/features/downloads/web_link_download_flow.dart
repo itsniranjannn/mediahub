@@ -309,6 +309,9 @@ class WebLinkDownloadFlow {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      // The sheet draws its own handle, which a tap also closes (the
+      // route's handle only answers a screen reader's activation).
+      showDragHandle: false,
       builder: (_) => FormatSelectionSheet(
         metadata: info,
         onSelect: (choice) => _queue(context, ref, uri, info, choice, onQueued, onNotificationDenied),

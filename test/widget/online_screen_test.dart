@@ -401,6 +401,27 @@ void main() {
     expect(h.web.controller.calls.where((c) => c.startsWith('load ')), isEmpty);
   });
 
+  testWidgets('back on screen after a PiP whose "left" call never came: toolbar and page layout return',
+      (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    await DeviceControls.setPipEligible(true, owner: DeviceControls.pipOwnerOnline);
+    DeviceControls.handlePipChanged(true);
+    await tester.pump();
+    expect(key('online_address'), findsNothing);
+    h.web.controller.scripts.clear();
+
+    // The floating window was closed in the background and the Activity
+    // came back without onPictureInPictureModeChanged(false) reaching Dart.
+    DeviceControls.handleAppResumed();
+    await tester.pump();
+    expect(DeviceControls.inPip.value, isFalse);
+    expect(key('online_address'), findsOneWidget);
+    expect(key('online_dock_seam'), findsOneWidget);
+    expect(h.web.controller.scripts.last, contains('"setPipLayout",false'));
+  });
+
   testWidgets('PiP owned by the video player leaves the page layout alone', (tester) async {
     final h = await _pumpOnline(tester);
     h.web.navigate(watchUrl);

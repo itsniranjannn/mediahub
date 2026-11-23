@@ -373,4 +373,59 @@ void main() {
     expect(seen[2], isNull);
     await sub.cancel();
   });
+
+  group('YouTube went quiet (released, page frozen, or the process restarted)', () {
+    test('notification play goes back to YouTube, never to local music', () async {
+      await handler.loadQueue([_song('1'), _song('2')], autoPlay: false);
+      handler.setExternalSource(yt, _yt());
+      handler.updateExternalMedia(yt, _yt(playing: false));
+      handler.clearExternalSource(yt); // the 30-minute paused release
+      yt.calls.clear();
+      await handler.play();
+      expect(yt.calls, ['play']);
+      verifyNever(() => player.play());
+    });
+
+    test('headset / notification next and double clicks never change the local track', () async {
+      final h = MusicAudioHandler(player: player, mediaButtonMultiClickWindow: Duration.zero);
+      await h.loadQueue([_song('1'), _song('2')], autoPlay: false);
+      h.setExternalSource(yt, _yt());
+      h.clearExternalSource(yt);
+      await h.skipToNext();
+      await h.click();
+      await h.skipToPrevious();
+      expect(index, 0);
+      verifyNever(() => player.play());
+      verifyNever(() => player.seekToNext());
+      await h.dispose();
+    });
+
+    test('after a restart: the saved flag keeps play and media resumption off local music', () async {
+      var saved = true;
+      final h = MusicAudioHandler(
+        player: player,
+        loadExternalHeld: () => saved,
+        saveExternalHeld: (v) => saved = v,
+      );
+      await h.loadQueue([_song('1'), _song('2')], autoPlay: false);
+      await h.play(); // the notification / a Bluetooth play after the restart
+      verifyNever(() => player.play());
+      expect(await h.getChildren(AudioService.recentRootId), isEmpty);
+      // A song started in the app gives the controls back to local music.
+      await h.playLocal();
+      expect(saved, isFalse);
+      verify(() => player.play()).called(1);
+      await h.dispose();
+    });
+
+    test('YouTube taking the session saves the flag; local play in the app clears it', () async {
+      final writes = <bool>[];
+      final h = MusicAudioHandler(player: player, saveExternalHeld: writes.add);
+      await h.loadQueue([_song('1')], autoPlay: false);
+      h.setExternalSource(yt, _yt());
+      await h.playLocal();
+      expect(writes, [true, false]);
+      await h.dispose();
+    });
+  });
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import '../platform_info.dart';
 
 /// A button in the video player's picture-in-picture window (Android).
@@ -56,6 +57,19 @@ class DeviceControls {
     if (_handlerSet || !available) return;
     _handlerSet = true;
     _channel.setMethodCallHandler(handlePlatformCall);
+    _lifecycle ??= AppLifecycleListener(onResume: handleAppResumed);
+  }
+
+  static AppLifecycleListener? _lifecycle;
+
+  /// The app is back on screen. Android pauses an Activity in
+  /// picture-in-picture, so a resumed app is never in it: a PiP layout still
+  /// showing (the "left picture-in-picture" call lost, the Activity
+  /// re-created while the floating window was closed in the background)
+  /// ends here, and the toolbar and the Ink Dock come back.
+  @visibleForTesting
+  static void handleAppResumed() {
+    if (inPip.value) handlePipChanged(false);
   }
 
   /// Applies one event from the platform. Public for tests.
