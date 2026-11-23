@@ -9,6 +9,7 @@ import 'package:mediahub/app/theme/app_spacing.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/widgets/artwork_thumbnail.dart';
 import 'package:mediahub/domain/models/media_item.dart';
+import 'package:mediahub/features/downloads/download_quality.dart';
 import 'package:mediahub/features/library/media_song_row.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
@@ -59,6 +60,7 @@ Future<void> _pumpRows(
       overrides: [
         currentMediaItemProvider.overrideWith((ref) => playing),
         isFavoriteProvider.overrideWith((ref, id) => Stream.value(favorites.contains(id))),
+        downloadQualityProvider.overrideWith((ref, id) async => null),
       ],
       child: MaterialApp(
         theme: theme ?? AppTheme.darkTheme,

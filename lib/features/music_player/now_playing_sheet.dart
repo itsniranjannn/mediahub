@@ -47,6 +47,10 @@ const double _kGrabberStripHeight = AppSpacing.lg16;
 /// artwork shrinking any further (landscape phones, split screen).
 const double _kCompactBodyHeight = 480;
 
+/// Wider than tall and at least this wide (dp): the two-column landscape
+/// layout.
+const double _kTwoColumnMinWidth = 560;
+
 /// Vertical rhythm of the player body. The favourite snackbar is placed from
 /// the same numbers, so keep them here.
 const double _kBodyTopPadding = AppSpacing.sm8;
@@ -779,6 +783,64 @@ class _NowPlayingBody extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        // A phone on its side: the cover on the left, the title, seek bar,
+        // controls and footer on the right, so the controls are in view
+        // without scrolling.
+        if (constraints.maxWidth > constraints.maxHeight && constraints.maxWidth >= _kTwoColumnMinWidth) {
+          const vertical = _kBodyTopPadding + _kBodyBottomPadding;
+          final artSize = math.max(
+            0.0,
+            math.min(_kArtworkMaxSize, math.min(constraints.maxHeight - vertical, constraints.maxWidth * 0.4)),
+          );
+          return _FlingDownToClose(
+            onClose: onClose,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg16,
+                _kBodyTopPadding,
+                AppSpacing.lg16,
+                _kBodyBottomPadding,
+              ),
+              child: Row(
+                key: const ValueKey('now_playing_two_columns'),
+                children: [
+                  Center(child: cover(artSize)),
+                  const SizedBox(width: AppSpacing.xxl24),
+                  Expanded(
+                    child: LayoutBuilder(
+                      // Scrolls only at very large text, where nothing else
+                      // would fit.
+                      builder: (context, box) => SingleChildScrollView(
+                        physics: const ClampingScrollPhysics(parent: RangeMaintainingScrollPhysics()),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(minHeight: box.maxHeight),
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 480),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  info(_kScrollingSnackMargin),
+                                  const SizedBox(height: _kSectionGap),
+                                  seekBar,
+                                  const SizedBox(height: _kSectionGap),
+                                  controls,
+                                  const SizedBox(height: _kFooterGap),
+                                  footer,
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
         if (_bodyScrolls(context, constraints.maxHeight)) {
           final artSize = math.min(
             220.0,

@@ -207,14 +207,21 @@ class StorageInfo {
   const StorageInfo({required this.usedBytes, required this.freeBytes});
 }
 
-final storageInfoProvider = FutureProvider.autoDispose<StorageInfo>((ref) async {
+/// Bytes kept by the saved (finished) downloads, live: a download that
+/// finishes or is deleted changes it at once. The header's "MB used" used to
+/// be read once, so it kept the old total while the tab stayed alive.
+final downloadsUsedBytesProvider = StreamProvider.autoDispose<int>((ref) {
   final db = ref.watch(appDatabaseProvider);
-  final downloads = await db.select(db.downloadsTable).get();
+  final t = db.downloadsTable;
+  final sum = t.receivedBytes.sum();
+  final query = db.selectOnly(t)
+    ..addColumns([sum])
+    ..where(t.state.equals(DownloadTaskState.completed.name));
+  return query.map((row) => row.read(sum) ?? 0).watchSingle().distinct();
+});
 
-  int used = 0;
-  for (final d in downloads) {
-    used += d.receivedBytes;
-  }
+final storageInfoProvider = FutureProvider.autoDispose<StorageInfo>((ref) async {
+  final used = await ref.watch(downloadsUsedBytesProvider.future);
 
   // Nothing on iOS answers the free-space call: show no figure rather than
   // the made-up 10 GB below.

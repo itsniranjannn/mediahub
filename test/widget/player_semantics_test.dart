@@ -14,6 +14,7 @@ import 'package:mediahub/core/services/artwork_service.dart';
 import 'package:mediahub/core/utils/formatters.dart';
 import 'package:mediahub/domain/models/media_item.dart';
 import 'package:mediahub/domain/models/playback_state.dart' as domain;
+import 'package:mediahub/features/downloads/download_quality.dart';
 import 'package:mediahub/features/library/media_song_row.dart';
 import 'package:mediahub/features/music_player/mini_player.dart';
 import 'package:mediahub/features/music_player/now_playing_sheet.dart';
@@ -126,6 +127,7 @@ void main() {
           overrides: [
             currentMediaItemProvider.overrideWith((ref) => playing),
             isFavoriteProvider.overrideWith((ref, id) => Stream.value(false)),
+            downloadQualityProvider.overrideWith((ref, id) async => null),
           ],
           child: MaterialApp(
             theme: AppTheme.darkTheme,
@@ -277,6 +279,7 @@ void main() {
           overrides: [
             currentMediaItemProvider.overrideWith((ref) => null),
             isFavoriteProvider.overrideWith((ref, id) => Stream.value(false)),
+            downloadQualityProvider.overrideWith((ref, id) async => null),
           ],
           child: MaterialApp(
             theme: AppTheme.darkTheme,
@@ -327,6 +330,7 @@ void main() {
             isPlayingProvider.overrideWith((ref) => true),
             throttledPositionStreamProvider.overrideWith((ref) => Stream.value(const Duration(seconds: 63))),
             isFavoriteProvider.overrideWith((ref, id) => Stream.value(false)),
+            downloadQualityProvider.overrideWith((ref, id) async => null),
           ],
           child: MaterialApp(
             theme: AppTheme.darkTheme,
@@ -400,6 +404,7 @@ void main() {
             playbackNotifierProvider.overrideWith(() => _FakePlayback(_playing(queue))),
             throttledPositionStreamProvider.overrideWith((ref) => Stream.value(const Duration(seconds: 106))),
             isFavoriteProvider.overrideWith((ref, id) => Stream.value(false)),
+            downloadQualityProvider.overrideWith((ref, id) async => null),
           ],
           child: MaterialApp(theme: AppTheme.darkTheme, home: const NowPlayingSheet()),
         ),

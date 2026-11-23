@@ -11,6 +11,7 @@ import '../../core/widgets/artwork_thumbnail.dart';
 import '../../domain/models/media_item.dart';
 import '../../shared/widgets/favorite_feedback_button.dart';
 import '../../domain/models/playlist_and_groups.dart' show ArtistGroup, isUnknownArtistName;
+import '../downloads/download_quality.dart';
 import '../library/media_context_menu.dart';
 import '../music_player/playback_notifier.dart';
 import 'playable.dart';
@@ -102,6 +103,10 @@ class MediaSongRow extends ConsumerWidget {
     final isSelected = ref.watch(currentMediaItemProvider.select((current) => current?.id == item.id));
     final isMissing = item.availability == MediaAvailability.missing;
     final artist = artistOf(item);
+    // A download that knows its sound quality shows it after the length.
+    final quality = item.source == 'download'
+        ? ref.watch(downloadQualityProvider(item.id)).asData?.value?.short
+        : null;
 
     final titleColor = isMissing
         ? palette.textMuted
@@ -225,11 +230,13 @@ class MediaSongRow extends ConsumerWidget {
                                 Row(
                                   children: [
                                     const _FavoriteMark(),
-                                    Expanded(child: _MetaLine(item: item, artist: artist, isMissing: isMissing)),
+                                    Expanded(
+                                      child: _MetaLine(item: item, artist: artist, isMissing: isMissing, quality: quality),
+                                    ),
                                   ],
                                 )
                               else
-                                _MetaLine(item: item, artist: artist, isMissing: isMissing),
+                                _MetaLine(item: item, artist: artist, isMissing: isMissing, quality: quality),
                             ],
                           ),
                         ),
@@ -425,7 +432,10 @@ class _MetaLine extends StatelessWidget {
   final String artist;
   final bool isMissing;
 
-  const _MetaLine({required this.item, required this.artist, required this.isMissing});
+  /// "320 kbps": the download's sound quality, after the length.
+  final String? quality;
+
+  const _MetaLine({required this.item, required this.artist, required this.isMissing, this.quality});
 
   /// Room the artist keeps (at 1.0x text, scaled with the user's text size;
   /// about ten characters) before the word "Downloaded" gives way to its
@@ -481,7 +491,8 @@ class _MetaLine extends StatelessWidget {
             : artistText;
 
     final duration = MediaSongRow._trackDuration(item.durationMs);
-    if (duration == null) return lead;
+    final quality = this.quality;
+    if (duration == null && quality == null) return lead;
 
     // What the lead needs even when the artist is squeezed to nothing: the
     // download icon and its gap.
@@ -513,11 +524,17 @@ class _MetaLine extends StatelessWidget {
               child: Text.rich(
                 TextSpan(
                   children: [
-                    TextSpan(text: _separator, style: style.copyWith(color: palette.textMuted)),
-                    TextSpan(text: duration, style: clockStyle),
+                    if (duration != null) ...[
+                      TextSpan(text: _separator, style: style.copyWith(color: palette.textMuted)),
+                      TextSpan(text: duration, style: clockStyle),
+                    ],
+                    if (quality != null) ...[
+                      TextSpan(text: _separator, style: style.copyWith(color: palette.textMuted)),
+                      TextSpan(text: quality, style: clockStyle),
+                    ],
                   ],
                 ),
-                semanticsLabel: duration,
+                semanticsLabel: [?duration, ?quality].join(', '),
                 style: style,
                 maxLines: 1,
                 softWrap: false,

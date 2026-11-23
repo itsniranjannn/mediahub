@@ -173,6 +173,27 @@ void main() {
     });
   });
 
+  group('landscape', () {
+    for (final (size, scale) in [(const Size(800, 360), 1.0), (const Size(740, 360), 1.0), (const Size(915, 412), 1.3)]) {
+      testWidgets('${size.width.toInt()}x${size.height.toInt()} at ${scale}x: cover left, controls in view without scrolling',
+          (tester) async {
+        final queue = [_song(1), _song(2)];
+        await pumpSheet(tester, state: _at(queue, 0), size: size, textScale: scale);
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('now_playing_two_columns')), findsOneWidget);
+        final cover = tester.getRect(find.byKey(const ValueKey('now_playing_cover_swipe')));
+        for (final tip in ['Previous track', 'Play', 'Next track', 'View Queue']) {
+          final r = tester.getRect(find.byTooltip(tip));
+          expect(r.bottom, lessThanOrEqualTo(size.height), reason: '$tip below the fold');
+          expect(r.left, greaterThan(cover.right), reason: '$tip right of the cover');
+        }
+        expect(tester.getRect(find.byType(Slider)).bottom, lessThanOrEqualTo(size.height));
+        expect(find.text('Song 1').hitTestable(), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
+
   group('F10 swipe the cover to skip', () {
     final queue = [_song(1), _song(2), _song(3)];
     final cover = find.byKey(const ValueKey('now_playing_cover_swipe'));

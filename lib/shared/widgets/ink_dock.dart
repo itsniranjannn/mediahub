@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/ink_theme.dart';
+import '../../core/platform/device_controls.dart';
 
 /// The Ink Dock (docs/DESIGN.md 7.7): the container for the mini player and
 /// the bottom navigation. It is ink in both themes, so the place the family
@@ -52,7 +53,11 @@ class InkDock extends StatelessWidget {
 
   /// True on a short landscape screen (a phone turned sideways), where the
   /// dock goes [inline] and the navigation turns compact.
+  /// Never in picture-in-picture: the small window is landscape and short,
+  /// but the app's layout must stay as it was (the Online WebView lives in
+  /// it).
   static bool isCompactLandscape(BuildContext context) {
+    if (DeviceControls.inPip.value) return false;
     final size = MediaQuery.sizeOf(context);
     return size.width > size.height && size.height < compactLandscapeMaxHeight;
   }

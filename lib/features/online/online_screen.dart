@@ -145,6 +145,10 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
   int _lastScrollY = 0;
   bool _fullscreen = false;
   bool _pipLayout = false;
+
+  /// Keeps the WebView's element (and the page in it) when the layout
+  /// around it changes: picture-in-picture, fullscreen, rotation.
+  final GlobalKey _webSubtreeKey = GlobalKey(debugLabel: 'online_web');
   bool _lastPipWasOurs = false;
   bool _visible = true;
   bool _fullscreenChromeApplied = false;
@@ -635,6 +639,13 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
     );
     final q = query?.trim() ?? '';
     if (q.isEmpty || !mounted) return;
+    // A YouTube link typed or pasted in opens that page; other links and
+    // words are searched as before.
+    final page = youTubePageFromTyped(q);
+    if (page != null) {
+      await _controller?.loadUrl(page);
+      return;
+    }
     final inPage = await _session.send(BridgeCommand.search(q));
     if (inPage || !mounted) return;
     await _controller?.loadUrl(youTubeSearchUri(q));
@@ -793,8 +804,15 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
                     // Under the page's last few pixels: the dock's ink. The
                     // WebView is sized to whole device pixels, so a sliver
                     // of the light canvas used to show above the dock.
+                    //
+                    // Every child here is keyed: the seam comes and goes
+                    // with the chrome (picture-in-picture, fullscreen), and
+                    // an unkeyed list would hand the WebView's slot to the
+                    // seam and build a fresh WebView (black PiP window, the
+                    // watch page lost).
                     if (showChrome)
                       Positioned(
+                        key: const ValueKey('online_dock_seam_slot'),
                         left: 0,
                         right: 0,
                         bottom: 0,
@@ -806,9 +824,13 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
                       ),
                     // Clipped to its own box: the page ends above the dock
                     // and never paints into the dock's corner area.
-                    Positioned.fill(child: ClipRect(child: web)),
+                    Positioned.fill(
+                      key: const ValueKey('online_web_slot'),
+                      child: KeyedSubtree(key: _webSubtreeKey, child: ClipRect(child: web)),
+                    ),
                     if (_error != null)
                       Positioned.fill(
+                        key: const ValueKey('online_error_slot'),
                         child: ColoredBox(
                           color: p.background,
                           child: EmptyHint(

@@ -302,6 +302,20 @@ OnlineNavigationDecision decideOnlineNewWindow(Uri? uri, {required bool userTapp
 
 /// The YouTube search results page for [query] (our own search sheet's fallback
 /// when the page's search box cannot be focused).
+/// What the user typed into the address/search bar, as a YouTube page to
+/// open, when it is one: `https://youtu.be/<id>`, `m.youtube.com/watch?v=...`
+/// (the scheme may be left out). Only the [isYouTubePage] allowlist counts;
+/// anything else (other sites, plain words) gives null and is searched.
+Uri? youTubePageFromTyped(String typed) {
+  final t = typed.trim();
+  if (t.isEmpty || t.contains(RegExp(r'\s'))) return null;
+  final hasScheme = RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(t);
+  final uri = Uri.tryParse(hasScheme ? t : 'https://$t');
+  if (uri == null || uri.host.isEmpty) return null;
+  if (!isYouTubePage(uri)) return null;
+  return uri.scheme.toLowerCase() == 'http' ? uri.replace(scheme: 'https') : uri;
+}
+
 Uri youTubeSearchUri(String query) =>
     Uri.https('m.youtube.com', '/results', {'search_query': query.trim()});
 

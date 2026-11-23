@@ -359,6 +359,48 @@ void main() {
     expect(h.web.controller.scripts.last, contains('"setPipLayout",false'));
   });
 
+  testWidgets('PiP, a small landscape window, and rotation keep the same WebView (the page survives)',
+      (tester) async {
+    addTearDown(tester.view.reset);
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    final surface = find.byWidgetPredicate((w) => w.runtimeType.toString() == '_FakeWebSurface');
+    final state = tester.state(surface);
+    expect(h.web.mounts, 1);
+
+    Future<void> check(String step) async {
+      await tester.pump();
+      expect(tester.state(surface), same(state), reason: step);
+      expect(h.web.mounts, 1, reason: step);
+    }
+
+    await DeviceControls.setPipEligible(true, owner: DeviceControls.pipOwnerOnline);
+    // The PiP window: landscape and far shorter than 500 dp.
+    tester.view.devicePixelRatio = 2;
+    tester.view.physicalSize = const Size(480, 270);
+    DeviceControls.handlePipChanged(true);
+    await check('enter PiP');
+    expect(key('online_dock_seam'), findsNothing);
+    DeviceControls.handlePipChanged(false);
+    tester.view.physicalSize = const Size(720, 1480);
+    await check('leave PiP');
+    expect(key('online_dock_seam'), findsOneWidget);
+    // Rotation into compact landscape and back.
+    tester.view.physicalSize = const Size(1480, 720);
+    await check('landscape');
+    tester.view.physicalSize = const Size(720, 1480);
+    await check('portrait');
+    // PiP started from landscape, and back.
+    tester.view.physicalSize = const Size(480, 270);
+    DeviceControls.handlePipChanged(true);
+    await check('PiP from landscape');
+    DeviceControls.handlePipChanged(false);
+    tester.view.physicalSize = const Size(1480, 720);
+    await check('back');
+    expect(h.web.controller.calls.where((c) => c.startsWith('load ')), isEmpty);
+  });
+
   testWidgets('PiP owned by the video player leaves the page layout alone', (tester) async {
     final h = await _pumpOnline(tester);
     h.web.navigate(watchUrl);
@@ -405,6 +447,28 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pumpAndSettle();
     expect(h.web.controller.calls.last, 'load https://m.youtube.com/results?search_query=lofi+beats');
+  });
+
+  testWidgets('address pill: a typed YouTube link opens it; another site is searched as words', (tester) async {
+    final h = await _pumpOnline(tester);
+    h.web.navigate('https://m.youtube.com/');
+    await tester.pumpAndSettle();
+    h.web.controller.scripts.clear();
+    await tester.tap(key('online_address'));
+    await tester.pumpAndSettle();
+    await tester.enterText(key('online_search_field'), 'youtu.be/dQw4w9WgXcQ');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(h.web.controller.calls.last, 'load https://youtu.be/dQw4w9WgXcQ');
+    expect(h.web.controller.scripts.where((s) => s.contains('"search"')), isEmpty);
+
+    h.web.controller.scriptResult = false;
+    await tester.tap(key('online_address'));
+    await tester.pumpAndSettle();
+    await tester.enterText(key('online_search_field'), 'https://example.com/x');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(h.web.controller.calls.last, startsWith('load https://m.youtube.com/results?search_query=https'));
   });
 
   testWidgets('menu: switches and Clear site data with a confirm', (tester) async {

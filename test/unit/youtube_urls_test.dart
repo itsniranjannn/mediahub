@@ -301,4 +301,18 @@ void main() {
     expect(youTubeThumbnailFor('../../etc'), isNull);
     expect(youTubeThumbnailFor(null), isNull);
   });
+
+  test('a YouTube link typed in the address bar opens; anything else is searched', () {
+    expect(youTubePageFromTyped('https://youtu.be/dQw4w9WgXcQ').toString(), 'https://youtu.be/dQw4w9WgXcQ');
+    expect(youTubePageFromTyped('  m.youtube.com/watch?v=dQw4w9WgXcQ ').toString(), 'https://m.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(youTubePageFromTyped('http://www.youtube.com/shorts/dQw4w9WgXcQ').toString(), 'https://www.youtube.com/shorts/dQw4w9WgXcQ');
+    expect(youTubePageFromTyped('https://music.youtube.com/'), isNotNull);
+    expect(youTubePageFromTyped('lofi beats'), isNull);
+    expect(youTubePageFromTyped('youtube'), isNull);
+    expect(youTubePageFromTyped('https://example.com/watch?v=dQw4w9WgXcQ'), isNull);
+    expect(youTubePageFromTyped('https://youtube.com.evil.example/'), isNull);
+    expect(youTubePageFromTyped('https://youtube.com@evil.example/'), isNull);
+    expect(youTubePageFromTyped('javascript:alert(1)'), isNull);
+    expect(youTubePageFromTyped('https://youtube.com:8080/'), isNull);
+  });
 }

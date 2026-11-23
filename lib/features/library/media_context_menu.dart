@@ -22,6 +22,7 @@ import '../../domain/repositories/library_repository.dart';
 import '../../shared/widgets/favorite_feedback_button.dart' show isFavoriteProvider;
 import '../downloads/download_link_inbox.dart';
 import '../downloads/download_providers.dart';
+import '../downloads/download_quality.dart';
 import '../music_player/playback_notifier.dart';
 import '../online/youtube_urls.dart';
 import '../playlists/playlist_cover.dart';
@@ -327,7 +328,8 @@ class MediaContextMenu {
 
   /// The "Details" rows for [item]: (label, value, whether it is a figure).
   @visibleForTesting
-  static List<(String, String, bool)> detailRows(MediaItem item) => _MediaDetails.rowsFor(item);
+  static List<(String, String, bool)> detailRows(MediaItem item, {DownloadAudioQuality? quality}) =>
+      _MediaDetails.rowsFor(item, quality: quality);
 
   /// The MIME type to share [item] with.
   @visibleForTesting
@@ -589,7 +591,11 @@ class _MediaMenu {
       case MediaAction.share:
         await _share();
       case MediaAction.details:
-        if (context.mounted) await _MediaDetails.show(_appContext, item);
+        // A download knows the quality it was saved at ("MP3 · 320 kbps").
+        final quality = item.source == 'download'
+            ? await downloadQualityFor(container.read(appDatabaseProvider), item.id)
+            : null;
+        if (context.mounted) await _MediaDetails.show(_appContext, item, quality: quality);
       case MediaAction.delete:
         await _delete();
     }
@@ -1236,7 +1242,7 @@ class _MediaDetails {
   static String _date(DateTime d) => '${d.day} ${_months[d.month - 1]} ${d.year}';
 
   /// (label, value, is a figure) rows for [item].
-  static List<(String, String, bool)> rowsFor(MediaItem item) {
+  static List<(String, String, bool)> rowsFor(MediaItem item, {DownloadAudioQuality? quality}) {
     final isVideo = item.mediaType == MediaType.video && !item.isOnline;
     final width = item.width;
     final height = item.height;
@@ -1260,6 +1266,7 @@ class _MediaDetails {
       if (item.durationMs > 0) ('Length', formatClock(Duration(milliseconds: item.durationMs)), true),
       if (item.sizeBytes > 0) ('Size', formatFileSize(item.sizeBytes), true),
       if (item.format != null && item.format!.isNotEmpty) ('Format', item.format!.toUpperCase(), false),
+      if (quality != null && item.mediaType != MediaType.video) ('Quality', quality.label, true),
       if (isVideo && width != null && height != null && width > 0 && height > 0)
         ('Resolution', '$width × $height', true),
       ('Added', _date(item.dateAdded), false),
@@ -1278,7 +1285,7 @@ class _MediaDetails {
     ];
   }
 
-  static Future<void> show(BuildContext context, MediaItem item) {
+  static Future<void> show(BuildContext context, MediaItem item, {DownloadAudioQuality? quality}) {
     return showDialog<void>(
       context: context,
       builder: (ctx) {
@@ -1291,7 +1298,7 @@ class _MediaDetails {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (final (label, value, figure) in rowsFor(item)) ...[
+              for (final (label, value, figure) in rowsFor(item, quality: quality)) ...[
                 Text(label, style: type.label),
                 const SizedBox(height: 2),
                 Text(

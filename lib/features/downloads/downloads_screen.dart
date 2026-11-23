@@ -38,14 +38,27 @@ import 'youtube_direct_flow.dart';
 import '../library/playable.dart' show removeFromPlayQueue;
 import 'mobile_data_guard.dart';
 
-class DownloadsScreen extends ConsumerStatefulWidget {
+class DownloadsScreen extends StatelessWidget {
   const DownloadsScreen({super.key});
 
+  /// The tab's own messenger: its messages (a failed "Choose quality" lookup
+  /// with Retry stays until closed) show on this screen only, and never
+  /// follow the user into Settings or another tab. They are still there on
+  /// coming back.
+  static const Key messengerKey = ValueKey('downloads_messenger');
+
   @override
-  ConsumerState<DownloadsScreen> createState() => _DownloadsScreenState();
+  Widget build(BuildContext context) => const ScaffoldMessenger(key: messengerKey, child: _DownloadsView());
 }
 
-class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
+class _DownloadsView extends ConsumerStatefulWidget {
+  const _DownloadsView();
+
+  @override
+  ConsumerState<_DownloadsView> createState() => _DownloadsScreenState();
+}
+
+class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
   /// Owned here (the download flows clear it); validated and edited inside
   /// [_UrlCard] so typing only rebuilds that card, not the download list.
   final TextEditingController _urlController = TextEditingController();
