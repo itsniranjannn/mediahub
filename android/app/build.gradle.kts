@@ -16,6 +16,17 @@ val keystoreProperties = Properties().apply {
 }
 val allowDebugSignedRelease = (findProperty("mediahub.allowDebugSignedRelease") as String?) == "true"
 
+// Which CPU types the APK carries native code for. The family phones are all arm64, so release
+// builds ship arm64-v8a only (youtubedl-android's Python and ffmpeg payloads are ~4x smaller that
+// way). tools/device/build_apks.sh passes -Pmediahub.abis=x86_64 for the emulator modes. A debug
+// build without the property keeps every ABI so `flutter run` still works on any emulator.
+// (Not --split-per-abi: that would change the version codes the phones update by.)
+val allAbis = listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+val shippedAbis: List<String>? = (findProperty("mediahub.abis") as String?)
+    ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+val buildsReleaseTask = gradle.startParameter.taskNames.any { it.contains("Release") }
+val effectiveAbis: List<String>? = shippedAbis ?: if (buildsReleaseTask) listOf("arm64-v8a") else null
+
 gradle.taskGraph.whenReady {
     val buildsRelease = allTasks.any { it.project == project && it.name.contains("Release") }
     if (buildsRelease && keystoreProperties.isEmpty() && !allowDebugSignedRelease) {
@@ -50,6 +61,13 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        effectiveAbis?.let { abis ->
+            ndk {
+                abiFilters.clear()
+                abiFilters.addAll(abis)
+            }
+        }
     }
 
     signingConfigs {
@@ -80,6 +98,11 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // Belt and braces for the ABI filter above: drop other CPUs' libraries (including
+            // youtubedl-android's libpython / libffmpeg payloads) that a dependency adds directly.
+            effectiveAbis?.let { abis ->
+                for (abi in allAbis - abis.toSet()) excludes += "lib/$abi/**"
+            }
         }
     }
 }

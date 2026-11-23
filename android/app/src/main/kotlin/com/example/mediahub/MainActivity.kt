@@ -63,6 +63,7 @@ class MainActivity : AudioServiceActivity() {
         var deviceControls: DeviceControlsChannel? = null
         var share: ShareChannel? = null
         var otherAudio: OtherAudioChannel? = null
+        var backupFiles: BackupFilesChannel? = null
 
         fun bind(activity: MainActivity, flutterEngine: FlutterEngine) {
             if (engine?.get() !== flutterEngine) {
@@ -75,11 +76,13 @@ class MainActivity : AudioServiceActivity() {
                 deviceControls = DeviceControlsChannel(app, messenger)
                 share = ShareChannel(app, messenger)
                 otherAudio = OtherAudioChannel(app, messenger)
+                backupFiles = BackupFilesChannel(messenger)
                 if (ExtractorChannel.PERSONAL_TOOLS) extractor = ExtractorChannel(app, messenger)
                 engine = WeakReference(flutterEngine)
             }
             deviceControls?.attach(activity)
             share?.attach(activity)
+            backupFiles?.attach(activity)
         }
 
         private fun release() {
@@ -89,12 +92,14 @@ class MainActivity : AudioServiceActivity() {
             runCatching { deviceControls?.cleanup() }
             runCatching { share?.cleanup() }
             runCatching { otherAudio?.cleanup() }
+            runCatching { backupFiles?.cleanup() }
             mediaStore = null
             downloadService = null
             extractor = null
             deviceControls = null
             share = null
             otherAudio = null
+            backupFiles = null
         }
     }
 
@@ -132,6 +137,14 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    // The backup file pickers (Settings, Backup & restore) answer here.
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (EngineChannels.backupFiles?.onActivityResult(requestCode, resultCode, data) == true) return
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     // Leaving the app while a video plays: switch to a floating picture-in-picture window.
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
@@ -166,6 +179,7 @@ class MainActivity : AudioServiceActivity() {
         // Only the Activity reference is released; the engine (and its channels) live on.
         EngineChannels.deviceControls?.detach(this)
         EngineChannels.share?.detach(this)
+        EngineChannels.backupFiles?.detach(this)
         super.onDestroy()
     }
 }

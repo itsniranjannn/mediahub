@@ -13,6 +13,7 @@ import 'download_providers.dart';
 import 'downloads_notifier.dart';
 import 'web_link_download_flow.dart';
 import 'youtube_direct_resolver.dart';
+import 'mobile_data_guard.dart';
 
 /// "Choose a quality, then download" for a YouTube link without yt-dlp: on
 /// iOS, and on Android when the web link downloader is off or cannot run.
@@ -130,6 +131,8 @@ class YoutubeDirectDownloadFlow {
     if (!context.mounted) return;
     if (!granted) onNotificationDenied?.call();
     if (!await WebLinkDownloadFlow.confirmNotice(context, ref)) return;
+    if (!context.mounted) return;
+    if (!await confirmBigDownloadOnMobileData(context, ref, choice.sizeBytes)) return;
     if (!context.mounted) return;
 
     // Read before the next await: `ref` must not be used once the calling

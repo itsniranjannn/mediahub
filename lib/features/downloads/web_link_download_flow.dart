@@ -21,6 +21,7 @@ import '../../shared/widgets/ui_kit.dart';
 import 'download_providers.dart';
 import 'downloads_notifier.dart';
 import 'fast_youtube_extractor_resolver.dart';
+import 'mobile_data_guard.dart';
 
 /// "Choose a quality, then download" for web links (YouTube, Instagram ...).
 /// Used by the Downloads screen, for pasted links and links sent from the
@@ -394,6 +395,8 @@ class WebLinkDownloadFlow {
     if (!context.mounted) return;
     if (!granted) onNotificationDenied?.call();
     if (!await confirmNotice(context, ref)) return;
+    if (!context.mounted) return;
+    if (!await confirmBigDownloadOnMobileData(context, ref, choice.estimatedBytes)) return;
     if (!context.mounted) return;
 
     // Read both before the next await: `ref` must not be used once the calling

@@ -113,8 +113,8 @@ default, within 30 minutes).
 
 1. **Phone check** of the items in `docs/HANDOFF.md` section B (real YouTube, 30 min screen off,
    boost loudness, Bluetooth, sharing).
-2. **Library backup & restore** (likes, playlists, play counts, settings) to a file you keep, so a
-   reinstall or a new phone never loses them.
+2. ~~**Library backup & restore**~~: done on `feat/size-backup-data` (Android; iPhone needs a document
+   picker). Also there: arm64-only APKs and "Ask before big downloads on mobile data".
 3. **"Save to phone" for downloads**: copy finished downloads into the shared Music/Movies folders.
 4. **Delete from phone** for songs and videos that came with the phone (needs Android's delete consent dialog).
 5. **iOS on a Mac**: the first build and a pass on a real iPhone (`docs/IOS.md` sections 6 and 7),

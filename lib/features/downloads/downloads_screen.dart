@@ -35,6 +35,7 @@ import 'downloads_notifier.dart';
 import 'web_link_download_flow.dart';
 import 'youtube_direct_flow.dart';
 import '../library/playable.dart' show removeFromPlayQueue;
+import 'mobile_data_guard.dart';
 
 class DownloadsScreen extends ConsumerStatefulWidget {
   const DownloadsScreen({super.key});
@@ -250,6 +251,8 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
     if (!mounted) return;
     if (await WebLinkDownloadFlow.confirmNotice(context, ref)) {
+      if (!mounted || !await confirmBigDownloadOnMobileData(context, ref, info.contentLength)) return;
+      if (!mounted) return;
       final engine = ref.read(downloadEngineProvider);
       final id = DateTime.now().millisecondsSinceEpoch.toString();
       final suggestedName = _filenameController.text.trim().isNotEmpty

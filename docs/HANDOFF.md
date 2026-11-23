@@ -129,6 +129,31 @@ driven on the emulator (B.0), except Block ads (tests only). Nothing has run on 
   picture-in-picture (now keeps playing and shows only the video), and yt-dlp stalling on such a
   network (now told which family works).
 
+## Branch feat/size-backup-data (2026-11-23, not yet tried on a device)
+
+- **Smaller APK**: release builds (and `build_apks.sh` test/family/testrel) ship arm64-v8a native
+  code only; `relx64`/`emulator` pass `-P mediahub.abis=x86_64`. `android/app/build.gradle.kts` reads
+  `mediahub.abis` (release default arm64-v8a, debug without it: all ABIs, so `flutter run` works on any
+  emulator) and also excludes the other ABIs' `lib/<abi>/**` (youtubedl-android's Python/ffmpeg).
+  No `--split-per-abi` (version codes unchanged). Expected: the universal release APK carried four
+  copies of libpython/ffmpeg/QuickJS and the Flutter engine; arm64 only should be roughly a third to a
+  quarter of it (on the order of 50-70 MB instead of ~150-200 MB). Measure on the next `family`
+  build. Guarded by `test/unit/apk_abi_filter_test.dart`.
+- **Backup & restore** (Settings): a versioned JSON (`lib/data/backup/library_backup.dart`) with
+  favourites, playlists, play counts / last played, video positions and the plain settings; saved and
+  opened with Android's file picker (`BackupFilesChannel.kt`, `mediahub/backup_files`, no storage
+  permission). Restore checks the file (5 MB cap, app id, schema version, types), asks first, merges in
+  one transaction (matched by id, else type + title + size with durations within 2 s, like the rescan)
+  and reports "12 of 14 favourites restored". iPhone: Android-only message (no document-picker plugin).
+  The web link downloader switch is not in backups.
+- **Ask before big downloads on mobile data** (Settings, Downloads card, Android, on by default):
+  a download over 100 MB with a known size on a metered network asks "This is 450 MB on mobile data.
+  Download now?" (Download / Wait for Wi-Fi = not started). Uses the yt-dlp updater's metered check;
+  unknown size or network: no question. Hooked into the yt-dlp, YouTube-direct and direct-link starts
+  (not the automatic YouTube fallback).
+- To try on the phone: the SAF save/open round trip, `onActivityResult` routing in `MainActivity`, the
+  APK size, and the dialog on mobile data.
+
 ## Latest: Sindur
 
 - **Sindur rebrand (branch feat/rebrand)**: near-black #0B0B0D canvas with crimson #CC324C fills, rose #FF6E86 accent,

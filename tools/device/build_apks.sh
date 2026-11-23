@@ -61,12 +61,16 @@ fi
 
 cd "$A"
 flutter pub get >/dev/null
+# Phones are arm64 only: phone modes ship arm64-v8a native libraries, emulator modes x86_64
+# (android/app/build.gradle.kts reads mediahub.abis). No --split-per-abi: it changes version codes.
+ARM=(--target-platform android-arm64 -P mediahub.abis=arm64-v8a)
+X64=(--target-platform android-x64 -P mediahub.abis=x86_64)
 case "$MODE" in
-  test)     flutter build apk --debug --target-platform android-arm64 ;;
-  emulator) flutter build apk --debug --target-platform android-x64 --dart-define=MEDIAHUB_DEMO=true --dart-define=MEDIAHUB_ONLINE_FIXTURE=true ;;
-  family)   flutter build apk --release --target-platform android-arm64 ;;
-  relx64)   flutter build apk --release --target-platform android-x64 ;;
-  testrel)  flutter build apk --release --target-platform android-arm64 ;;
+  test)     flutter build apk --debug "${ARM[@]}" ;;
+  emulator) flutter build apk --debug "${X64[@]}" --dart-define=MEDIAHUB_DEMO=true --dart-define=MEDIAHUB_ONLINE_FIXTURE=true ;;
+  family)   flutter build apk --release "${ARM[@]}" ;;
+  relx64)   flutter build apk --release "${X64[@]}" ;;
+  testrel)  flutter build apk --release "${ARM[@]}" ;;
 esac
 ls -la build/app/outputs/flutter-apk/ | tail -3
 echo "APKs are in $A/build/app/outputs/flutter-apk/"

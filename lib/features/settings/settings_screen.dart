@@ -18,6 +18,8 @@ import '../music_player/resume_after_other_apps.dart';
 import '../online/online_screen.dart' show confirmClearYouTubeData;
 import '../online/online_settings.dart';
 import '../online/online_web_view.dart' show onlineDataClearerProvider;
+import '../downloads/mobile_data_guard.dart';
+import 'backup_restore.dart';
 import 'settings_notifier.dart';
 import 'theme_mode_setting.dart';
 import 'user_name_setting.dart';
@@ -130,6 +132,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SizedBox(height: _cardGap),
               _PersonalToolsCard(),
             ],
+            if (PlatformInfo.isAndroid) ...const [
+              SizedBox(height: _cardGap),
+              EntranceFade(index: 4, child: _DownloadsDataCard()),
+            ],
+            const SizedBox(height: _cardGap),
+            const EntranceFade(index: 4, child: _BackupCard()),
             const SizedBox(height: _cardGap),
             const EntranceFade(index: 4, child: _PrivacyCard()),
             const SizedBox(height: _cardGap),
@@ -360,6 +368,73 @@ class _PlaybackCard extends ConsumerWidget {
             onChanged: (v) => ref.read(resumeAfterOtherAppsProvider.notifier).set(v),
           ),
         ],
+      ],
+    );
+  }
+}
+
+/// Settings → Downloads (Android: the phone can tell when data is metered).
+class _DownloadsDataCard extends ConsumerWidget {
+  const _DownloadsDataCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ask = ref.watch(askBeforeBigDownloadsProvider);
+    return _SettingsCard(
+      children: [
+        const _CardHeading(
+          icon: Icons.download_rounded,
+          title: 'Downloads',
+          subtitle: 'How downloads use your data.',
+        ),
+        const _CardDivider.underHeading(),
+        _SwitchRow(
+          icon: Icons.signal_cellular_alt_rounded,
+          title: 'Ask before big downloads on mobile data',
+          subtitle: 'Asks first when a download over 100 MB would start on mobile data.',
+          value: ask,
+          onChanged: (v) => ref.read(askBeforeBigDownloadsProvider.notifier).set(v),
+        ),
+      ],
+    );
+  }
+}
+
+/// Settings → Backup & restore: favourites, playlists, play history, video
+/// positions and settings to a file the user picks, and back.
+class _BackupCard extends ConsumerWidget {
+  const _BackupCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return _SettingsCard(
+      children: [
+        const _CardHeading(
+          icon: Icons.settings_backup_restore_rounded,
+          title: 'Backup & restore',
+          subtitle: 'Favourites, playlists, play history and settings. Not the songs and videos themselves.',
+        ),
+        const _CardDivider.underHeading(),
+        if (PlatformInfo.isAndroid) ...[
+          _NavRow(
+            icon: Icons.save_alt_rounded,
+            title: 'Save a backup',
+            subtitle: 'Saves one small file wherever you choose.',
+            onTap: () => saveLibraryBackup(context, ref),
+          ),
+          const _CardDivider.betweenRows(),
+          _NavRow(
+            icon: Icons.restore_rounded,
+            title: 'Restore from backup',
+            subtitle: 'Adds a backup to your library. Nothing is removed.',
+            onTap: () => restoreLibraryBackup(context, ref),
+          ),
+        ] else
+          const _InfoRow(
+            icon: Icons.info_outline_rounded,
+            title: 'Android only for now',
+            body: backupIosMessage,
+          ),
       ],
     );
   }
