@@ -215,6 +215,8 @@ void main() {
       WidgetTester tester, {
       List<DownloadEntry> downloads = const [],
       double width = 360,
+      double height = 800,
+      double rightInset = 0,
       double textScale = 1,
       MediaItem? playing,
       ExternalMediaSnapshot? external,
@@ -223,9 +225,15 @@ void main() {
       double bottomInset = 0,
       bool insetInViewPaddingOnly = false,
       String initialLocation = '/home',
+      Widget Function(String name)? page,
     }) async {
-      tester.view.physicalSize = Size(width * 3, 800 * 3);
+      tester.view.physicalSize = Size(width * 3, height * 3);
       tester.view.devicePixelRatio = 3;
+      if (rightInset > 0) {
+        final inset = FakeViewPadding(right: rightInset * 3);
+        tester.view.viewPadding = inset;
+        tester.view.padding = inset;
+      }
       if (bottomInset > 0) {
         final inset = FakeViewPadding(bottom: bottomInset * 3);
         tester.view.viewPadding = inset;
@@ -244,7 +252,12 @@ void main() {
             branches: [
               for (final name in ['home', 'music', 'videos', 'online', 'downloads'])
                 StatefulShellBranch(
-                  routes: [GoRoute(path: '/$name', builder: (context, state) => Center(child: Text('page $name')))],
+                  routes: [
+                    GoRoute(
+                      path: '/$name',
+                      builder: (context, state) => page?.call(name) ?? Center(child: Text('page $name')),
+                    ),
+                  ],
                 ),
             ],
           ),
@@ -377,6 +390,120 @@ void main() {
       });
     }
 
+    // Emulator QA: with a sheet open the mini player and the dock stayed
+    // bright and tappable above it. Sheets open on the root navigator, so
+    // their barrier covers the dock.
+    testWidgets('a bottom sheet opened from a tab dims and blocks the dock', (tester) async {
+      final song = MediaItem(
+        id: 'song_1',
+        uri: 'file:///song.mp3',
+        mediaType: MediaType.audio,
+        title: 'Bohemian Rhapsody',
+        artist: 'Queen',
+        durationMs: 354000,
+        sizeBytes: 8000000,
+        dateAdded: DateTime(2026),
+      );
+      await pumpShell(
+        tester,
+        playing: song,
+        page: (name) => Builder(
+          builder: (context) => Center(
+            child: TextButton(
+              onPressed: () => showModalBottomSheet<void>(
+                context: context,
+                useRootNavigator: true,
+                builder: (_) => const SizedBox(height: 40, child: Text('the sheet')),
+              ),
+              child: Text('page $name'),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Bohemian Rhapsody').hitTestable(), findsOneWidget);
+      await tester.tap(find.text('page home'));
+      await tester.pumpAndSettle();
+      expect(find.text('the sheet'), findsOneWidget);
+
+      // The sheet's barrier spans the dock, is above it and takes its taps.
+      final miniTitle = tester.getCenter(find.text('Bohemian Rhapsody'));
+      final barrier = find.byType(ModalBarrier).last;
+      final barrierRect = tester.getRect(barrier);
+      final dockRect = tester.getRect(find.byType(InkDock));
+      expect(barrierRect.contains(dockRect.topLeft) && barrierRect.contains(dockRect.bottomRight - const Offset(1, 1)),
+          isTrue, reason: 'the barrier covers the dock');
+      final hits = tester.hitTestOnBinding(miniTitle).path.map((e) => e.target).toList();
+      final barrierBox = barrier.evaluate().single.findRenderObject()!;
+      final dockBox = tester.renderObject(find.byType(InkDock));
+      expect(hits.any((t) => t is RenderObject && _isDescendant(t, barrierBox)), isTrue,
+          reason: 'a tap on the mini player lands on the barrier');
+      expect(hits.any((t) => t is RenderObject && _isDescendant(t, dockBox)), isFalse,
+          reason: 'nothing in the dock is hit while the sheet is open');
+      expect(find.text('Bohemian Rhapsody').hitTestable(), findsNothing);
+      expect(find.byIcon(Icons.music_note_outlined).hitTestable(), findsNothing);
+
+      // Tapping the dimmed mini player closes the sheet, nothing else.
+      await tester.tapAt(miniTitle);
+      await tester.pumpAndSettle();
+      expect(find.text('the sheet'), findsNothing);
+      expect(find.text('page home'), findsOneWidget);
+    });
+
+    // Emulator QA: turned sideways (800 x 360) the mini player and the dock
+    // took half the height and a black band sat on the cutout edge.
+    group('landscape 800 x 360', () {
+      final song = MediaItem(
+        id: 'song_1',
+        uri: 'file:///song.mp3',
+        mediaType: MediaType.audio,
+        title: 'Bohemian Rhapsody',
+        artist: 'Queen',
+        durationMs: 354000,
+        sizeBytes: 8000000,
+        dateAdded: DateTime(2026),
+      );
+
+      testWidgets('one slim dock row: mini player beside an icons-only nav; the page keeps the height',
+          (tester) async {
+        await pumpShell(tester, width: 800, height: 360, playing: song);
+        expect(tester.takeException(), isNull);
+        final dock = tester.getRect(find.byType(InkDock));
+        expect(dock.height, lessThanOrEqualTo(72), reason: 'dock height bounded: one row, a fifth of the screen');
+        expect(find.byKey(const ValueKey('nav_compact')), findsOneWidget);
+        expect(find.text('Home'), findsNothing, reason: 'icons only');
+        final mini = tester.getRect(find.text('Bohemian Rhapsody'));
+        final nav = tester.getRect(find.byKey(const ValueKey('nav_compact')));
+        expect(mini.top, greaterThanOrEqualTo(dock.top));
+        expect(nav.top, greaterThanOrEqualTo(dock.top), reason: 'same row');
+        expect(mini.right, lessThanOrEqualTo(nav.left));
+        final page = tester.getRect(find.ancestor(of: find.text('page home'), matching: find.byType(Center)).first);
+        expect(page.height, greaterThanOrEqualTo(360 - 72));
+
+        await tester.tap(find.byIcon(Icons.music_note_outlined));
+        await tester.pumpAndSettle();
+        expect(find.text('page music'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('the side inset (cutout / nav bar) shows the canvas; the page stays clear of it', (tester) async {
+        await pumpShell(tester, width: 800, height: 360, rightInset: 24);
+        final page = tester.getRect(find.ancestor(of: find.text('page home'), matching: find.byType(Center)).first);
+        expect(page.right, lessThanOrEqualTo(800 - 24));
+        final dock = tester.getRect(find.byType(InkDock));
+        expect(dock.right, 800, reason: 'the ink reaches the edge');
+        expect(tester.getRect(find.byKey(const ValueKey('nav_compact'))).right, lessThanOrEqualTo(800 - 24));
+        final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+        expect(scaffold.backgroundColor ?? AppTheme.lightTheme.scaffoldBackgroundColor,
+            AppTheme.lightTheme.scaffoldBackgroundColor);
+      });
+
+      testWidgets('portrait keeps the full dock with labels', (tester) async {
+        await pumpShell(tester);
+        expect(find.byKey(const ValueKey('nav_compact')), findsNothing);
+        expect(find.text('Home'), findsOneWidget);
+      });
+    });
+
     // The owner's Samsung (One UI): labels looked cut off at the bottom and
     // the YouTube page showed through the dock's rounded corners.
     group('dock on system insets', () {
@@ -412,6 +539,19 @@ void main() {
         await tester.pump();
         expect(fill(), AppTheme.lightTheme.scaffoldBackgroundColor);
         expect(fill(), isNot(onOnline));
+      });
+
+      // Emulator QA: on Online (light theme) the dock's light top line read
+      // as a gap between the YouTube page and the ink.
+      testWidgets('on Online the dock has no light top line; elsewhere it keeps it', (tester) async {
+        bool hasEdgeLine() => tester
+            .widgetList<CustomPaint>(find.descendant(of: find.byType(InkDock), matching: find.byType(CustomPaint)))
+            .any((p) => p.foregroundPainter?.runtimeType.toString() == '_DockEdgePainter');
+        await pumpShell(tester, initialLocation: '/online');
+        expect(hasEdgeLine(), isFalse);
+        await tester.tap(find.text('Home'));
+        await tester.pump();
+        expect(hasEdgeLine(), isTrue);
       });
     });
 
@@ -565,4 +705,13 @@ class _MessagesHandler extends MusicAudioHandler {
 class _NothingPlaying extends PlaybackNotifier {
   @override
   domain.PlaybackState build() => domain.PlaybackState(updatedAt: DateTime(2026));
+}
+
+bool _isDescendant(RenderObject node, RenderObject ancestor) {
+  RenderObject? n = node;
+  while (n != null) {
+    if (identical(n, ancestor)) return true;
+    n = n.parent;
+  }
+  return false;
 }

@@ -63,31 +63,38 @@ class AppShell extends StatelessWidget {
         // no mini player and no navigation bar (they come back on exit).
         child: ValueListenableBuilder<bool>(
           valueListenable: DeviceControls.inPip,
-          builder: (context, inPip, body) => Scaffold(
-            body: body,
-            // The Ink Dock (DESIGN.md 7.7): the mini player and the nav on one
-            // ink slab in both themes. InkDock wraps them in the dark theme and
-            // keeps the Android navigation bar's icons light over it. The body
-            // ends above the dock (no extendBody), so no screen has to pad its
-            // last row clear of it.
-            bottomNavigationBar: inPip
-                ? null
-                : InkDock(
-                    // Square corners on Online: the YouTube page must never
-                    // show through the rounded corner gaps.
-                    squareCorners: navigationShell.currentIndex == onlineBranchIndex,
-                    // Persistent mini-player above the bottom nav, except on
-                    // the Videos and Online tabs (see [hidesMiniPlayer]).
-                    miniPlayer: _MiniPlayerSlot(
-                      hidden: hidesMiniPlayer(navigationShell.currentIndex),
-                      child: const MiniPlayer(key: ValueKey('mini_player_slot')),
+          builder: (context, inPip, body) {
+            final compact = InkDock.isCompactLandscape(context);
+            return Scaffold(
+              // Landscape: the side system insets (display cutout, navigation
+              // bar) show the page canvas, and the page stays clear of them.
+              body: SafeArea(top: false, bottom: false, child: body!),
+              // The Ink Dock (DESIGN.md 7.7): the mini player and the nav on one
+              // ink slab in both themes. InkDock wraps them in the dark theme and
+              // keeps the Android navigation bar's icons light over it. The body
+              // ends above the dock (no extendBody), so no screen has to pad its
+              // last row clear of it.
+              bottomNavigationBar: inPip
+                  ? null
+                  : InkDock(
+                      inline: compact,
+                      // Square corners on Online: the YouTube page must never
+                      // show through the rounded corner gaps.
+                      squareCorners: navigationShell.currentIndex == onlineBranchIndex,
+                      // Persistent mini-player above the bottom nav, except on
+                      // the Videos and Online tabs (see [hidesMiniPlayer]).
+                      miniPlayer: _MiniPlayerSlot(
+                        hidden: hidesMiniPlayer(navigationShell.currentIndex),
+                        child: const MiniPlayer(key: ValueKey('mini_player_slot')),
+                      ),
+                      navigation: _InkNavBar(
+                        currentIndex: navigationShell.currentIndex,
+                        onTap: _onTap,
+                        compact: compact,
+                      ),
                     ),
-                    navigation: _InkNavBar(
-                      currentIndex: navigationShell.currentIndex,
-                      onTap: _onTap,
-                    ),
-                  ),
-          ),
+            );
+          },
           child: navigationShell,
         ),
       ),
@@ -235,9 +242,14 @@ class _InkNavBar extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
 
+  /// Landscape: 48 dp, icons only, a fixed 64 dp per tab (each still reads
+  /// "<label> Tab"), beside the mini player.
+  final bool compact;
+
   const _InkNavBar({
     required this.currentIndex,
     required this.onTap,
+    this.compact = false,
   });
 
   static const double height = InkDock.navigationHeight;
@@ -259,6 +271,8 @@ class _InkNavBar extends StatelessWidget {
     final palette = context.palette;
     final bottomInset = InkDock.systemBottomInset(context);
     final selected = currentIndex.clamp(0, items.length - 1);
+
+    if (compact) return _buildCompact(context, items, selected, bottomInset);
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -323,6 +337,61 @@ class _InkNavBar extends StatelessWidget {
   }
 }
 
+extension on _InkNavBar {
+  Widget _buildCompact(BuildContext context, List<_NavItemData> items, int selected, double bottomInset) {
+    const slot = InkDock.compactSlotWidth;
+    const top = (InkDock.compactNavigationHeight - 32) / 2;
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: SizedBox(
+        key: const ValueKey('nav_compact'),
+        width: slot * items.length,
+        height: InkDock.compactNavigationHeight,
+        child: Stack(
+          children: [
+            AnimatedPositioned(
+              duration: MotionTokens.duration(context, MotionTokens.page),
+              curve: MotionTokens.emphasized,
+              top: top,
+              left: slot * selected + (slot - _InkNavBar.indicatorSize.width) / 2,
+              width: _InkNavBar.indicatorSize.width,
+              height: _InkNavBar.indicatorSize.height,
+              child: DecoratedBox(
+                key: const ValueKey('nav_indicator'),
+                decoration: ShapeDecoration(color: context.palette.navIndicator, shape: const StadiumBorder()),
+              ),
+            ),
+            Material(
+              type: MaterialType.transparency,
+              child: Row(
+                children: [
+                  for (var i = 0; i < items.length; i++)
+                    SizedBox(
+                      width: slot,
+                      height: InkDock.compactNavigationHeight,
+                      child: Tooltip(
+                        message: items[i].label,
+                        excludeFromSemantics: true,
+                        child: _NavDestination(
+                          item: items[i],
+                          selected: i == selected,
+                          labelScaler: TextScaler.noScaling,
+                          showLabel: false,
+                          verticalPadding: top,
+                          onTap: () => onTap(i),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _NavDestination extends StatelessWidget {
   final _NavItemData item;
   final bool selected;
@@ -335,8 +404,11 @@ class _NavDestination extends StatelessWidget {
     required this.selected,
     required this.labelScaler,
     this.showLabel = true,
+    this.verticalPadding = _InkNavBar.indicatorTop,
     required this.onTap,
   });
+
+  final double verticalPadding;
 
   @override
   Widget build(BuildContext context) {
@@ -359,11 +431,11 @@ class _NavDestination extends StatelessWidget {
         highlightColor: Colors.transparent,
         splashColor: palette.onDock.withValues(alpha: 0.12),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(
+          padding: EdgeInsets.fromLTRB(
             AppSpacing.xs4 / 2,
-            _InkNavBar.indicatorTop,
+            verticalPadding,
             AppSpacing.xs4 / 2,
-            _InkNavBar.indicatorTop,
+            verticalPadding,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,

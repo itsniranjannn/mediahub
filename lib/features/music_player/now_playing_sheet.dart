@@ -312,6 +312,8 @@ class NowPlayingSheet extends ConsumerWidget {
     // Uses the global sheet style (surface, 28 dp corners, drag handle) of
     // the app theme: [context] is outside the stage's dark theme.
     showModalBottomSheet(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -1652,6 +1654,8 @@ class _SleepButton extends ConsumerWidget {
 /// while a timer runs, the presets, "End of song" and "Turn off".
 Future<void> showSleepTimerSheet(BuildContext context) {
   return showModalBottomSheet<void>(
+    // Over the Ink Dock: the sheet's barrier covers and dims it too.
+    useRootNavigator: true,
     context: context,
     isScrollControlled: true,
     useSafeArea: true,

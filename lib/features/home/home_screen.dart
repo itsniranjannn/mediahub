@@ -429,19 +429,23 @@ class _Greeting extends StatelessWidget {
     }
 
     final line = type.body.copyWith(color: palette.textSecondary);
+    // A phone turned sideways: a slimmer band, so the rails start on screen.
+    final compact = InkDock.isCompactLandscape(context);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.sm8),
       child: EntranceFade(
         child: HeroBand(
           glow: true,
-          padding: const EdgeInsets.fromLTRB(AppSpacing.xl20, AppSpacing.xxl24, AppSpacing.xl20, AppSpacing.xl20),
+          padding: compact
+              ? const EdgeInsets.fromLTRB(AppSpacing.xl20, AppSpacing.md12, AppSpacing.xl20, AppSpacing.md12)
+              : const EdgeInsets.fromLTRB(AppSpacing.xl20, AppSpacing.xxl24, AppSpacing.xl20, AppSpacing.xl20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
               const SparkMark(height: 4),
-              const SizedBox(height: AppSpacing.md12),
+              SizedBox(height: compact ? AppSpacing.sm8 : AppSpacing.md12),
               if (name.isEmpty)
                 Semantics(
                   header: true,

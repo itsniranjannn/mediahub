@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter/foundation.dart';
@@ -627,5 +628,56 @@ void main() {
     );
     expect(formatPlainErrorMessage('http_410', host: 'rr4---sn-abc.googlevideo.com'), contains('Tap Retry'));
     expect(formatPlainErrorMessage('http_403', host: 'example.com'), 'The website refused the download. Check the link, then tap Retry.');
+  });
+
+  // Emulator QA: "Choose quality" with no internet closed without a word.
+  group('a failed lookup always leaves a message with Retry', () {
+    for (final (name, error, message) in <(String, Object, String)>[
+      ('offline', const SocketException('Failed host lookup'), 'No internet connection.'),
+      ('too slow', TimeoutException('slow'), YoutubeDirectDownloadFlow.friendlyError(TimeoutException('slow'))),
+    ]) {
+      testWidgets('iOS direct path, $name: the message stays and Retry looks the link up again', (tester) async {
+        var calls = 0;
+        source.onStreams = (id) async {
+          calls++;
+          if (calls == 1) throw error;
+          return FakeOnlineSource.sampleStreams;
+        };
+        final container = makeContainer();
+        send(container, _linkA);
+        await pumpScreen(tester, container);
+        await animate(tester);
+
+        expect(find.text(_dialogText), findsNothing);
+        expect(find.text(message), findsOneWidget);
+        // Long after a normal snack bar would have gone, it is still there.
+        await tester.pump(const Duration(seconds: 30));
+        await animate(tester);
+        expect(find.text(message), findsOneWidget);
+        expect(find.text('Retry'), findsOneWidget);
+
+        await tester.tap(find.text('Retry'));
+        await animate(tester);
+        await animate(tester);
+        expect(calls, 2);
+        expect(find.byType(FormatSelectionSheet), findsOneWidget);
+      });
+    }
+
+    testWidgets('Android yt-dlp path, NETWORK_BLOCKED: the message stays with Retry', (tester) async {
+      PlatformInfo.debugIsAndroid = true;
+      PlatformInfo.debugIsIOS = false;
+      backend.onGetInfo = (_) async => throw const ExtractorException('NETWORK_BLOCKED', 'blocked');
+      final container = makeContainer(personalTools: true);
+      send(container, _linkA);
+      await pumpScreen(tester, container);
+      await animate(tester);
+      const text = 'This network is blocking a secure connection to the site. Try another Wi-Fi or mobile data.';
+      expect(find.text(text), findsOneWidget);
+      await tester.pump(const Duration(seconds: 30));
+      await animate(tester);
+      expect(find.text(text), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+    });
   });
 }

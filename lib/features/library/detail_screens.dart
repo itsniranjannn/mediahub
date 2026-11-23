@@ -71,6 +71,7 @@ Widget _collectionMenuButton({
   required String title,
   required List<MediaItem>? songs,
   List<_CollectionExtra> extras = const [],
+  bool addToPlaylist = true,
 }) {
   return Builder(
     builder: (buttonContext) => IconButton(
@@ -78,7 +79,14 @@ Widget _collectionMenuButton({
       tooltip: 'More options',
       onPressed: songs == null
           ? null
-          : () => _CollectionMenu.show(buttonContext, ref, title: title, songs: songs, extras: extras),
+          : () => _CollectionMenu.show(
+                buttonContext,
+                ref,
+                title: title,
+                songs: songs,
+                extras: extras,
+                addToPlaylist: addToPlaylist,
+              ),
     ),
   );
 }
@@ -411,6 +419,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
           ref: ref,
           title: playlist.name,
           songs: songs,
+          addToPlaylist: false,
           extras: [
             _CollectionExtra(Icons.add_rounded, 'Add songs', () => _openAddSongs(playlist)),
             _CollectionExtra(Icons.delete_outline_rounded, 'Delete playlist', () => _showDeleteConfirmation(playlist),
@@ -724,6 +733,8 @@ class _AddSongsSheet extends ConsumerStatefulWidget {
     final messenger = ScaffoldMessenger.maybeOf(context);
     final container = ProviderScope.containerOf(context, listen: false);
     showModalBottomSheet<int>(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -913,6 +924,7 @@ class _CollectionMenu {
     required String title,
     required List<MediaItem> songs,
     List<_CollectionExtra> extras = const [],
+    bool addToPlaylist = true,
   }) async {
     final playable = playableOnly(songs);
     final container = ProviderScope.containerOf(context, listen: false);
@@ -935,14 +947,18 @@ class _CollectionMenu {
         playback.addAllToQueue(playable);
         snack('Added $count to the queue');
       } : null, false),
-      (Icons.playlist_add_rounded, 'Add to playlist…', songs.isEmpty ? null : () {
-        if (context.mounted) _PickPlaylistSheet.show(context, container, messenger, songs);
-      }, false),
+      // Not on a playlist's own menu: a playlist is not added to a playlist.
+      if (addToPlaylist)
+        (Icons.playlist_add_rounded, 'Add to playlist…', songs.isEmpty ? null : () {
+          if (context.mounted) _PickPlaylistSheet.show(context, container, messenger, songs);
+        }, false),
       (Icons.shuffle_rounded, 'Shuffle', hasSongs ? () => playCollection(playback, playable, shuffle: true) : null, false),
       for (final extra in extras) (extra.icon, extra.label, extra.onTap, extra.destructive),
     ];
 
     final chosen = await showModalBottomSheet<int>(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -1008,6 +1024,8 @@ class _PickPlaylistSheet extends StatelessWidget {
     List<MediaItem> songs,
   ) {
     showModalBottomSheet<Playlist>(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       useSafeArea: true,

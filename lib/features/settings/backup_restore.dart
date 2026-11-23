@@ -118,15 +118,26 @@ Future<void> restoreLibraryBackup(BuildContext context, WidgetRef ref) async {
   );
 }
 
-/// What the confirm dialog says about [data].
+/// What the confirm dialog says about [data]: every kind of thing that will
+/// be restored, the same list (and counts) the "Backup restored" dialog
+/// reports afterwards.
 String restoreSummary(BackupData data) {
   final d = data.createdAt.toLocal();
   final date = '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-  final parts = [
-    '${data.favoriteCount} ${data.favoriteCount == 1 ? 'favourite' : 'favourites'}',
-    '${data.playlists.length} ${data.playlists.length == 1 ? 'playlist' : 'playlists'}',
-    if (data.videoPositions.isNotEmpty) '${data.videoPositions.length} video positions',
+  String count(int n, String one, String many) => '$n ${n == 1 ? one : many}';
+  final history = data.items.where((i) => i.playCount > 0 || i.lastPlayed != null).length;
+  final songs = data.playlists.fold<int>(0, (sum, p) => sum + p.itemIds.length);
+  // Only the setting values a restore writes (on / off and lists).
+  final settings = data.settings.values.where((v) => v is bool || v is List<String>).length;
+  final lines = [
+    if (data.favoriteCount > 0) count(data.favoriteCount, 'favourite', 'favourites'),
+    if (data.playlists.isNotEmpty)
+      '${count(data.playlists.length, 'playlist', 'playlists')} (${count(songs, 'song', 'songs')})',
+    if (history > 0) count(history, 'play count', 'play counts'),
+    if (data.videoPositions.isNotEmpty) count(data.videoPositions.length, 'video position', 'video positions'),
+    if (settings > 0) count(settings, 'setting', 'settings'),
   ];
-  return 'Backup from $date: ${parts.join(', ')}.\n\n'
+  final what = lines.isEmpty ? 'Nothing to restore.' : lines.map((l) => '• $l').join('\n');
+  return 'Backup from $date:\n$what\n\n'
       'They are added to your library. Nothing on this phone is removed.';
 }

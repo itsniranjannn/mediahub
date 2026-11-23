@@ -42,7 +42,7 @@ const _details = YoutubeVideoDetails(
 
 void main() {
   group('YoutubeDirectOptions.build (the quality list)', () {
-    test('video qualities highest first, one per height, MP4 before WebM, then the M4A audio', () {
+    test('video qualities highest first, one per height, MP4 before WebM, then every audio quality (M4A first)', () {
       final choices = YoutubeDirectOptions.build(OnlineStreams(
         video: [
           _video(360, size: 12 * 1024 * 1024),
@@ -57,7 +57,13 @@ void main() {
         ],
       ));
 
-      expect(choices.map((c) => c.label), ['720p', '360p', 'Audio only (M4A, 128 kbps)']);
+      expect(choices.map((c) => c.label), [
+        '720p',
+        '360p',
+        'Audio only (M4A, 128 kbps)',
+        'Audio only (M4A, 48 kbps)',
+        'Audio only (WEBM, 160 kbps)',
+      ]);
       final hd = choices.first;
       expect(hd.container, 'mp4', reason: 'MP4 wins over WebM at the same height');
       expect(hd.fileExtension, 'mp4');
@@ -65,7 +71,8 @@ void main() {
       expect(hd.qualityLabel, '720p');
       expect(hd.isAudio, isFalse);
 
-      final audio = choices.last;
+      final audio = choices[2];
+      expect(audio.id, 'yt_audio', reason: 'the best audio keeps the stable id');
       expect(audio.isAudio, isTrue);
       expect(audio.fileExtension, 'm4a', reason: 'M4A is preferred even over a higher-bitrate WebM');
       expect(audio.qualityLabel, 'Audio 128 kbps');

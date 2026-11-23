@@ -480,6 +480,8 @@ class _MediaMenu {
   Future<MediaAction?> _showSheet(List<MediaAction> actions) {
     final appContext = _appContext;
     return showModalBottomSheet<MediaAction>(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: appContext,
       isScrollControlled: true,
       useSafeArea: true,
@@ -975,6 +977,8 @@ class _AddToPlaylistSheet extends StatelessWidget {
     MediaItem item,
   ) {
     showModalBottomSheet<void>(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: appContext,
       isScrollControlled: true,
       useSafeArea: true,

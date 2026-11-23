@@ -12,6 +12,7 @@ import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/app_typography.dart';
+import '../../app/theme/ink_theme.dart';
 import '../../app/theme/motion_tokens.dart';
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/platform/device_controls.dart';
@@ -63,6 +64,10 @@ final androidSdkIntProvider = FutureProvider<int?>((ref) async {
 
 /// YouTube Music's own web player (Online ⋮ → YouTube Music).
 const String youTubeMusicHomeUrl = 'https://music.youtube.com/';
+
+/// How far the dock's ink reaches up under the bottom of the YouTube page
+/// (covers device-pixel rounding of the WebView's size).
+const double onlinePageSeamHeight = 3;
 
 /// Opens the media sheet (Like, Add to playlist ...) for an online item from
 /// the watch strip's Save button. Tests override it.
@@ -621,6 +626,8 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
   /// no search field to use is the results page loaded instead.
   Future<void> _openSearch() async {
     final query = await showModalBottomSheet<String>(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -665,6 +672,8 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
 
   Future<void> _openMenu() async {
     await showModalBottomSheet<void>(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: context,
       showDragHandle: true,
       // As tall as its rows (it still scrolls on a short screen), so Clear
@@ -781,6 +790,20 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
               Expanded(
                 child: Stack(
                   children: [
+                    // Under the page's last few pixels: the dock's ink. The
+                    // WebView is sized to whole device pixels, so a sliver
+                    // of the light canvas used to show above the dock.
+                    if (showChrome)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        height: onlinePageSeamHeight,
+                        child: ColoredBox(
+                          key: const ValueKey('online_dock_seam'),
+                          color: InkTheme.paletteOf(context).dock.withValues(alpha: 1),
+                        ),
+                      ),
                     // Clipped to its own box: the page ends above the dock
                     // and never paints into the dock's corner area.
                     Positioned.fill(child: ClipRect(child: web)),

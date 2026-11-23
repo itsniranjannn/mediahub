@@ -290,4 +290,41 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel('Open Favourites'), findsOneWidget);
   });
+
+  for (final chip in ['Favourites', 'Playlists', 'Albums', 'Artists']) {
+    testWidgets('"Sort songs" is not offered on $chip', (tester) async {
+      // Wide enough that every chip is on screen.
+      await pump(tester, const MusicScreen(), size: const Size(600, 800));
+      expect(find.byTooltip('Sort songs'), findsOneWidget);
+      await openChip(tester, chip);
+      expect(find.byTooltip('Sort songs'), findsNothing);
+    });
+  }
+
+  testWidgets('"Sort songs" comes back on the Songs chip', (tester) async {
+    await pump(tester, const MusicScreen());
+    await openChip(tester, 'Favourites');
+    expect(find.byTooltip('Sort songs'), findsNothing);
+    await tester.tap(find.text('Songs'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Sort songs'), findsOneWidget);
+  });
+
+  // Emulator QA: a phone turned sideways (800 x 360) used to give the dock
+  // half the height, and Music showed no songs. The page gets 360 minus the
+  // compact dock (64 dp at most) and the status bar.
+  group('landscape 800 x 360', () {
+    const page = Size(800, 360 - 64 - 24);
+    testWidgets('Music shows its songs and nothing overflows', (tester) async {
+      await pump(tester, const MusicScreen(), size: page);
+      expect(tester.takeException(), isNull);
+      expect(find.text('Song 1').hitTestable(), findsOneWidget);
+    });
+
+    testWidgets('Home: nothing overflows and the header leaves room for the rails', (tester) async {
+      await pump(tester, const HomeScreen(), size: page);
+      expect(tester.takeException(), isNull);
+      expect(find.bySemanticsLabel('Open Favourites').hitTestable(), findsOneWidget);
+    });
+  });
 }

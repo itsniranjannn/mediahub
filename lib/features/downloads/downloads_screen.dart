@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:drift/drift.dart' as drift;
 import 'package:flutter/material.dart';
@@ -175,6 +176,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               : () => _startYoutubeDirect(youtube, titleHint: titleHint, onQueued: queued),
           // A site yt-dlp does not read: the direct-file check instead.
           onOtherSite: () async => ref.read(inspectionProvider.notifier).inspect(uri),
+          onRetry: () => _retryQuality(uri, titleHint: titleHint),
         );
       } else {
         await _startYoutubeDirect(youtube!, titleHint: titleHint, onQueued: queued);
@@ -193,7 +195,13 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
       titleHint: titleHint ?? _titleHintFor(link),
       onQueued: onQueued,
       onNotificationDenied: _onNotificationDenied,
+      onRetry: () => _retryQuality(Uri.parse(link.canonicalUrl), titleHint: titleHint),
     );
+  }
+
+  /// Retry on a failed quality lookup's message.
+  void _retryQuality(Uri uri, {String? titleHint}) {
+    if (mounted) unawaited(_chooseQuality(uri, titleHint: titleHint));
   }
 
   /// The title the Online tab sent with [link], if that is the link in hand.
@@ -662,16 +670,17 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
 
     // Everything that needs the user (running, waiting, paused, failed) always
     // shows. Saved files are also in Videos and Music, so the Saved group
-    // shows only the newest few; the rest open in place under the toggle.
+    // shows only the newest few; the rest open in place, and the toggle
+    // ("Show less") then ends the whole Saved list.
     addGroup('Active', active);
     addGroup('Queued / Paused', queuedOrPaused);
     if (completed.isNotEmpty) {
       addLabel('Saved', completed.length);
       addTasks(completed.take(kSavedPreviewCount));
       if (completed.length > kSavedPreviewCount) {
+        if (_showAllSaved) addTasks(completed.skip(kSavedPreviewCount));
         indexByKey[_SavedToggleRow.key] = rows.length;
         rows.add(_SavedToggleRow(total: completed.length, expanded: _showAllSaved));
-        if (_showAllSaved) addTasks(completed.skip(kSavedPreviewCount));
       }
     }
     addGroup('Failed / Cancelled', failed);
@@ -1922,9 +1931,9 @@ class _SavedToggleRow {
   static const Key key = ValueKey<String>('t_saved_toggle');
 }
 
-/// Ends the short Saved group (DESIGN.md 7.14): "Show all 23 saved" opens
-/// the older saved downloads in place, under this row, and the row turns into
-/// "Show less", so it never moves while the list grows or shrinks below it.
+/// Ends the Saved group (DESIGN.md 7.14): "Show all 23 saved" opens the
+/// older saved downloads in place, and the row, now "Show less", moves to the
+/// end of the whole Saved list, right after the oldest one.
 /// A text button with the expand glyph after its label; it tells a screen
 /// reader whether the list is open.
 class _SavedToggle extends StatelessWidget {

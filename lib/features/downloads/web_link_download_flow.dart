@@ -113,6 +113,23 @@ class WebLinkDownloadFlow {
     return false;
   }
 
+  /// A quality lookup that failed (offline, too slow, a blocked network, a
+  /// link problem): the message stays on screen until it is closed or
+  /// [onRetry] is tapped, so the lookup never just ends without a word.
+  static void showLookupFailure(ScaffoldMessengerState messenger, String message, {VoidCallback? onRetry}) {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          key: const ValueKey('lookup_failure'),
+          content: Text(message),
+          persist: true,
+          showCloseIcon: true,
+          action: onRetry == null ? null : SnackBarAction(label: 'Retry', onPressed: onRetry),
+        ),
+      );
+  }
+
   /// Reads the qualities of [uri]. When that fails in a way a newer yt-dlp
   /// may fix, yt-dlp is updated (at most every 12 hours, never while a web
   /// link download runs) and the link read once more. Each read gives up
@@ -196,6 +213,7 @@ class WebLinkDownloadFlow {
     VoidCallback? onNotificationDenied,
     Future<void> Function()? onEngineUnavailable,
     Future<void> Function()? onOtherSite,
+    VoidCallback? onRetry,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
 
@@ -281,11 +299,13 @@ class WebLinkDownloadFlow {
         await onEngineUnavailable();
         return;
       }
-      messenger.showSnackBar(SnackBar(content: Text(friendlyError(error))));
+      showLookupFailure(messenger, friendlyError(error), onRetry: onRetry);
       return;
     }
 
     await showModalBottomSheet<void>(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,

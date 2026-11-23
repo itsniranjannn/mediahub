@@ -66,6 +66,15 @@ class _Engine implements VideoEngine, VideoEngineExtras {
 
   void emitCaption(String text) => _captions.add(text);
 
+  /// The player blips "playing" and stops at the end again (and fires its
+  /// end event once more), as ExoPlayer can after the end.
+  void reportEndAgain() {
+    _playingCtl.add(true);
+    _pos.add(length);
+    _playingCtl.add(false);
+    _completed.add(null);
+  }
+
   @override
   Future<void> initialize(String uri) async {
     initializedWith.add(uri);
@@ -807,6 +816,57 @@ void main() {
       await tester.pump();
       expect(first.seeks.last, Duration.zero);
       expect(first.playCalls, plays + 1);
+      await _unmount(tester);
+    });
+  });
+
+  // Emulator QA: Cancel on the Up next card must stop the next video for
+  // good, even when the player reports the end once more afterwards.
+  group('Up next Cancel', () {
+    testWidgets('Cancel stops autoplay, also after a second end signal; Play now still works', (tester) async {
+      final a = _video('a');
+      final b = _video('b');
+      final first = _Engine(name: 'a');
+      final second = _Engine(name: 'b');
+      await _open(tester, _Harness([first, second]), item: a, queue: VideoQueue(items: [a, b], index: 0));
+
+      first.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('UP NEXT IN 5 S'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.tap(find.text('Cancel'));
+      await tester.pump();
+      expect(find.textContaining('UP NEXT'), findsNothing);
+
+      first.reportEndAgain();
+      await tester.pump();
+      await tester.pump();
+      expect(find.textContaining('UP NEXT'), findsNothing, reason: 'the countdown does not come back');
+      await tester.pump(const Duration(seconds: 10));
+      expect(second.initializedWith, isEmpty, reason: 'the next video never starts by itself');
+      expect(find.text(breakableTitle('Clip_a')), findsOneWidget);
+      await _unmount(tester);
+    });
+
+    testWidgets('after Cancel, Replay to the end offers Up next again', (tester) async {
+      final a = _video('a');
+      final b = _video('b');
+      final first = _Engine(name: 'a');
+      final second = _Engine(name: 'b');
+      await _open(tester, _Harness([first, second]), item: a, queue: VideoQueue(items: [a, b], index: 0));
+
+      first.complete();
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.text('Cancel'));
+      await tester.pump();
+      await tester.tap(find.byTooltip('Replay'));
+      await tester.pump();
+      first.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('UP NEXT IN 5 S'), findsOneWidget);
       await _unmount(tester);
     });
   });

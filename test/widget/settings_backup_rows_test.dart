@@ -18,6 +18,7 @@ import 'package:mediahub/data/repositories/library_repository_impl.dart' show da
 import 'package:mediahub/features/downloads/mobile_data_guard.dart';
 import 'package:mediahub/features/music_player/music_audio_handler.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
+import 'package:mediahub/features/settings/backup_restore.dart';
 import 'package:mediahub/features/settings/settings_screen.dart';
 import 'package:mediahub/personal/personal_tools_notifier.dart';
 import 'package:mocktail/mocktail.dart';
@@ -182,5 +183,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Restore this backup?'), findsNothing);
     expect(find.text('This file is not a MediaHub backup.'), findsOneWidget);
+  });
+
+  // Emulator QA: the confirm dialog named favourites and playlists only,
+  // while the result dialog also listed play counts, positions and settings.
+  test('the confirm dialog lists everything a restore brings back', () {
+    final t = DateTime(2026, 11, 23, 12);
+    final summary = restoreSummary(BackupData(
+      createdAt: t,
+      items: [
+        BackupItem(id: 'a', mediaType: 'audio', title: 'A', sizeBytes: 1, durationMs: 1, favorite: true, playCount: 3),
+        BackupItem(id: 'b', mediaType: 'audio', title: 'B', sizeBytes: 1, durationMs: 1, favorite: true),
+        BackupItem(id: 'c', mediaType: 'audio', title: 'C', sizeBytes: 1, durationMs: 1, lastPlayed: t),
+      ],
+      playlists: const [BackupPlaylist(name: 'Road trip', itemIds: ['a', 'b', 'c'])],
+      videoPositions: [BackupVideoPosition(itemId: 'v', positionMs: 1000, durationMs: 9000, updatedAt: t)],
+      settings: const {'a': true, 'b': false, 'c': <String>['x']},
+    ));
+    expect(summary, contains('2 favourites'));
+    expect(summary, contains('1 playlist (3 songs)'));
+    expect(summary, contains('2 play counts'));
+    expect(summary, contains('1 video position'));
+    expect(summary, contains('3 settings'));
+    expect(summary, contains('Nothing on this phone is removed.'));
+
+    final empty = restoreSummary(BackupData(createdAt: t, items: const [], playlists: const [], videoPositions: const [], settings: const {}));
+    expect(empty, contains('Nothing to restore.'));
   });
 }

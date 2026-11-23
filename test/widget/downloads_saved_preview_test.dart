@@ -1,6 +1,7 @@
 // The Downloads tab keeps its Saved group short: every saved file is also in
 // Videos or Music, so only the newest few show, and one "Show all N saved"
-// row opens the rest in place (and "Show less" folds them away again).
+// row opens the rest in place; "Show less", now at the end of the Saved list,
+// folds them away again.
 // Anything that needs the user (running, waiting, paused, failed) always
 // shows.
 import 'dart:async';
@@ -194,7 +195,7 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('30 saved: five, then all thirty under the toggle, then five again', (tester) async {
+    testWidgets('30 saved: five, then all thirty with "Show less" at the end, then five again', (tester) async {
       await pump(tester, _saved(30));
       expect(_shownTitles(tester), [for (var i = 1; i <= 5; i++) _title(i)]);
       expect(_listRowCount(tester), 1 + 5 + 1);
@@ -207,10 +208,11 @@ void main() {
       await tapToggle(tester);
       expect(_shownTitles(tester), [for (var i = 1; i <= 30; i++) _title(i)]);
       expect(_listRowCount(tester), 1 + 30 + 1);
-      // The toggle stays where it was: the older ones open below it.
+      // The older ones open in place and the toggle moves to the end of the
+      // Saved list, after the oldest one.
       final toggleTop = tester.getTopLeft(find.byKey(_toggleKey)).dy;
-      expect(tester.getTopLeft(find.text(_title(5))).dy, lessThan(toggleTop));
-      expect(tester.getTopLeft(find.text(_title(6))).dy, greaterThan(toggleTop));
+      expect(tester.getTopLeft(find.text(_title(6))).dy, lessThan(toggleTop));
+      expect(tester.getTopLeft(find.text(_title(30))).dy, lessThan(toggleTop));
       expect(find.text('Show less'), findsOneWidget);
       expect(find.byIcon(Icons.expand_less_rounded), findsOneWidget);
 
@@ -248,6 +250,10 @@ void main() {
 
     await tapToggle(tester);
     expect(_shownTitles(tester).length, 4 + 30 + 8);
+    // Open: "Show less" sits after the oldest saved one, before Failed.
+    final openToggleTop = tester.getTopLeft(find.byKey(_toggleKey)).dy;
+    expect(tester.getTopLeft(find.text(_title(30))).dy, lessThan(openToggleTop));
+    expect(tester.getTopLeft(find.text('Failed 1')).dy, greaterThan(openToggleTop));
     await unmount(tester);
   });
 

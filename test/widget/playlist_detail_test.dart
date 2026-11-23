@@ -310,6 +310,29 @@ void main() {
     expect(playback.calls.last, 'playNextAll:song_1,song_2,song_3');
   });
 
+  // Emulator QA: a playlist's own menu offered "Add to playlist…".
+  testWidgets("a playlist's own menu has no Add to playlist", (tester) async {
+    await pump(tester, PlaylistDetailScreen(playlist: _playlist('Road trip')));
+    await tester.tap(find.byTooltip('More options'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add to queue'), findsOneWidget);
+    expect(find.text('Delete playlist'), findsOneWidget);
+    expect(find.text('Add to playlist…'), findsNothing);
+  });
+
+  testWidgets("an album's menu still offers Add to playlist", (tester) async {
+    when(() => repo.watchAlbumSongs(any())).thenAnswer((_) => Stream.value(_songs));
+    await pump(
+      tester,
+      const AlbumDetailScreen(
+        album: AlbumGroup(album: 'Album', artist: 'Test Artist', songCount: 3, totalDurationMs: 0, key: 'id:1'),
+      ),
+    );
+    await tester.tap(find.byTooltip('More options'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add to playlist…'), findsOneWidget);
+  });
+
   testWidgets('an album shows its track numbers and its year (LIB-02)', (tester) async {
     when(() => repo.watchAlbumSongs(any())).thenAnswer((_) => Stream.value([
           _song(1, track: 3, year: 2019),

@@ -55,6 +55,7 @@ class YoutubeDirectDownloadFlow {
     String? titleHint,
     VoidCallback? onQueued,
     VoidCallback? onNotificationDenied,
+    VoidCallback? onRetry,
   }) async {
     final messenger = ScaffoldMessenger.of(context);
     final resolver = ref.read(youtubeDirectResolverProvider);
@@ -71,13 +72,16 @@ class YoutubeDirectDownloadFlow {
 
     final result = outcome.value;
     if (result == null) {
-      messenger.showSnackBar(SnackBar(content: Text(friendlyError(outcome.error))));
+      // Offline, too slow, blocked: said until closed, with Retry.
+      WebLinkDownloadFlow.showLookupFailure(messenger, friendlyError(outcome.error), onRetry: onRetry);
       return;
     }
 
     final byId = {for (final c in result.choices) c.id: c};
     YoutubeDirectChoice? picked;
     await showModalBottomSheet<void>(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,

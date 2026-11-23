@@ -117,6 +117,8 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> with SingleTickerProvid
     final sheetDuration = MotionTokens.duration(context, MotionTokens.sheet);
     final sheetContext = _sheetContext(context);
     showModalBottomSheet(
+      // Over the Ink Dock: the sheet's barrier covers and dims it too.
+      useRootNavigator: true,
       context: sheetContext,
       isScrollControlled: true,
       // Full height, under the status bar too, so the stage's light status

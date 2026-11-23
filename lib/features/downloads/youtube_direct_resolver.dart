@@ -182,18 +182,20 @@ class YoutubeDirectOptions {
         _videoChoice(h, byHeight[h]!.$1, byHeight[h]!.$2),
     ];
 
-    // --- audio only: list all distinct audio qualities available ---
+    // --- audio only: every distinct quality, M4A first, then highest bitrate.
+    // The best one keeps the stable id `yt_audio` (link refresh looks it up).
+    final audioStreams = [
+      for (final s in streams.audio)
+        if (playable(s.container.toLowerCase())) s,
+    ]..sort((a, b) => _betterAudio(a, b) ? -1 : (_betterAudio(b, a) ? 1 : 0));
     final audioChoices = <YoutubeDirectChoice>[];
-    final seenBitrates = <int>{};
-    for (final s in streams.audio) {
-      final container = s.container.toLowerCase();
-      if (!playable(container)) continue;
+    final seen = <String>{};
+    for (final s in audioStreams) {
       final uri = accept(s);
       if (uri == null) continue;
-      final kbps = s.bitrateKbps ?? 0;
-      if (seenBitrates.add(kbps)) {
-        audioChoices.add(_audioChoice(s, uri));
-      }
+      final key = '${s.container.toLowerCase()}${s.bitrateKbps ?? 0}';
+      if (!seen.add(key)) continue;
+      audioChoices.add(_audioChoice(s, uri, id: audioChoices.isEmpty ? 'yt_audio' : 'yt_audio_$key'));
     }
     final choices = [
       ...video,
@@ -249,13 +251,13 @@ class YoutubeDirectOptions {
     );
   }
 
-  static YoutubeDirectChoice _audioChoice(OnlineStream s, Uri uri) {
+  static YoutubeDirectChoice _audioChoice(OnlineStream s, Uri uri, {String id = 'yt_audio'}) {
     final container = s.container.toLowerCase();
     final ext = container == 'mp4' ? 'm4a' : container;
     final kbps = s.bitrateKbps;
     final rate = kbps != null && kbps > 0 ? ', $kbps kbps' : '';
     return YoutubeDirectChoice(
-      id: 'yt_audio',
+      id: id,
       uri: uri,
       isAudio: true,
       label: 'Audio only (${ext.toUpperCase()}$rate)',

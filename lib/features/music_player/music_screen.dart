@@ -100,7 +100,12 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     // MediaHub's own downloads, which show up by themselves): no refresh.
     final canScan = !PlatformInfo.isIOS;
 
+    // A phone turned sideways: the title, search and actions share one slim
+    // band so the songs keep most of the short screen.
+    final compact = InkDock.isCompactLandscape(context);
     final header = _MusicHeader(
+      compact: compact,
+      search: compact && hasLibrary ? _searchField(context, notifier, inline: true) : null,
       actions: [
         if (permission == MediaPermissionState.granted) ...[
           if (canScan)
@@ -115,18 +120,25 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
               tooltip: 'Scan device media',
               onPressed: state.isScanning ? null : () => notifier.scanDevice(),
             ),
-          PopupMenuButton<SongSortOption>(
-            icon: const Icon(Icons.sort_rounded),
-            tooltip: 'Sort songs',
-            onSelected: (sort) => notifier.setSongSort(sort),
-            itemBuilder: (context) => [
-              _sortItem(context, SongSortOption.title, 'Title', state),
-              _sortItem(context, SongSortOption.artist, 'Artist', state),
-              _sortItem(context, SongSortOption.album, 'Album', state),
-              _sortItem(context, SongSortOption.dateAdded, 'Date added', state),
-              _sortItem(context, SongSortOption.duration, 'Duration', state),
-              _sortItem(context, SongSortOption.mostPlayed, 'Most played', state),
-            ],
+          // Sorting applies to the songs list only: the other chips have none.
+          // Rebuilt on its own, so the tabs' lists are not opened again.
+          ListenableBuilder(
+            listenable: _tabController,
+            builder: (context, _) => _tabController.index != 0
+                ? const SizedBox.shrink()
+                : PopupMenuButton<SongSortOption>(
+              icon: const Icon(Icons.sort_rounded),
+              tooltip: 'Sort songs',
+              onSelected: (sort) => notifier.setSongSort(sort),
+              itemBuilder: (context) => [
+                _sortItem(context, SongSortOption.title, 'Title', state),
+                _sortItem(context, SongSortOption.artist, 'Artist', state),
+                _sortItem(context, SongSortOption.album, 'Album', state),
+                _sortItem(context, SongSortOption.dateAdded, 'Date added', state),
+                _sortItem(context, SongSortOption.duration, 'Duration', state),
+                _sortItem(context, SongSortOption.mostPlayed, 'Most played', state),
+              ],
+            ),
           ),
         ],
       ],
@@ -151,7 +163,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
                       SliverToBoxAdapter(
                         child: _LimitedAccessBanner(onOpenSettings: () => notifier.openSettings()),
                       ),
-                    SliverToBoxAdapter(child: _searchField(context, notifier)),
+                    if (!compact) SliverToBoxAdapter(child: _searchField(context, notifier)),
                     if (error != null && state.items.isNotEmpty)
                       SliverToBoxAdapter(
                         child: _ErrorBanner(
@@ -239,9 +251,11 @@ class _MusicScreenState extends ConsumerState<MusicScreen> with SingleTickerProv
     );
   }
 
-  Widget _searchField(BuildContext context, BaseLibraryNotifier notifier) {
+  Widget _searchField(BuildContext context, BaseLibraryNotifier notifier, {bool inline = false}) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.sm8),
+      padding: inline
+          ? const EdgeInsets.symmetric(horizontal: AppSpacing.md12)
+          : const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.sm8),
       child: TextField(
         controller: _searchController,
         onChanged: (val) {
@@ -783,11 +797,40 @@ class _ErrorBanner extends StatelessWidget {
 class _MusicHeader extends StatelessWidget {
   final List<Widget> actions;
 
-  const _MusicHeader({required this.actions});
+  /// Landscape on a phone: one slim band, no subtitle, the [search] field
+  /// between the title and the actions.
+  final bool compact;
+  final Widget? search;
+
+  const _MusicHeader({required this.actions, this.compact = false, this.search});
 
   @override
   Widget build(BuildContext context) {
     final type = context.typography;
+    final search = this.search;
+    if (compact) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.xs4),
+        child: HeroBand(
+          padding: EdgeInsetsDirectional.fromSTEB(
+            AppSpacing.xl20,
+            AppSpacing.xs4,
+            actions.isEmpty ? AppSpacing.xl20 : AppSpacing.xs4,
+            AppSpacing.xs4,
+          ),
+          child: Row(
+            children: [
+              Semantics(
+                header: true,
+                child: Text('Music', style: type.screenTitle, maxLines: 1),
+              ),
+              if (search != null) Expanded(child: search) else const Spacer(),
+              ...actions,
+            ],
+          ),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.md12, AppSpacing.lg16, AppSpacing.md12),
       child: EntranceFade(

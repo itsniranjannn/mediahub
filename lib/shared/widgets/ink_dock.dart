@@ -35,7 +35,36 @@ class InkDock extends StatelessWidget {
   /// so the corners read square.
   final bool squareCorners;
 
-  const InkDock({super.key, this.miniPlayer, required this.navigation, this.blur = 24, this.squareCorners = false});
+  /// Landscape on a phone (short screen): the mini player and a slim,
+  /// icons-only navigation share one row, so the page keeps most of the
+  /// height. The dock's fill reaches under the side system insets (display
+  /// cutout, navigation bar) while its content stays clear of them.
+  final bool inline;
+
+  const InkDock({
+    super.key,
+    this.miniPlayer,
+    required this.navigation,
+    this.blur = 24,
+    this.squareCorners = false,
+    this.inline = false,
+  });
+
+  /// True on a short landscape screen (a phone turned sideways), where the
+  /// dock goes [inline] and the navigation turns compact.
+  static bool isCompactLandscape(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return size.width > size.height && size.height < compactLandscapeMaxHeight;
+  }
+
+  /// Screens shorter than this (dp) in landscape get the compact dock.
+  static const double compactLandscapeMaxHeight = 500;
+
+  /// The compact (landscape) navigation's height.
+  static const double compactNavigationHeight = 48;
+
+  /// The compact navigation's width per tab.
+  static const double compactSlotWidth = 64;
 
   /// The system bottom inset the dock pads for: the larger of the padding
   /// and the view padding, so gesture-nav phones that report the bar in only
@@ -76,7 +105,11 @@ class InkDock extends StatelessWidget {
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
                   child: CustomPaint(
-                    foregroundPainter: _DockEdgePainter(
+                    // Online (square corners): no light top line between the
+                    // page and the ink, which read as a gap in light mode.
+                    foregroundPainter: squareCorners
+                        ? null
+                        : _DockEdgePainter(
                       color: palette.dockLine,
                       radius: topRadius,
                       glint: palette.voltGlow.withValues(
@@ -88,7 +121,22 @@ class InkDock extends StatelessWidget {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [?miniPlayer, navigation],
+                        children: inline
+                            ? [
+                                Padding(
+                                  padding: EdgeInsets.only(
+                                    left: MediaQuery.viewPaddingOf(context).left,
+                                    right: MediaQuery.viewPaddingOf(context).right,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(child: miniPlayer ?? const SizedBox.shrink()),
+                                      navigation,
+                                    ],
+                                  ),
+                                ),
+                              ]
+                            : [?miniPlayer, navigation],
                       ),
                     ),
                   ),

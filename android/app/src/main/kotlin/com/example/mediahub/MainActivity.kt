@@ -119,6 +119,15 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Draw into the display cutout in landscape too (edge to edge): by
+        // default Android letterboxes that edge in black. The app fills the
+        // side insets with its own canvas (AppShell).
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         // A fresh Activity started from the download notification (not a re-creation).
         if (savedInstanceState == null) handleAppIntent(intent)
     }

@@ -368,6 +368,12 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
   Timer? _persistenceTimer;
   Timer? _seekSaveTimer;
   Timer? _upNextTimer;
+
+  /// The viewer tapped Cancel on Up next for this video: a later "ended"
+  /// signal (the player reporting the end again, a stand-in engine stopping
+  /// at the end) must not start the countdown again. Cleared by Replay, a
+  /// seek away from the end and the next video.
+  bool _upNextDismissed = false;
   StreamSubscription<Duration>? _posSub;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<String?>? _errSub;
@@ -825,6 +831,7 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
     _switching = true;
     try {
       _upNextTimer?.cancel();
+      _upNextDismissed = false;
       // Stop listening to the old player first: an error from it while the
       // save below runs must not start a retry next to this switch.
       _cancelPlaybackListeners();
@@ -856,7 +863,7 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
       position: state.duration > Duration.zero ? state.duration : state.position,
     );
     _session?.update(state);
-    if (state.hasNext) _startUpNext();
+    if (state.hasNext && !_upNextDismissed) _startUpNext();
   }
 
   void _startUpNext() {
@@ -874,8 +881,14 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
     });
   }
 
-  /// "Cancel" on the Up next card: stay on this video.
+  /// "Cancel" on the Up next card: stay on this video; the next one does
+  /// not start, not even when the player reports the end once more.
   void cancelUpNext() {
+    _upNextDismissed = true;
+    _stopUpNext();
+  }
+
+  void _stopUpNext() {
     _upNextTimer?.cancel();
     _upNextTimer = null;
     if (state.upNextSeconds != null) state = state.copyWith(upNextSeconds: null);
@@ -883,7 +896,8 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
 
   /// The Replay button at the end.
   Future<void> replay() async {
-    cancelUpNext();
+    _stopUpNext();
+    _upNextDismissed = false;
     _viewerWantsPlay = true;
     await seekTo(Duration.zero);
     await _engine.play();
@@ -967,7 +981,10 @@ class VideoPlayerControllerNotifier extends Notifier<VideoPlaybackState> {
     await _engine.seekTo(clamped);
     if (!ref.mounted) return;
     final leavesEnd = state.isCompleted && clamped < state.duration;
-    if (leavesEnd) cancelUpNext();
+    if (leavesEnd) {
+      _stopUpNext();
+      _upNextDismissed = false;
+    }
     state = state.copyWith(position: clamped, isCompleted: leavesEnd ? false : null);
     _session?.update(state);
     if (state.isPlaying) {

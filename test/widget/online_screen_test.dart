@@ -146,6 +146,20 @@ void main() {
         .setMockMethodCallHandler(SystemChannels.platform, null);
   });
 
+  // Emulator QA (light theme): a 1-2 px light line between the WebView and
+  // the dock. The page's bottom edge sits on the dock's ink, not the canvas.
+  testWidgets('light theme: the last pixels under the page are dock ink, not the light canvas', (tester) async {
+    await _pumpOnline(tester, theme: AppTheme.lightTheme);
+    final seam = find.byKey(const ValueKey('online_dock_seam'));
+    expect(seam, findsOneWidget);
+    expect(tester.widget<ColoredBox>(seam).color, AppPalette.dark.dock.withValues(alpha: 1));
+    final page = tester.getRect(key('fake_webview'));
+    final under = tester.getRect(seam);
+    expect(under.bottom, page.bottom, reason: 'flush with the bottom of the page, where the dock starts');
+    expect(under.height, onlinePageSeamHeight);
+    expect(under.width, page.width);
+  });
+
   testWidgets('loads YouTube home with the bridge injected and a token', (tester) async {
     final h = await _pumpOnline(tester);
     expect(key('fake_webview'), findsOneWidget);
