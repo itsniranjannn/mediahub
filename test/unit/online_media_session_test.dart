@@ -187,7 +187,29 @@ void main() {
     }
   }
 
-  test('paused for 30 minutes hands the session back; playing again cancels that', () {
+  test('a paused video keeps the session (and its Play button) until the user closes it', () {
+    fakeAsync((async) {
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      push(state(OnlineMediaStatus.paused, event: 'pause'));
+      session.appLifecycleChanged(AppLifecycleState.detached);
+      async.elapse(const Duration(hours: 6));
+      expect(host.log.contains('clear'), isFalse);
+      expect(session.isActive, isTrue);
+      expect(host.active, same(session));
+      sent.clear();
+      host.active!.externalPlay();
+      async.flushMicrotasks();
+      expect(sent.first, const BridgeCommand.play());
+    });
+  });
+
+  test('with a paused release set: paused that long hands the session back; playing again cancels that', () {
+    session.dispose();
+    session = OnlineMediaSession(host: host, clock: () => now, pausedRelease: const Duration(minutes: 30));
+    session.attachSender((c) async {
+      sent.add(c);
+      return true;
+    });
     fakeAsync((async) {
       push(state(OnlineMediaStatus.playing, event: 'play'));
       push(state(OnlineMediaStatus.paused, event: 'pause'));
@@ -265,8 +287,9 @@ void main() {
       expect(session.media.value!.status, OnlineMediaStatus.paused);
       expect(session.media.value!.event, 'stale');
       expect(session.isActive, isTrue, reason: 'paused, so the notification can resume it');
-      async.elapse(const Duration(minutes: 30, seconds: 1));
-      expect(host.log.last, 'clear');
+      async.elapse(const Duration(hours: 2));
+      expect(host.log, isNot(contains('clear')), reason: 'the notification keeps a working Play button');
+      expect(session.isActive, isTrue);
     });
   });
 
@@ -538,6 +561,10 @@ void main() {
         async.flushMicrotasks();
         expect(sent, [const BridgeCommand.play()]);
         async.elapse(const Duration(seconds: 3));
+        // Asked once more first: a page that lost its window may drop the first play.
+        expect(sent, [const BridgeCommand.play(), const BridgeCommand.play(), const BridgeCommand.requestState()]);
+        expect(session.playWaitsForWindow, isFalse);
+        async.elapse(const Duration(seconds: 3));
         expect(session.playWaitsForWindow, isTrue);
         expect(host.last!.artist, OnlineMediaSession.tapToResumeLine);
         expect(host.active, same(session), reason: 'the notification stays on the video, never local music');
@@ -547,6 +574,41 @@ void main() {
         expect(session.playWaitsForWindow, isFalse);
         push(state(OnlineMediaStatus.playing, event: 'play'));
         expect(host.last!.artist, 'Channel');
+      });
+    });
+
+    test('a page that starts on the second play: no "tap to resume", no other player', () {
+      fakeAsync((async) {
+        var detachedPlays = 0;
+        session.onDetachedPlay = () async {
+          detachedPlays++;
+          return false;
+        };
+        push(state(OnlineMediaStatus.playing, event: 'play'));
+        push(state(OnlineMediaStatus.paused, event: 'pause'));
+        session.appLifecycleChanged(AppLifecycleState.detached);
+        sent.clear();
+        host.active!.externalPlay();
+        async.elapse(const Duration(seconds: 3));
+        push(state(OnlineMediaStatus.playing, event: 'play'));
+        async.elapse(const Duration(seconds: 10));
+        expect(session.playWaitsForWindow, isFalse);
+        expect(detachedPlays, 0);
+        expect(host.last!.artist, 'Channel');
+        expect(host.last!.playing, isTrue);
+        // Pause and play again, any number of times.
+        for (var i = 0; i < 3; i++) {
+          host.active!.externalPause();
+          async.flushMicrotasks();
+          push(state(OnlineMediaStatus.paused, event: 'pause'));
+          host.active!.externalPlay();
+          async.flushMicrotasks();
+          push(state(OnlineMediaStatus.playing, event: 'play'));
+          async.elapse(const Duration(seconds: 7));
+          expect(host.last!.playing, isTrue);
+          expect(session.playWaitsForWindow, isFalse);
+        }
+        expect(host.active, same(session));
       });
     });
 
@@ -593,5 +655,21 @@ void main() {
         expect(session.playWaitsForWindow, isFalse);
       });
     });
+  });
+
+  test('the streaming locks follow playing, and let go on pause, release and a lost page', () {
+    final changes = <bool>[];
+    final locked = OnlineMediaSession(host: FakeHost(), clock: () => now, onStreamingChanged: changes.add);
+    addTearDown(locked.dispose);
+    locked.attachSender((c) async => true);
+    void to(OnlineMediaState s) => locked.handleMessage(BridgeMediaMessage(s));
+    to(state(OnlineMediaStatus.playing, event: 'play'));
+    to(state(OnlineMediaStatus.playing, pos: 11));
+    expect(changes, [true]);
+    to(state(OnlineMediaStatus.paused, event: 'pause'));
+    expect(changes, [true, false]);
+    to(state(OnlineMediaStatus.playing, event: 'play'));
+    locked.detachPage();
+    expect(changes, [true, false, true, false]);
   });
 }

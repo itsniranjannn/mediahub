@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/platform/device_controls.dart';
+import '../../core/platform/playback_locks.dart';
 import '../../core/platform_info.dart';
 import '../music_player/music_audio_handler.dart';
 import '../music_player/playback_notifier.dart';
@@ -45,13 +46,14 @@ typedef BridgeCommandSender = Future<bool> Function(BridgeCommand command);
 class OnlineMediaSession implements ExternalPlaybackDelegate {
   OnlineMediaSession({
     required this.host,
-    this.pausedRelease = const Duration(minutes: 30),
+    this.pausedRelease,
     this.idleRelease = const Duration(seconds: 15),
     this.staleAfter = const Duration(seconds: 6),
     this.claimAfter = const Duration(seconds: 3),
     this.playCheckAfter = const Duration(seconds: 3),
     this.resumeBackgroundInterruptions = false,
     Stream<void> Function()? becomingNoisy,
+    this.onStreamingChanged,
     DateTime Function()? clock,
   })  : _clock = clock ?? DateTime.now,
         _becomingNoisy = becomingNoisy; // ignore: prefer_initializing_formals
@@ -60,9 +62,12 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   final ExternalPlaybackHost host;
   final DateTime Function() _clock;
 
-  /// How long a paused video keeps the notification (the music player's own
-  /// paused-idle stop is also 30 minutes).
-  final Duration pausedRelease;
+  /// How long a paused video keeps the notification; null (the default):
+  /// until the user closes it. A paused video's notification must keep a
+  /// working Play button however long it waits, also after the app was
+  /// swiped away from recents (letting go of the session there stops the
+  /// media service, and with it the page).
+  final Duration? pausedRelease;
   final Duration idleRelease;
   final Duration staleAfter;
 
@@ -82,6 +87,24 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   /// iOS: WebKit pauses the page's video as the app leaves the screen. A
   /// pause within [backgroundInterruptWindow] of that is undone once.
   final bool resumeBackgroundInterruptions;
+
+  /// Told true while the page's video plays as the phone's media session
+  /// and false once it stops (Android holds a Wi-Fi lock meanwhile, so a
+  /// stream keeps loading with the screen off and the app swiped away).
+  final void Function(bool streaming)? onStreamingChanged;
+  bool _streaming = false;
+
+  void _setStreaming(bool value) {
+    if (value == _streaming) return;
+    _streaming = value;
+    final cb = onStreamingChanged;
+    if (cb == null) return;
+    try {
+      cb(value);
+    } catch (e) {
+      debugPrint('[Online] streaming lock change failed: $e');
+    }
+  }
 
   /// Headphones unplugged (DeviceControls.watchBecomingNoisy('online')).
   final Stream<void> Function()? _becomingNoisy;
@@ -214,6 +237,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       _playWaitsForWindow = false; // it started after all
       _playCheckTimer?.cancel();
     }
+    if (s.isPlaying) _playRetried = false;
     final previous = media.value;
     final now = _clock();
     media.value = s;
@@ -234,11 +258,13 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
         _active = true;
         DiagnosticsService.instance.logEvent('online_media_session_claimed');
         host.setExternalSource(this, snapshotOf(s));
+        _setStreaming(true);
         _listenForNoisy();
         _watchTicks();
         return;
       }
       host.updateExternalMedia(this, snapshotOf(s));
+      _setStreaming(true);
       _watchTicks();
       return;
     }
@@ -246,9 +272,15 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
     _playingSince = null;
     _suppressed = false;
     _stopTickWatch();
+    _setStreaming(false);
     if (!_active) return;
     host.updateExternalMedia(this, snapshotOf(s));
-    _scheduleRelease(s.status == OnlineMediaStatus.none ? idleRelease : pausedRelease);
+    if (s.status == OnlineMediaStatus.none) {
+      _scheduleRelease(idleRelease);
+    } else {
+      final after = pausedRelease;
+      if (after != null) _scheduleRelease(after);
+    }
     if (s.status == OnlineMediaStatus.paused && s.event == 'pause' && (previous?.isPlaying ?? false)) {
       _lastPause = s;
       _lastPauseAt = now;
@@ -406,6 +438,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       if (!_active || _disposed) return;
       DiagnosticsService.instance.logEvent('online_media_session_released', {'reason': 'idle'});
       _active = false;
+      _setStreaming(false);
       _stopNoisy();
       host.clearExternalSource(this);
     });
@@ -467,31 +500,44 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   /// (swiped away from recents), this starts native stream playback instead.
   Future<bool> Function()? onDetachedPlay;
 
+  /// A play from the phone's controls was sent a second time (it did not
+  /// start the first time, without a window).
+  bool _playRetried = false;
+
   @override
   Future<void> externalPlay() async {
+    // The page (and its session) is still there after a pause, however long
+    // ago: Play goes to it, never to the local music.
+    _playRetried = false;
     final sent = await send(const BridgeCommand.play());
     if (!_detached || _disposed) return;
-    // No window: some WebViews (Samsung, Android 13) will not start a video
-    // in a page that lost its window. Check, and if it did not start, try
-    // native detached playback; if that is unavailable, say so in the
-    // notification and play once MediaHub is opened.
+    // No window (swiped away from recents): check that it started. If not,
+    // ask once more (a page that lost its window may take a moment, or drop
+    // the first play), then try native detached playback where there is
+    // one (iOS); only then say so in the notification and play once
+    // MediaHub is opened.
     _playCheckTimer?.cancel();
-    if (!sent) {
-      if (onDetachedPlay != null) {
-        final started = await onDetachedPlay!();
-        if (started) return;
+    _playCheckTimer = Timer(sent ? playCheckAfter : Duration.zero, _checkDetachedPlay);
+  }
+
+  Future<void> _checkDetachedPlay() async {
+    if (_disposed || !_detached || (media.value?.isPlaying ?? false)) return;
+    if (!_playRetried && hasSender) {
+      _playRetried = true;
+      DiagnosticsService.instance.logEvent('online_play_retry_detached');
+      final sent = await send(const BridgeCommand.play());
+      if (sent) {
+        send(const BridgeCommand.requestState());
+        _playCheckTimer = Timer(playCheckAfter, _checkDetachedPlay);
+        return;
       }
-      _waitForWindow();
-      return;
     }
-    _playCheckTimer = Timer(playCheckAfter, () async {
-      if (_disposed || !_detached || (media.value?.isPlaying ?? false)) return;
-      if (onDetachedPlay != null) {
-        final started = await onDetachedPlay!();
-        if (started) return;
-      }
-      _waitForWindow();
-    });
+    final detachedPlay = onDetachedPlay;
+    if (detachedPlay != null) {
+      final started = await detachedPlay();
+      if (started) return;
+    }
+    _waitForWindow();
   }
 
   void _waitForWindow() {
@@ -536,6 +582,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
     _cancelRelease();
     _stopTickWatch();
     _stopNoisy();
+    _setStreaming(false);
     if (!_active) return;
     _active = false;
     _suppressed = true;
@@ -545,6 +592,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   /// The WebView went away (or was recreated): hand the session back.
   void detachPage() {
     _sender = null;
+    _setStreaming(false);
     _cancelRelease();
     _stopTickWatch();
     _stopNoisy();
@@ -575,6 +623,7 @@ final onlineMediaSessionProvider = Provider<OnlineMediaSession>((ref) {
     host: ref.watch(audioHandlerProvider),
     resumeBackgroundInterruptions: PlatformInfo.isIOS,
     becomingNoisy: () => DeviceControls.watchBecomingNoisy(DeviceControls.pipOwnerOnline),
+    onStreamingChanged: (streaming) => PlaybackLocks.setStreaming(streaming),
   );
   ref.onDispose(session.dispose);
   return session;
