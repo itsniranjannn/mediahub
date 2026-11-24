@@ -698,15 +698,33 @@ void main() {
   group('a hand-over to a reloaded page honours the paused state', () {
     final watch = Uri.parse('https://m.youtube.com/watch?v=dQw4w9WgXcQ');
 
-    test('paused: the ready page is seeked and paused, never played', () {
+    test('paused: the ready page is seeked and paused, never played', () async {
       session.handoverOnNextPage(position: const Duration(seconds: 42), play: false, onHandover: () async {});
       session.handleMessage(BridgeReadyMessage(watch));
+      await pumpEventQueue();
       expect(sent, [BridgeCommand.seekTo(const Duration(seconds: 42)), const BridgeCommand.pause()]);
     });
 
-    test('playing: the ready page is seeked and played', () {
+    test('the native player is stopped before the ready page plays (one audio source)', () async {
+      final order = <String>[];
+      session.attachSender((c) async {
+        order.add(c.kind.name);
+        return true;
+      });
+      session.handoverOnNextPage(
+        position: const Duration(seconds: 42),
+        play: true,
+        onHandover: () async => order.add('native_stop'),
+      );
+      session.handleMessage(BridgeReadyMessage(watch));
+      await pumpEventQueue();
+      expect(order.indexOf('native_stop'), lessThan(order.indexOf('play')));
+    });
+
+    test('playing: the ready page is seeked and played', () async {
       session.handoverOnNextPage(position: const Duration(seconds: 42), play: true, onHandover: () async {});
       session.handleMessage(BridgeReadyMessage(watch));
+      await pumpEventQueue();
       expect(sent, [BridgeCommand.seekTo(const Duration(seconds: 42)), const BridgeCommand.play()]);
     });
 
@@ -715,13 +733,15 @@ void main() {
       await session.externalPause();
       sent.clear();
       session.handleMessage(BridgeReadyMessage(watch));
+      await pumpEventQueue();
       expect(sent, isNot(contains(const BridgeCommand.play())));
       expect(sent.last, const BridgeCommand.pause());
     });
 
-    test('the page autoplaying by itself after a paused hand-over is paused again', () {
+    test('the page autoplaying by itself after a paused hand-over is paused again', () async {
       session.handoverOnNextPage(position: Duration.zero, play: false, onHandover: () async {});
       session.handleMessage(BridgeReadyMessage(watch));
+      await pumpEventQueue();
       sent.clear();
       push(state(OnlineMediaStatus.playing, event: 'play'));
       expect(sent, [const BridgeCommand.pause()]);
@@ -735,6 +755,7 @@ void main() {
     test('a play from MediaHub ends the hold', () async {
       session.handoverOnNextPage(position: Duration.zero, play: false, onHandover: () async {});
       session.handleMessage(BridgeReadyMessage(watch));
+      await pumpEventQueue();
       await session.send(const BridgeCommand.play());
       sent.clear();
       push(state(OnlineMediaStatus.playing, event: 'play'));

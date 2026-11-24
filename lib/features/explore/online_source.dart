@@ -1,13 +1,20 @@
 import 'dart:async';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+
 import 'online_models.dart';
 
 /// Where online search results and streams come from.
 abstract class OnlineSource {
   Future<List<OnlineVideo>> search(String query);
-  Future<OnlineStreams> streams(String videoId);
+
+  /// [variant] asks for the streams through another YouTube client (0 is
+  /// the usual one): a link one client gives can be refused (HTTP 403) where
+  /// another's plays. Sources with one way only ignore it.
+  Future<OnlineStreams> streams(String videoId, {int variant = 0});
   void dispose();
 }
 
@@ -27,14 +34,16 @@ class YoutubeExplodeSource implements OnlineSource {
       return list
           .where((v) => OnlineVideo.isValidId(v.id.value))
           .take(30)
-          .map((v) => OnlineVideo(
-                id: v.id.value,
-                title: v.title,
-                author: v.author,
-                duration: v.duration,
-                thumbnailUrl: v.thumbnails.mediumResUrl,
-                isLive: v.isLive,
-              ))
+          .map(
+            (v) => OnlineVideo(
+              id: v.id.value,
+              title: v.title,
+              author: v.author,
+              duration: v.duration,
+              thumbnailUrl: v.thumbnails.mediumResUrl,
+              isLive: v.isLive,
+            ),
+          )
           .toList();
     } on TimeoutException {
       throw const OnlineException('Search timed out. Check your connection and try again.');
@@ -47,41 +56,54 @@ class YoutubeExplodeSource implements OnlineSource {
     }
   }
 
+  /// The client sets tried in turn ([streams]'s variant).
+  static final List<List<YoutubeApiClient>> clientVariants = [
+    [YoutubeApiClient.ios, YoutubeApiClient.androidSdkless],
+    [YoutubeApiClient.androidVr],
+    [YoutubeApiClient.tv],
+    [YoutubeApiClient.safari],
+    [YoutubeApiClient.mweb],
+    [YoutubeApiClient.androidMusic],
+  ];
+
   @override
-  Future<OnlineStreams> streams(String videoId) async {
+  Future<OnlineStreams> streams(String videoId, {int variant = 0}) async {
     if (!OnlineVideo.isValidId(videoId)) {
       throw const OnlineException('Invalid video.');
     }
     try {
-      final manifest = await _yt.videos.streamsClient.getManifest(
-        VideoId(videoId),
-        ytClients: [YoutubeApiClient.ios, YoutubeApiClient.androidSdkless],
-      ).timeout(_timeout);
+      final manifest = await _yt.videos.streamsClient
+          .getManifest(VideoId(videoId), ytClients: clientVariants[variant.clamp(0, clientVariants.length - 1)])
+          .timeout(_timeout);
 
       final audio = manifest.audioOnly
-          .map((s) => OnlineStream(
-                url: s.url.toString(),
-                kind: OnlineStreamKind.audio,
-                label: '${s.bitrate.kiloBitsPerSecond.round()} kbps',
-                container: s.container.name,
-                sizeBytes: s.size.totalBytes,
-                bitrateKbps: s.bitrate.kiloBitsPerSecond.round(),
-              ))
+          .map(
+            (s) => OnlineStream(
+              url: s.url.toString(),
+              kind: OnlineStreamKind.audio,
+              label: '${s.bitrate.kiloBitsPerSecond.round()} kbps',
+              container: s.container.name,
+              sizeBytes: s.size.totalBytes,
+              bitrateKbps: s.bitrate.kiloBitsPerSecond.round(),
+            ),
+          )
           .toList();
 
       // Sort audio streams by bitrate descending so the highest quality (e.g. 160 kbps, 128 kbps) is preferred
       audio.sort((a, b) => (b.bitrateKbps ?? 0).compareTo(a.bitrateKbps ?? 0));
 
       final video = manifest.muxed
-          .map((s) => OnlineStream(
-                url: s.url.toString(),
-                kind: OnlineStreamKind.video,
-                label: '${s.videoResolution.height}p',
-                container: s.container.name,
-                sizeBytes: s.size.totalBytes,
-                bitrateKbps: s.bitrate.kiloBitsPerSecond.round(),
-                height: s.videoResolution.height,
-              ))
+          .map(
+            (s) => OnlineStream(
+              url: s.url.toString(),
+              kind: OnlineStreamKind.video,
+              label: '${s.videoResolution.height}p',
+              container: s.container.name,
+              sizeBytes: s.size.totalBytes,
+              bitrateKbps: s.bitrate.kiloBitsPerSecond.round(),
+              height: s.videoResolution.height,
+            ),
+          )
           .toList();
 
       // Sort video streams by resolution height descending (720p, 480p, 360p)
@@ -152,7 +174,7 @@ class DemoOnlineSource implements OnlineSource {
   }
 
   @override
-  Future<OnlineStreams> streams(String videoId) async {
+  Future<OnlineStreams> streams(String videoId, {int variant = 0}) async {
     throw const OnlineException('Demo mode: playback is disabled.');
   }
 
@@ -162,8 +184,40 @@ class DemoOnlineSource implements OnlineSource {
 
 const bool kMediaHubDemo = bool.fromEnvironment('MEDIAHUB_DEMO');
 
+/// Debug fixture builds with a local media server (see kOnlineFixtureMedia):
+/// every video's stream is the server's audio file.
+const String _fixtureMedia = kReleaseMode ? '' : String.fromEnvironment('MEDIAHUB_FIXTURE_MEDIA');
+
+class FixtureMediaSource implements OnlineSource {
+  FixtureMediaSource(this.base, this.fallback);
+  final String base;
+  final OnlineSource fallback;
+
+  @override
+  Future<List<OnlineVideo>> search(String query) => fallback.search(query);
+
+  @override
+  Future<OnlineStreams> streams(String videoId, {int variant = 0}) async => OnlineStreams(
+    audio: [
+      OnlineStream(
+        url: '$base/audio.m4a',
+        kind: OnlineStreamKind.audio,
+        label: '128 kbps',
+        container: 'm4a',
+        sizeBytes: 0,
+        bitrateKbps: 128,
+      ),
+    ],
+    video: const [],
+  );
+
+  @override
+  void dispose() => fallback.dispose();
+}
+
 final onlineSourceProvider = Provider<OnlineSource>((ref) {
-  final OnlineSource source = kMediaHubDemo ? DemoOnlineSource() : YoutubeExplodeSource();
+  final OnlineSource base = kMediaHubDemo ? DemoOnlineSource() : YoutubeExplodeSource();
+  final OnlineSource source = _fixtureMedia.isNotEmpty ? FixtureMediaSource(_fixtureMedia, base) : base;
   ref.onDispose(source.dispose);
   return source;
 });

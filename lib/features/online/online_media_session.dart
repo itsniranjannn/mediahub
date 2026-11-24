@@ -221,23 +221,35 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
         _handoverTimeout?.cancel();
         _handoverTimeout = null;
 
-        if (pos != null) {
-          send(BridgeCommand.seekTo(pos));
-        }
-        if (play || _playOnNextPage) {
-          _playOnNextPage = false;
-          expectPagePlay();
-          DiagnosticsService.instance.logEvent('online_play_restored_page');
-          send(const BridgeCommand.play());
-        } else if (handover || pauseNext) {
-          // The user was not playing: YouTube's watch page plays by itself,
-          // so it is told to stay paused, now and when its video starts.
-          DiagnosticsService.instance.logEvent('online_handover_paused');
-          _holdPausedUntil = _clock().add(holdPausedFor);
-          send(const BridgeCommand.pause());
+        final playNext = play || _playOnNextPage;
+        _playOnNextPage = false;
+        void toPage() {
+          if (pos != null) {
+            send(BridgeCommand.seekTo(pos));
+          }
+          if (playNext) {
+            expectPagePlay();
+            DiagnosticsService.instance.logEvent('online_play_restored_page');
+            send(const BridgeCommand.play());
+          } else if (handover || pauseNext) {
+            // The user was not playing: YouTube's watch page plays by itself,
+            // so it is told to stay paused, now and when its video starts.
+            DiagnosticsService.instance.logEvent('online_handover_paused');
+            _holdPausedUntil = _clock().add(holdPausedFor);
+            send(const BridgeCommand.pause());
+          }
         }
         if (handoverCb != null) {
-          unawaited(handoverCb());
+          // The native player stops (and the user's queue comes back) before
+          // the page plays and claims the controls, never after.
+          unawaited(() async {
+            try {
+              await handoverCb();
+            } catch (_) {}
+            if (!_disposed) toPage();
+          }());
+        } else {
+          toPage();
         }
     }
   }
@@ -681,6 +693,35 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
     _active = false;
     _suppressed = true;
     _releasedAt = _clock();
+  }
+
+  /// The native hand-off loaded the video paused (the task was swiped away
+  /// while it was paused): the phone's controls now belong to the native
+  /// player, so their Play starts it instead of the page, which cannot play
+  /// without a window.
+  /// The hand-off gave a paused video back to the page: the page takes the
+  /// phone's controls again (paused), so the notification and the media
+  /// service stay, and a later swipe-away still finds a session to keep.
+  void claimPaused() {
+    final s = media.value;
+    if (_disposed || _active || _sender == null || s == null || s.videoId == null) return;
+    DiagnosticsService.instance.logEvent('online_media_session_claimed', {'paused': true});
+    _suppressed = false;
+    _active = true;
+    host.setExternalSource(this, snapshotOf(s.isPlaying ? s.withStatus(OnlineMediaStatus.paused, event: 'handback') : s));
+  }
+
+  void yieldToNative() {
+    if (_disposed || !_active) return;
+    DiagnosticsService.instance.logEvent('online_media_session_released', {'reason': 'native_handoff'});
+    _cancelRelease();
+    _stopTickWatch();
+    _stopNoisy();
+    _setStreaming(false);
+    _active = false;
+    _suppressed = true;
+    _releasedAt = _clock();
+    host.clearExternalSource(this);
   }
 
   /// The WebView went away (or was recreated): hand the session back.

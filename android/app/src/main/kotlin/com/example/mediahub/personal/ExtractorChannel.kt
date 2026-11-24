@@ -664,7 +664,10 @@ class ExtractorChannel(
                                 "abr" to fmt.optDouble("abr", 0.0),
                                 "fps" to fmt.optDouble("fps", 0.0),
                                 "vcodec" to vcodec,
-                                "acodec" to acodec
+                                "acodec" to acodec,
+                                // The direct media link (https only): the Online tab's swipe-away
+                                // hand-off plays an audio-only one natively. Never logged.
+                                "url" to fmt.optString("url", "").takeIf { it.startsWith("https://") }
                             )
                         )
                     }

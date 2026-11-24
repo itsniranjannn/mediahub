@@ -50,7 +50,7 @@ class _NoPlayer implements HandoffPlayer {
   @override
   Future<void> pause() async {}
   @override
-  Future<void> playAlone(domain.MediaItem item, Duration position) async {}
+  Future<void> playAlone(domain.MediaItem item, Duration position, {bool play = true}) async {}
   @override
   Future<void> restoreLocal(domain.PlaybackState? saved) async {}
   @override

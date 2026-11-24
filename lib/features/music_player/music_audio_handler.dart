@@ -857,6 +857,15 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// A local start the user made in the app: local music owns the controls again.
   void _localChosen() => _setExternalHeld(false);
 
+  /// The Online hand-off loaded its stream here (paused) because the page
+  /// lost its window: the phone's controls belong to this player now, also
+  /// its Play (no "held" page source left to send it to).
+  void takeControlsFromExternal({required String reason}) {
+    _localChosen();
+    _releaseExternal(reason: reason);
+    _broadcastAudioServiceState();
+  }
+
   // --- favourite (the notification's heart) ----------------------------------
   StreamSubscription<bool>? _favoriteSub;
   String? _favoriteFor;
