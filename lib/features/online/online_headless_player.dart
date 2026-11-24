@@ -124,12 +124,14 @@ class OnlineHeadlessPlayer {
     _starting = false;
     final s = session.media.value;
     final position = session.estimatedPosition() ?? Duration.zero;
+    // A pause just sent (its "paused" report not in yet) counts.
+    final playing = session.userPlaying;
     session.attachSender(null);
     if (page != null) unawaited(page.dispose());
-    DiagnosticsService.instance.logEvent('online_headless_handback', {'playing': s?.isPlaying ?? false});
+    DiagnosticsService.instance.logEvent('online_headless_handback', {'playing': playing});
     final url = s?.pageUrl;
     if (url == null) return null;
-    return OnlineHeadlessHandBack(url: onlineUrlAt(url, position), position: position, playing: s?.isPlaying ?? false);
+    return OnlineHeadlessHandBack(url: onlineUrlAt(url, position), position: position, playing: playing);
   }
 
   void dispose() {

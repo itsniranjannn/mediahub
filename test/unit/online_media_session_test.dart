@@ -672,4 +672,74 @@ void main() {
     locked.detachPage();
     expect(changes, [true, false, true, false]);
   });
+
+  group('a hand-over to a reloaded page honours the paused state', () {
+    final watch = Uri.parse('https://m.youtube.com/watch?v=dQw4w9WgXcQ');
+
+    test('paused: the ready page is seeked and paused, never played', () {
+      session.handoverOnNextPage(position: const Duration(seconds: 42), play: false, onHandover: () async {});
+      session.handleMessage(BridgeReadyMessage(watch));
+      expect(sent, [BridgeCommand.seekTo(const Duration(seconds: 42)), const BridgeCommand.pause()]);
+    });
+
+    test('playing: the ready page is seeked and played', () {
+      session.handoverOnNextPage(position: const Duration(seconds: 42), play: true, onHandover: () async {});
+      session.handleMessage(BridgeReadyMessage(watch));
+      expect(sent, [BridgeCommand.seekTo(const Duration(seconds: 42)), const BridgeCommand.play()]);
+    });
+
+    test('a pause pressed while the page loads wins over the hand-over play', () async {
+      session.handoverOnNextPage(position: const Duration(seconds: 5), play: true, onHandover: () async {});
+      await session.externalPause();
+      sent.clear();
+      session.handleMessage(BridgeReadyMessage(watch));
+      expect(sent, isNot(contains(const BridgeCommand.play())));
+      expect(sent.last, const BridgeCommand.pause());
+    });
+
+    test('the page autoplaying by itself after a paused hand-over is paused again', () {
+      session.handoverOnNextPage(position: Duration.zero, play: false, onHandover: () async {});
+      session.handleMessage(BridgeReadyMessage(watch));
+      sent.clear();
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      expect(sent, [const BridgeCommand.pause()]);
+      // Long after, a play is the user's own.
+      sent.clear();
+      now = now.add(OnlineMediaSession.holdPausedFor + const Duration(seconds: 1));
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      expect(sent, isEmpty);
+    });
+
+    test('a play from MediaHub ends the hold', () async {
+      session.handoverOnNextPage(position: Duration.zero, play: false, onHandover: () async {});
+      session.handleMessage(BridgeReadyMessage(watch));
+      await session.send(const BridgeCommand.play());
+      sent.clear();
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      expect(sent, isEmpty);
+    });
+
+    test('a page restored paused after a cold start does not autoplay', () {
+      session.pauseOnNextPage();
+      session.handleMessage(BridgeReadyMessage(watch));
+      expect(sent, [const BridgeCommand.pause()]);
+    });
+
+    test('an ordinary page load is left alone', () {
+      session.handleMessage(BridgeReadyMessage(watch));
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      expect(sent, isEmpty);
+    });
+
+    test('userPlaying: a pause sent after the last "playing" report counts', () async {
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      expect(session.userPlaying, isTrue);
+      now = now.add(const Duration(milliseconds: 300));
+      await session.externalPause();
+      expect(session.userPlaying, isFalse, reason: 'its "paused" report is not in yet');
+      now = now.add(const Duration(milliseconds: 300));
+      push(state(OnlineMediaStatus.paused, event: 'pause'));
+      expect(session.userPlaying, isFalse);
+    });
+  });
 }

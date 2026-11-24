@@ -177,7 +177,12 @@ final routerProvider = Provider<GoRouter>((ref) {
     if (request == null) return;
     DiagnosticsService.instance.logEvent('online_restored_opened', {'play': request.play});
     if (!ref.read(onlineOpenRequestProvider.notifier).open(request.item.resumeUri)) return;
-    if (request.play) ref.read(onlineMediaSessionProvider).playOnNextPage();
+    final session = ref.read(onlineMediaSessionProvider);
+    if (request.play) {
+      session.playOnNextPage();
+    } else {
+      session.pauseOnNextPage();
+    }
     router.go('/online');
   }
 

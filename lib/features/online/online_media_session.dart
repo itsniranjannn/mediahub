@@ -179,7 +179,13 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   Future<bool> send(BridgeCommand command) async {
     final sender = _sender;
     if (sender == null || _disposed) return false;
-    if (command.kind == BridgeCommandKind.pause) _lastCommandedPauseAt = _clock();
+    if (command.kind == BridgeCommandKind.pause) {
+      _lastCommandedPauseAt = _clock();
+      _lastCommandWasPause = true;
+    } else if (command.kind == BridgeCommandKind.play) {
+      _lastCommandWasPause = false;
+      _holdPausedUntil = null;
+    }
     try {
       return await sender(command);
     } catch (e) {
@@ -201,8 +207,15 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
         documentReplaced(pageUrl);
         final pos = _handoverPosition;
         _handoverPosition = null;
-        final play = _handoverPlay;
+        final handover = _handoverPending;
+        _handoverPending = false;
+        // A pause pressed after the hand-off was set up (on the
+        // notification, while the page was loading) wins over its "play".
+        final play = _handoverPlay && !_pausedSinceHandover;
         _handoverPlay = false;
+        _pausedSinceHandover = false;
+        final pauseNext = _pauseOnNextPage;
+        _pauseOnNextPage = false;
         final handoverCb = _onHandover;
         _onHandover = null;
         _handoverTimeout?.cancel();
@@ -216,12 +229,40 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
           expectPagePlay();
           DiagnosticsService.instance.logEvent('online_play_restored_page');
           send(const BridgeCommand.play());
+        } else if (handover || pauseNext) {
+          // The user was not playing: YouTube's watch page plays by itself,
+          // so it is told to stay paused, now and when its video starts.
+          DiagnosticsService.instance.logEvent('online_handover_paused');
+          _holdPausedUntil = _clock().add(holdPausedFor);
+          send(const BridgeCommand.pause());
         }
         if (handoverCb != null) {
           unawaited(handoverCb());
         }
     }
   }
+
+  /// How long after a paused hand-off the page's own autoplay is undone.
+  static const Duration holdPausedFor = Duration(seconds: 12);
+
+  /// Until then, the page playing by itself (no play from MediaHub) is paused.
+  DateTime? _holdPausedUntil;
+
+  /// The last play or pause MediaHub sent was a pause.
+  bool _lastCommandWasPause = false;
+
+  /// A pause was sent after the last state the page reported: that state
+  /// ("playing") is out of date.
+  bool get pausePending {
+    final pausedAt = _lastCommandedPauseAt;
+    if (!_lastCommandWasPause || pausedAt == null) return false;
+    final at = _lastStateAt;
+    return at == null || !pausedAt.isBefore(at);
+  }
+
+  /// Whether the video is playing as far as the user is concerned: the
+  /// page's last report, unless a pause was sent since.
+  bool get userPlaying => (media.value?.isPlaying ?? false) && !pausePending;
 
   /// The page loaded a new document (the bridge says "ready" once per
   /// document, before anything in it plays): whatever the old document was
@@ -238,6 +279,15 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       _playCheckTimer?.cancel();
     }
     if (s.isPlaying) _playRetried = false;
+    final hold = _holdPausedUntil;
+    if (hold != null) {
+      if (!_clock().isBefore(hold)) {
+        _holdPausedUntil = null;
+      } else if (s.isPlaying) {
+        DiagnosticsService.instance.logEvent('online_autoplay_held_paused');
+        send(const BridgeCommand.pause());
+      }
+    }
     final previous = media.value;
     final now = _clock();
     media.value = s;
@@ -472,6 +522,8 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
 
   Duration? _handoverPosition;
   bool _handoverPlay = false;
+  bool _handoverPending = false;
+  bool _pausedSinceHandover = false;
   Future<void> Function()? _onHandover;
   Timer? _handoverTimeout;
 
@@ -486,6 +538,8 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   }) {
     _handoverPosition = position;
     _handoverPlay = play;
+    _handoverPending = true;
+    _pausedSinceHandover = false;
     _onHandover = onHandover;
     _handoverTimeout?.cancel();
     _handoverTimeout = Timer(const Duration(seconds: 15), () {
@@ -554,6 +608,11 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   void playOnNextPage() => _playOnNextPage = true;
   bool _playOnNextPage = false;
 
+  /// The app opened a video the notification brought back after a restart
+  /// while it was paused: the next page must not play it by itself.
+  void pauseOnNextPage() => _pauseOnNextPage = true;
+  bool _pauseOnNextPage = false;
+
   /// A play is waiting for MediaHub to be opened (see [externalPlay]).
   bool get playWaitsForWindow => _playWaitsForWindow;
 
@@ -565,6 +624,8 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       final st = media.value;
       if (st != null && _active) host.updateExternalMedia(this, snapshotOf(st));
     }
+    if (_handoverPending) _pausedSinceHandover = true;
+    _playOnNextPage = false;
     return send(const BridgeCommand.pause());
   }
 
