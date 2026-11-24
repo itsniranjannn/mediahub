@@ -264,6 +264,20 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   /// page's last report, unless a pause was sent since.
   bool get userPlaying => (media.value?.isPlaying ?? false) && !pausePending;
 
+  void _maybeContinueDetached(OnlineMediaState s) {
+    final at = _detachedAt;
+    if (!_detached || at == null || !_playingWhenDetached) return;
+    if (s.status != OnlineMediaStatus.paused) return;
+    _playingWhenDetached = false;
+    if (_clock().difference(at) > detachedPauseWindow || pausePending) return;
+    final commanded = _lastCommandedPauseAt;
+    if (commanded != null && !commanded.isBefore(at)) return;
+    final detachedPlay = onDetachedPlay;
+    if (detachedPlay == null) return;
+    DiagnosticsService.instance.logEvent('online_detached_continue');
+    unawaited(detachedPlay());
+  }
+
   /// The page loaded a new document (the bridge says "ready" once per
   /// document, before anything in it plays): whatever the old document was
   /// playing is gone. Reported as "no video", which hands the session back
@@ -279,6 +293,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       _playCheckTimer?.cancel();
     }
     if (s.isPlaying) _playRetried = false;
+    _maybeContinueDetached(s);
     final hold = _holdPausedUntil;
     if (hold != null) {
       if (!_clock().isBefore(hold)) {
@@ -374,7 +389,12 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
         _appInForeground = false;
-        if (state == AppLifecycleState.detached) _detached = true;
+        if (state == AppLifecycleState.detached && !_detached) {
+          _detached = true;
+          _detachedAt = _clock();
+          _playingWhenDetached = media.value?.isPlaying ?? false;
+          onDetachedPrefetch?.call(media.value?.videoId);
+        }
         if (_backgroundedAt == null) {
           _backgroundedAt = _clock();
           // A pause that came just before the app finished leaving counts too.
@@ -554,6 +574,16 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   /// (swiped away from recents), this starts native stream playback instead.
   Future<bool> Function()? onDetachedPlay;
 
+  /// Resolves the video's stream ahead of a detached play (task swiped away).
+  void Function(String? videoId)? onDetachedPrefetch;
+
+  DateTime? _detachedAt;
+  bool _playingWhenDetached = false;
+
+  /// After the task is swiped away, a video that was playing and is paused by
+  /// the browser (not by MediaHub) within this long carries on natively.
+  static const Duration detachedPauseWindow = Duration(seconds: 6);
+
   /// A play from the phone's controls was sent a second time (it did not
   /// start the first time, without a window).
   bool _playRetried = false;
@@ -671,6 +701,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
     _handoverTimeout = null;
     _onHandover = null;
     onDetachedPlay = null;
+    onDetachedPrefetch = null;
     detachPage();
     _disposed = true;
     media.dispose();

@@ -742,4 +742,52 @@ void main() {
       expect(session.userPlaying, isFalse);
     });
   });
+
+  group('swiped away (Android): the browser pauses a hidden video', () {
+    test('a video paused by the browser right after detaching plays on natively', () async {
+      var calls = 0;
+      session.onDetachedPlay = () async {
+        calls++;
+        return true;
+      };
+      String? prefetched;
+      session.onDetachedPrefetch = (id) => prefetched = id;
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      session.appLifecycleChanged(AppLifecycleState.detached);
+      expect(prefetched, 'dQw4w9WgXcQ');
+      now = now.add(const Duration(seconds: 1));
+      push(state(OnlineMediaStatus.paused, event: 'pause'));
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, 1);
+    });
+
+    test('a pause from MediaHub after detaching stays a pause', () async {
+      var calls = 0;
+      session.onDetachedPlay = () async {
+        calls++;
+        return true;
+      };
+      push(state(OnlineMediaStatus.playing, event: 'play'));
+      session.appLifecycleChanged(AppLifecycleState.detached);
+      now = now.add(const Duration(milliseconds: 500));
+      await session.externalPause();
+      now = now.add(const Duration(milliseconds: 500));
+      push(state(OnlineMediaStatus.paused, event: 'pause'));
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, 0);
+    });
+
+    test('paused before detaching: nothing starts by itself', () async {
+      var calls = 0;
+      session.onDetachedPlay = () async {
+        calls++;
+        return true;
+      };
+      push(state(OnlineMediaStatus.paused, event: 'pause'));
+      session.appLifecycleChanged(AppLifecycleState.detached);
+      push(state(OnlineMediaStatus.paused, event: 'pause'));
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, 0);
+    });
+  });
 }

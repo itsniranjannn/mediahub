@@ -236,17 +236,23 @@ class OnlineBackgroundHandoff {
     required this.player,
     required Future<OnlineStreams> Function(String videoId) resolveStreams,
     required bool Function() enabled,
+    bool Function()? detachedEnabled,
     DateTime Function()? clock,
     this.streamLifetime = const Duration(hours: 4),
     this.pipSettle = const Duration(milliseconds: 700),
   })  : _resolveStreams = resolveStreams, // ignore: prefer_initializing_formals
         _enabled = enabled, // ignore: prefer_initializing_formals
+        _detachedEnabled = detachedEnabled ?? enabled,
         _clock = clock ?? DateTime.now;
 
   final OnlineMediaSession session;
   final HandoffPlayer player;
   final Future<OnlineStreams> Function(String videoId) _resolveStreams;
   final bool Function() _enabled;
+
+  /// Whether a play the page cannot start without a window may be played
+  /// natively ([startDetachedPlay]); defaults to [_enabled].
+  final bool Function() _detachedEnabled;
   final DateTime Function() _clock;
 
   /// Stream links stop working after some hours: older ones are resolved again.
@@ -395,7 +401,13 @@ class OnlineBackgroundHandoff {
       if (generation == _generation) _fail('play_failed');
       try {
         if (player.current.itemId == item.id) {
-          await player.restoreLocal(saved);
+          if (saved == null && !_enabled()) {
+            // Android: an empty queue would turn the session idle and stop
+            // the service (and, with no Activity, the engine). Paused instead.
+            await player.pause();
+          } else {
+            await player.restoreLocal(saved);
+          }
         } else {
           await player.restoreSettings();
         }
@@ -516,7 +528,7 @@ class OnlineBackgroundHandoff {
   /// Starts native stream playback when the phone's controls are pressed while
   /// the app is detached (swiped away from recents).
   Future<bool> startDetachedPlay() async {
-    if (_disposed || !_enabled()) return false;
+    if (_disposed || !_detachedEnabled()) return false;
     final s = session.media.value;
     final videoId = s?.videoId;
     if (videoId == null || !isValidYouTubeVideoId(videoId)) return false;
@@ -535,7 +547,8 @@ class OnlineBackgroundHandoff {
   /// have to wait for the network (iOS gives a backgrounded app only seconds).
   /// The Online screen calls it while a video plays with Background play on.
   void prefetch(String? videoId) {
-    if (_disposed || videoId == null || !isValidYouTubeVideoId(videoId) || !_enabled()) return;
+    if (_disposed || videoId == null || !isValidYouTubeVideoId(videoId)) return;
+    if (!_enabled() && !_detachedEnabled()) return;
     if (_fresh(videoId) != null || _pending.containsKey(videoId)) return;
     final failed = _failedAt[videoId];
     if (failed != null && _clock().difference(failed) < prefetchRetry) return;
@@ -612,10 +625,15 @@ final onlineBackgroundHandoffProvider = Provider<OnlineBackgroundHandoff>((ref) 
     ),
     resolveStreams: (videoId) => ref.read(onlineSourceProvider).streams(videoId),
     enabled: () => onlineHandoffEnabled(isIOS: PlatformInfo.isIOS, backgroundPlay: ref.read(onlineBackgroundPlayProvider)),
+    // Both platforms: a play the page cannot start without a window. On
+    // Android, once the task is swiped away the WebView has no window and
+    // Chromium will not start a hidden <video> (it pauses again at once), so
+    // the page is retried first (OnlineMediaSession.externalPlay) and then the
+    // video plays as an audio stream in the music player.
+    detachedEnabled: () => ref.read(onlineBackgroundPlayProvider),
   );
-  // Android: a play the page cannot start without a window is retried in the
-  // page (OnlineMediaSession.externalPlay), never swapped for another player.
-  if (PlatformInfo.isIOS) session.onDetachedPlay = handoff.startDetachedPlay;
+  session.onDetachedPlay = handoff.startDetachedPlay;
+  session.onDetachedPrefetch = handoff.prefetch;
   ref.onDispose(() {
     if (identical(session.onDetachedPlay, handoff.startDetachedPlay)) {
       session.onDetachedPlay = null;
