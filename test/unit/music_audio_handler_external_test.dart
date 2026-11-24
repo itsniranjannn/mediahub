@@ -551,22 +551,5 @@ void main() {
       expect(handler.idleStopArmed, isFalse);
       expect(handler.playbackState.value.processingState, isNot(AudioProcessingState.idle));
     });
-
-    test("the page's video asks for audio focus on each play (the WebView does not)", () async {
-      var asked = 0;
-      handler.requestExternalAudioFocus = () async {
-        asked++;
-        return true;
-      };
-      handler.setExternalSource(yt, _yt());
-      handler.updateExternalMedia(yt, _yt(position: const Duration(seconds: 31)));
-      handler.updateExternalMedia(yt, _yt(position: const Duration(seconds: 32)));
-      await Future<void>.delayed(Duration.zero);
-      expect(asked, 1, reason: 'once per play, not per tick');
-      handler.updateExternalMedia(yt, _yt(playing: false));
-      handler.updateExternalMedia(yt, _yt());
-      await Future<void>.delayed(Duration.zero);
-      expect(asked, 2);
-    });
   });
 }

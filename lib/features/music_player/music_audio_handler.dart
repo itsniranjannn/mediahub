@@ -1936,7 +1936,6 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   void _leaveExternal() {
     if (_external == null) return;
     _external = null;
-    _externalFocusRequested = false;
     _externalMedia = null;
     _externalItem = null;
     _externalStoppedAt = null;
@@ -2020,12 +2019,6 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     }
     _externalController.add(s);
     _onSessionPlaying(s.playing);
-    // Asked again on each play: focus may have gone to another app meanwhile.
-    if (s.playing) {
-      _claimFocusForExternal(s);
-    } else {
-      _externalFocusRequested = false;
-    }
     // "End of song" for a video: the page moved on to another one.
     if (_sleepEndOfTrack && previous != null && previous.id != s.id && s.playing) {
       _onNaturalTrackEnd();
@@ -2048,38 +2041,11 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return drift > 2500 || (!b.playing && drift > 0);
   }
 
-  /// Android: the Online tab's WebView does not ask for audio focus itself,
-  /// so the page would play on over another app (and never hear of a call).
-  /// While its video plays the app holds focus for it, as any music player
-  /// does; the interruption handling above then pauses the page for a call
-  /// or another app.
-  bool _externalFocusRequested = false;
-
-  /// Asks for audio focus (tests replace it).
-  @visibleForTesting
-  Future<bool> Function() requestExternalAudioFocus = () async {
-    final session = await AudioSession.instance;
-    return session.setActive(true);
-  };
-
-  /// How many times focus was asked for an external source (tests).
-  @visibleForTesting
-  int externalFocusRequests = 0;
-
-  void _claimFocusForExternal(ExternalMediaSnapshot s) {
-    if (!PlatformInfo.isAndroid || !s.id.startsWith('online:')) return;
-    if (_externalFocusRequested) return;
-    _externalFocusRequested = true;
-    externalFocusRequests++;
-    () async {
-      try {
-        final granted = await requestExternalAudioFocus();
-        DiagnosticsService.instance.logEvent('external_audio_focus', {'granted': granted});
-      } catch (e) {
-        debugPrint('[MusicAudioHandler] audio focus for the page failed: $e');
-      }
-    }();
-  }
+  // No audio focus is asked for the Online tab's page: Android's WebView
+  // holds it itself (Chromium's AudioFocusDelegate, in the app's process).
+  // Asking for it here as well took it from the WebView, which then paused
+  // the video on every Play (seen on the emulator: onAudioFocusChange(-1)
+  // to AudioFocusDelegate every few seconds after a swipe-away).
 
   /// Swiped away from recents: nothing stops. The service is a started
   /// foreground service (stopWithTask="false"), the engine and the Online
