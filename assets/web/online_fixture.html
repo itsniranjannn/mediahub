@@ -4,12 +4,15 @@
      with the base URL https://m.youtube.com/watch?v=fixture0001 so the media
      bridge, the notification controls and picture-in-picture can be exercised
      on an emulator whose network cannot reach YouTube. No network requests:
-     the sound is generated here (a WAV in a blob: URL), the poster on a canvas. -->
+     the sound is generated here (a WAV in a blob: URL), the poster on a canvas,
+     and no favicon. With MEDIAHUB_FIXTURE_MEDIA the video comes from that local
+     server instead (tools/device/fixture_media_server.py). -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MediaHub fixture: Tone One - YouTube</title>
+<link rel="icon" href="data:,">
 <style>
   body { margin: 0; font: 16px/1.4 sans-serif; background: #0f0f0f; color: #f1f1f1; }
   #movie_player { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
@@ -39,6 +42,8 @@
     { title: 'Tone Three', hz: 440, color: '#b5532c' }
   ];
   var index = 0;
+  var MEDIA = '__FIXTURE_MEDIA__';
+  if (MEDIA.indexOf('__') === 0) MEDIA = '';
   var video = document.querySelector('video');
   var logEl = document.getElementById('log');
 
@@ -78,7 +83,10 @@
     document.title = 'MediaHub fixture: ' + t.title + ' - YouTube';
     document.getElementById('title').textContent = t.title;
     video.poster = poster(t);
-    video.src = toneUrl(t.hz);
+    // With a local media server (MEDIAHUB_FIXTURE_MEDIA) a real video file,
+    // which Chromium decodes and pauses like YouTube's once the window goes.
+    video.src = MEDIA ? MEDIA + '/video.mp4?t=' + index : toneUrl(t.hz);
+    video.loop = !!MEDIA;
     if (navigator.mediaSession && typeof MediaMetadata === 'function') {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: t.title,
