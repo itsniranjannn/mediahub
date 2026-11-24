@@ -69,6 +69,9 @@ const String youTubeMusicHomeUrl = 'https://music.youtube.com/';
 /// (covers device-pixel rounding of the WebView's size).
 const double onlinePageSeamHeight = 3;
 
+/// Below this height the load-error panel shows only its icon and title.
+const double onlineCompactErrorHeight = 360;
+
 /// Opens the media sheet (Like, Add to playlist ...) for an online item from
 /// the watch strip's Save button. Tests override it.
 final onlineSaveSheetProvider = Provider<Future<void> Function(BuildContext context, WidgetRef ref, domain.MediaItem item)>(
@@ -583,15 +586,11 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
           'Picture-in-picture is off',
           action: SnackBarAction(label: 'Settings', onPressed: _openAppSettings),
         );
-      } else if (mounted) {
-        _snack('Entering picture-in-picture');
       }
       return;
     }
     final ok = await _session.send(const BridgeCommand.enterPip());
-    if (ok && mounted) {
-      _snack('Entering picture-in-picture');
-    } else if (!ok && mounted) {
+    if (!ok && mounted) {
       _snack('Picture-in-picture is not available for this video');
     }
   }
@@ -845,26 +844,56 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
                         key: const ValueKey('online_error_slot'),
                         child: ColoredBox(
                           color: p.background,
-                          child: EmptyHint(
-                            key: const ValueKey('online_error'),
-                            icon: _error!.secureConnectionBlocked
-                                ? Icons.gpp_bad_rounded
-                                : _error!.offline
-                                    ? Icons.wifi_off_rounded
-                                    : Icons.cloud_off_rounded,
-                            title: _error!.secureConnectionBlocked
-                                ? "Can't connect securely"
-                                : _error!.offline
-                                    ? "You're offline"
-                                    : "Couldn't load YouTube",
-                            message: _error!.secureConnectionBlocked
-                                ? onlineSecureConnectionBlockedMessage
-                                : _error!.mobileDataOff
-                                    ? 'Mobile data is off for MediaHub. Turn it on in Settings, or use Wi-Fi.'
-                                    : _error!.offline
-                                        ? 'Connect to the internet to browse YouTube.'
-                                        : 'Something went wrong while opening the page.',
-                            action: FilledButton(onPressed: _retry, child: const Text('Retry')),
+                          child: LayoutBuilder(
+                            builder: (context, box) {
+                              final err = _error!;
+                              final icon = err.secureConnectionBlocked
+                                  ? Icons.gpp_bad_rounded
+                                  : err.offline
+                                      ? Icons.wifi_off_rounded
+                                      : Icons.cloud_off_rounded;
+                              final title = err.secureConnectionBlocked
+                                  ? "Can't connect securely"
+                                  : err.offline
+                                      ? "You're offline"
+                                      : "Couldn't load YouTube";
+                              // The picture-in-picture window (or any very
+                              // small one): only the icon and the title,
+                              // scaled down to fit; the full panel returns
+                              // with the full window.
+                              if (DeviceControls.inPip.value || box.maxHeight < onlineCompactErrorHeight) {
+                                return Center(
+                                  key: const ValueKey('online_error_compact'),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(AppSpacing.xs4),
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(icon, size: 32, color: p.textSecondary),
+                                          const SizedBox(height: AppSpacing.xs4),
+                                          Text(title, textAlign: TextAlign.center),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+                              return EmptyHint(
+                                key: const ValueKey('online_error'),
+                                icon: icon,
+                                title: title,
+                                message: err.secureConnectionBlocked
+                                    ? onlineSecureConnectionBlockedMessage
+                                    : err.mobileDataOff
+                                        ? 'Mobile data is off for MediaHub. Turn it on in Settings, or use Wi-Fi.'
+                                        : err.offline
+                                            ? 'Connect to the internet to browse YouTube.'
+                                            : 'Something went wrong while opening the page.',
+                                action: FilledButton(onPressed: _retry, child: const Text('Retry')),
+                              );
+                            },
                           ),
                         ),
                       ),

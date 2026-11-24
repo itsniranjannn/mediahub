@@ -1298,14 +1298,24 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
       for (final a in overflow)
         PopupMenuItem(
           value: a.id,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(a.icon, size: 20, color: a.color),
-              const SizedBox(width: AppSpacing.md12),
-              Flexible(child: Text(a.menuLabel, maxLines: 2, overflow: TextOverflow.ellipsis)),
-            ],
-          ),
+          // Picture-in-picture is its icon alone; the tooltip and the
+          // semantics label still name it.
+          child: a.id == 'pip'
+              ? Tooltip(
+                  message: a.tooltip,
+                  child: Semantics(
+                    label: a.menuLabel,
+                    child: Icon(a.icon, size: 20, color: a.color),
+                  ),
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(a.icon, size: 20, color: a.color),
+                    const SizedBox(width: AppSpacing.md12),
+                    Flexible(child: Text(a.menuLabel, maxLines: 2, overflow: TextOverflow.ellipsis)),
+                  ],
+                ),
         ),
       if (state.hasAudioTracks) const PopupMenuItem(value: 'tracks', child: Text('Audio track')),
       const PopupMenuItem(value: 'lock', child: Text('Lock controls')),

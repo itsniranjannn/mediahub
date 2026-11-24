@@ -1103,6 +1103,47 @@ void main() {
     expect(h.web.controller.commands, isNot(contains('exitPip')));
   });
 
+  testWidgets('picture-in-picture button: icon only, no "Entering" message', (tester) async {
+    PlatformInfo.debugIsIOS = true;
+    final h = await _pumpOnline(tester);
+    h.web.navigate(watchUrl);
+    await tester.pumpAndSettle();
+    h.web.postMedia();
+    await tester.pump();
+    expect(find.descendant(of: key('online_pip'), matching: find.byType(Text)), findsNothing);
+    expect(find.byTooltip('Picture-in-picture'), findsOneWidget);
+    await tester.tap(key('online_pip'));
+    await tester.pump();
+    expect(h.web.controller.commands.last, 'enterPip');
+    expect(find.textContaining('Entering picture-in-picture'), findsNothing);
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('the load-error panel fits the picture-in-picture window', (tester) async {
+    addTearDown(tester.view.reset);
+    addTearDown(() => DeviceControls.handlePipChanged(false));
+    final h = await _pumpOnline(tester);
+    await DeviceControls.setPipEligible(true, owner: DeviceControls.pipOwnerOnline);
+    DeviceControls.handlePipChanged(true);
+    // The window shrinks to the picture-in-picture size (240 x 135 dp).
+    tester.view.physicalSize = const Size(240, 135);
+    tester.view.devicePixelRatio = 1;
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    h.web.events!.onMainFrameError(onlineSecureConnectionBlockedError);
+    await tester.pump();
+    expect(tester.takeException(), isNull, reason: 'no overflow');
+    expect(key('online_error_compact'), findsOneWidget);
+    expect(key('online_error'), findsNothing);
+    expect(find.byIcon(Icons.gpp_bad_rounded), findsOneWidget);
+    // Back to the full window: the full panel, Retry included.
+    tester.view.reset();
+    DeviceControls.handlePipChanged(false);
+    await tester.pump();
+    expect(key('online_error'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+  });
+
   // Real fonts (the test font draws every glyph as a 1 em square, far wider
   // than the app's): last in the file, so the tests above keep the test font.
   group('watch strip with the app fonts', () {
