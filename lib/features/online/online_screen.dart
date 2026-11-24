@@ -1079,7 +1079,7 @@ class _WatchActionPill extends StatelessWidget {
 class _WatchTogglePill extends StatelessWidget {
   const _WatchTogglePill({
     super.key,
-    this.label,
+    this.label, // ignore: unused_element_parameter
     required this.selected,
     required this.onSelected,
     this.semanticsLabel,
@@ -1160,7 +1160,7 @@ class _WatchTogglePill extends StatelessWidget {
                         Text(
                           label!,
                           semanticsLabel: semanticsLabel,
-                          style: (type.chipLabel ?? type.label).copyWith(
+                          style: type.chipLabel.copyWith(
                             color: foregroundColor,
                             fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                           ),

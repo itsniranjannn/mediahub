@@ -46,9 +46,9 @@
     logEl.textContent = (s + '\n' + logEl.textContent).slice(0, 600);
   }
 
-  // A quiet 60 s mono tone as an 8 kHz, 8-bit WAV: seekable, with a real duration.
+  // A quiet 10-minute mono tone as an 8 kHz, 8-bit WAV: seekable, with a real duration.
   function toneUrl(hz) {
-    var rate = 8000, seconds = 60, n = rate * seconds;
+    var rate = 8000, seconds = 600, n = rate * seconds;
     var buf = new ArrayBuffer(44 + n), v = new DataView(buf);
     function str(o, s) { for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
     str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
