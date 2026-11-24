@@ -133,13 +133,14 @@ class ExternalResumeItem {
     return pageUrl.replace(queryParameters: q);
   }
 
-  ExternalMediaSnapshot toSnapshot({String? artistLine}) => ExternalMediaSnapshot(
+  ExternalMediaSnapshot toSnapshot({String? artistLine, bool starting = false}) => ExternalMediaSnapshot(
         id: id,
         title: title,
         artist: artistLine ?? artist,
         album: album,
         artUri: artUri,
-        playing: false,
+        playing: starting,
+        buffering: starting,
         position: position,
         duration: duration,
         pageUrl: pageUrl,
@@ -764,6 +765,25 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _restoredPlayPending = false;
     _restoredTaken = true; // the page takes it from here
     return ExternalResumeRequest(r.item, play: play);
+  }
+
+  /// Android, with no window (the process restarted after the task was
+  /// swiped away): the restored video is starting in a page without one
+  /// (OnlineHeadlessPlayer). Shown as loading, and playing, right away, so
+  /// the media service enters the foreground while the press of Play still
+  /// allows it; the page's own reports take over once it plays.
+  void showRestoredStarting() {
+    final r = _restored;
+    if (r == null || !identical(_external, r)) return;
+    DiagnosticsService.instance.logEvent('external_restored_starting');
+    _applyExternal(r.item.toSnapshot(starting: true));
+  }
+
+  /// The page without a window could not start: back to "tap to resume".
+  void showRestoredWaiting() {
+    final r = _restored;
+    if (r == null || !identical(_external, r)) return;
+    _applyExternal(r.item.toSnapshot(artistLine: tapToResumeLine));
   }
 
   void _restoredWants({required bool play}) {

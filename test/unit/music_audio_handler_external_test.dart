@@ -458,6 +458,27 @@ void main() {
         await h.dispose();
       });
 
+      test('no window after a restart: the restored video shows as starting (playing), or back to "tap to resume"', () async {
+        final saved = ExternalResumeItem(
+          id: 'online:dQw4w9WgXcQ',
+          pageUrl: _watch,
+          title: 'A YouTube video',
+          position: const Duration(seconds: 95),
+        ).encode();
+        final h = MusicAudioHandler(player: player, loadExternalHeld: () => true, loadExternalResume: () => saved);
+        await h.play();
+        expect(h.takeRestoredExternal(), isNotNull);
+        h.showRestoredStarting();
+        expect(h.playbackState.value.playing, isTrue, reason: 'the service enters the foreground on the press');
+        expect(h.playbackState.value.processingState, AudioProcessingState.buffering);
+        expect(h.mediaItem.value?.title, 'A YouTube video');
+        h.showRestoredWaiting();
+        expect(h.playbackState.value.playing, isFalse);
+        expect(h.mediaItem.value?.artist, MusicAudioHandler.tapToResumeLine);
+        verifyNever(() => player.play());
+        await h.dispose();
+      });
+
       test('after a restart the notification shows the video; play asks for the app, never local music', () async {
         final saved = ExternalResumeItem(
           id: 'online:dQw4w9WgXcQ',

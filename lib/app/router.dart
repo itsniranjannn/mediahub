@@ -10,6 +10,7 @@ import '../features/home/home_screen.dart';
 import '../features/music_player/music_audio_handler.dart';
 import '../features/music_player/music_screen.dart';
 import '../features/music_player/playback_notifier.dart';
+import '../features/online/online_headless_player.dart';
 import '../features/online/online_media_session.dart';
 import '../features/online/online_open_request.dart';
 import '../features/online/online_screen.dart';
@@ -140,7 +141,28 @@ final routerProvider = Provider<GoRouter>((ref) {
   final handler = handlerOrNull();
   void openRestored({bool playPressed = false}) {
     if (handler == null) return;
-    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+    final headless = ref.read(onlineHeadlessPlayerProvider);
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      // Android, no window at all (the process restarted after the task was
+      // swiped away): Play starts the video in a page without one.
+      if (!playPressed || !PlatformInfo.isAndroid || headless.isActive) return;
+      final request = handler.takeRestoredExternal();
+      if (request == null) return;
+      handler.showRestoredStarting();
+      headless.start(request.item).then((started) {
+        if (!started) handler.showRestoredWaiting();
+      });
+      return;
+    }
+    // Back on screen while that page plays: the Online tab carries on from
+    // where it is.
+    final back = headless.handBack();
+    if (back != null) {
+      if (!ref.read(onlineOpenRequestProvider.notifier).open(back.url)) return;
+      if (back.playing) ref.read(onlineMediaSessionProvider).playOnNextPage();
+      router.go('/online');
+      return;
+    }
     if (handler.restoredAwaitingPage) {
       if (!playPressed) return;
       // Opened already; the page is loading or paused: play it there.
