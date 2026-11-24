@@ -612,6 +612,28 @@ void main() {
       });
     });
 
+    test('a page whose play is undone at once (hidden <video>) falls back to native play', () {
+      fakeAsync((async) {
+        var detachedPlays = 0;
+        session.onDetachedPlay = () async {
+          detachedPlays++;
+          return true;
+        };
+        push(state(OnlineMediaStatus.playing, event: 'play'));
+        push(state(OnlineMediaStatus.paused, event: 'pause'));
+        session.appLifecycleChanged(AppLifecycleState.detached);
+        host.active!.externalPlay();
+        // Every play starts and is paused again by the browser.
+        for (var i = 0; i < 4; i++) {
+          async.elapse(const Duration(milliseconds: 100));
+          push(state(OnlineMediaStatus.playing, event: 'play'));
+          push(state(OnlineMediaStatus.paused, event: 'pause'));
+          async.elapse(const Duration(seconds: 3));
+        }
+        expect(detachedPlays, 1);
+      });
+    });
+
     test('a page that plays without a window needs nothing more', () {
       fakeAsync((async) {
         push(state(OnlineMediaStatus.playing, event: 'play'));

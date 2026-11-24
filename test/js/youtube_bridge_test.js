@@ -586,6 +586,14 @@ test('play, pause and seekTo drive the main video', () => {
   assert.equal(p.command('seekTo', 'x'), false);
 });
 
+test('play from MediaHub brings back the sound of a page YouTube started muted', () => {
+  const p = makePage();
+  p.video.muted = true;
+  assert.equal(p.command('play'), true);
+  assert.equal(p.video.muted, false);
+  assert.equal(p.video.playCalls, 1);
+});
+
 test('next falls back to the next button when the page has no handler', () => {
   const p = makePage({ nextButton: true });
   assert.equal(p.command('next'), true);

@@ -292,7 +292,10 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       _playWaitsForWindow = false; // it started after all
       _playCheckTimer?.cancel();
     }
-    if (s.isPlaying) _playRetried = false;
+    // Without a window (Android, swiped away) Chromium starts a <video> and
+    // pauses it again within milliseconds: such a "playing" is no success,
+    // so it does not reset the retry (that looped on retries for ever).
+    if (s.isPlaying && !_detached) _playRetried = false;
     _maybeContinueDetached(s);
     final hold = _holdPausedUntil;
     if (hold != null) {
