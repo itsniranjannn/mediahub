@@ -288,9 +288,12 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   final void Function(bool held)? saveExternalHeld;
 
   /// Paused this long, the session ends: the foreground service, its wake
-  /// lock and the notification go (docs: ONL-8). Shared with the Online tab.
-  static const Duration defaultPausedIdleTimeout = Duration(minutes: 30);
-  final Duration pausedIdleTimeout;
+  /// lock and the notification go (docs: ONL-8). Off by default (null): a
+  /// paused session, local or the Online tab's, keeps its notification and a
+  /// working Play button until the user closes it, also after the app was
+  /// swiped away from recents. Paused, the service holds no wake lock.
+  static const Duration? defaultPausedIdleTimeout = null;
+  final Duration? pausedIdleTimeout;
 
   /// How long a seek waits for the player to finish loading.
   static const Duration loadingWaitTimeout = Duration(seconds: 10);
@@ -1933,6 +1936,7 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   void _leaveExternal() {
     if (_external == null) return;
     _external = null;
+    _externalFocusRequested = false;
     _externalMedia = null;
     _externalItem = null;
     _externalStoppedAt = null;
@@ -2016,6 +2020,12 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     }
     _externalController.add(s);
     _onSessionPlaying(s.playing);
+    // Asked again on each play: focus may have gone to another app meanwhile.
+    if (s.playing) {
+      _claimFocusForExternal(s);
+    } else {
+      _externalFocusRequested = false;
+    }
     // "End of song" for a video: the page moved on to another one.
     if (_sleepEndOfTrack && previous != null && previous.id != s.id && s.playing) {
       _onNaturalTrackEnd();
@@ -2038,11 +2048,55 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return drift > 2500 || (!b.playing && drift > 0);
   }
 
+  /// Android: the Online tab's WebView does not ask for audio focus itself,
+  /// so the page would play on over another app (and never hear of a call).
+  /// While its video plays the app holds focus for it, as any music player
+  /// does; the interruption handling above then pauses the page for a call
+  /// or another app.
+  bool _externalFocusRequested = false;
+
+  /// Asks for audio focus (tests replace it).
+  @visibleForTesting
+  Future<bool> Function() requestExternalAudioFocus = () async {
+    final session = await AudioSession.instance;
+    return session.setActive(true);
+  };
+
+  /// How many times focus was asked for an external source (tests).
+  @visibleForTesting
+  int externalFocusRequests = 0;
+
+  void _claimFocusForExternal(ExternalMediaSnapshot s) {
+    if (!PlatformInfo.isAndroid || !s.id.startsWith('online:')) return;
+    if (_externalFocusRequested) return;
+    _externalFocusRequested = true;
+    externalFocusRequests++;
+    () async {
+      try {
+        final granted = await requestExternalAudioFocus();
+        DiagnosticsService.instance.logEvent('external_audio_focus', {'granted': granted});
+      } catch (e) {
+        debugPrint('[MusicAudioHandler] audio focus for the page failed: $e');
+      }
+    }();
+  }
+
+  /// Swiped away from recents: nothing stops. The service is a started
+  /// foreground service (stopWithTask="false"), the engine and the Online
+  /// page live on in it, and the notification keeps working.
+  @override
+  Future<void> onTaskRemoved() async {
+    DiagnosticsService.instance.logEvent('task_removed', {
+      'target': _external != null ? 'external' : 'local',
+      'playing': playbackState.value.playing,
+    });
+  }
+
   // --- paused-idle stop (ONL-8) ----------------------------------------------------
 
   /// The foreground service stays up while paused (androidStopForegroundOnPause
-  /// is false, for YouTube's gaps between videos), so after
-  /// [pausedIdleTimeout] of pause the session ends, local or external.
+  /// is false). Only when [pausedIdleTimeout] is set (it is off by default)
+  /// does a long pause end the session, local or external.
   void _onSessionPlaying(bool playing) {
     if (playing) {
       _sessionPlaying = true;
@@ -2051,9 +2105,12 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     } else if (_sessionPlaying) {
       _sessionPlaying = false;
       _idleStopTimer?.cancel();
-      _idleStopTimer = Timer(pausedIdleTimeout, () {
+      _idleStopTimer = null;
+      final idle = pausedIdleTimeout;
+      if (idle == null) return;
+      _idleStopTimer = Timer(idle, () {
         _idleStopTimer = null;
-        DiagnosticsService.instance.logEvent('paused_idle_stop', {'minutes': pausedIdleTimeout.inMinutes});
+        DiagnosticsService.instance.logEvent('paused_idle_stop', {'minutes': idle.inMinutes});
         stop(reason: 'paused_idle').catchError((Object e) {
           debugPrint('[MusicAudioHandler] idle stop failed: $e');
         });

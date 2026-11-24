@@ -4,6 +4,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/domain/models/media_item.dart' as domain;
 import 'package:mediahub/features/music_player/music_audio_handler.dart';
 
@@ -517,6 +518,55 @@ void main() {
           await h.dispose();
         }
       });
+    });
+  });
+
+  group('swiped away from recents (Android)', () {
+    setUp(() => PlatformInfo.debugIsAndroid = true);
+    tearDown(() => PlatformInfo.debugIsAndroid = null);
+
+    test('task removal stops nothing: YouTube keeps playing with working controls', () async {
+      handler.setExternalSource(yt, _yt());
+      await handler.onTaskRemoved();
+      expect(handler.isExternalActive, isTrue);
+      expect(handler.playbackState.value.playing, isTrue);
+      expect(handler.playbackState.value.processingState, AudioProcessingState.ready);
+      await handler.pause();
+      handler.updateExternalMedia(yt, _yt(playing: false));
+      await handler.play();
+      expect(yt.calls, ['pause', 'play'], reason: 'never local music');
+      expect(playing, isFalse);
+    });
+
+    test('task removal with local music: it plays on', () async {
+      await handler.loadQueue([_song('1'), _song('2')]);
+      await handler.onTaskRemoved();
+      expect(playing, isTrue);
+      verifyNever(() => player.stop());
+    });
+
+    test('a paused YouTube video is never ended by a timer', () async {
+      handler.setExternalSource(yt, _yt());
+      handler.updateExternalMedia(yt, _yt(playing: false));
+      expect(handler.idleStopArmed, isFalse);
+      expect(handler.playbackState.value.processingState, isNot(AudioProcessingState.idle));
+    });
+
+    test("the page's video asks for audio focus on each play (the WebView does not)", () async {
+      var asked = 0;
+      handler.requestExternalAudioFocus = () async {
+        asked++;
+        return true;
+      };
+      handler.setExternalSource(yt, _yt());
+      handler.updateExternalMedia(yt, _yt(position: const Duration(seconds: 31)));
+      handler.updateExternalMedia(yt, _yt(position: const Duration(seconds: 32)));
+      await Future<void>.delayed(Duration.zero);
+      expect(asked, 1, reason: 'once per play, not per tick');
+      handler.updateExternalMedia(yt, _yt(playing: false));
+      handler.updateExternalMedia(yt, _yt());
+      await Future<void>.delayed(Duration.zero);
+      expect(asked, 2);
     });
   });
 }

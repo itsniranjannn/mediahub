@@ -91,9 +91,12 @@
             android:exported="false" />
 
         <!-- audio_service configuration -->
+        <!-- stopWithTask="false" (the default, spelled out): swiping MediaHub away
+             from recents must not stop playback or the notification. -->
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="false"
             android:exported="true"
             tools:ignore="ExportedService">
             <intent-filter>

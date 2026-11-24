@@ -328,8 +328,17 @@ void main() {
       expect(handler.isExternalActive, isFalse);
     });
 
-    test('the shared default is 30 minutes', () {
-      expect(MusicAudioHandler.defaultPausedIdleTimeout, const Duration(minutes: 30));
+    test('off by default: a paused session keeps its notification until the user closes it', () async {
+      expect(MusicAudioHandler.defaultPausedIdleTimeout, isNull);
+      player = FakeAudioPlayer();
+      handler = MusicAudioHandler(player: player, art: NowPlayingArt(cacheDirectory: () async => null));
+      await handler.loadQueue([_song(0), _song(1)], autoPlay: true);
+      await _wait(5);
+      await handler.pause();
+      expect(handler.idleStopArmed, isFalse);
+      await _wait(50);
+      expect(player.stopCalls, 0);
+      expect(handler.playbackState.value.processingState, isNot(AudioProcessingState.idle));
     });
   });
 }
