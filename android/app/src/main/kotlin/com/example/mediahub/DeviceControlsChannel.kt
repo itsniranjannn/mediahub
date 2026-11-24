@@ -73,6 +73,76 @@ class DeviceControlsChannel(
         applyPipParams()
     }
 
+    /**
+     * Diagnostic for "the YouTube page covers the app": walks the Activity's views and
+     * reports what could draw over the Flutter UI.
+     *
+     * - orphanWrappers: Flutter's texture-layer platform-view wrappers that are attached
+     *   and visible but have no render target. Such a wrapper draws its WebView straight
+     *   onto the window, over the Flutter surface (PlatformViewWrapper.draw falls back to
+     *   FrameLayout.draw), so only the page shows and the app looks frozen.
+     * - strayViews: anything in the window's content besides the FlutterView (a WebView
+     *   fullscreen "custom view" left behind).
+     * - flutterViews: FlutterViews in this window (exactly 1 when healthy).
+     * - a visible WebView outside a wrapper is listed in strayViews as "webview:...".
+     */
+    fun uiCoverCheck(a: Activity): Map<String, Any> {
+        var orphans = 0
+        var wrappers = 0
+        var flutterViews = 0
+        val stray = mutableListOf<String>()
+        fun wrapped(v: android.view.View): Boolean {
+            var p = v.parent
+            while (p is android.view.View) {
+                if (p is io.flutter.plugin.platform.PlatformViewWrapper) return true
+                p = p.parent
+            }
+            return false
+        }
+        fun walk(v: android.view.View) {
+            if (v is io.flutter.embedding.android.FlutterView) flutterViews++
+            // A visible WebView outside a texture wrapper is drawn as a plain view over
+            // the Flutter surface (a headless page made visible, hybrid composition).
+            if (v is android.webkit.WebView && v.isShown && v.width > 0 && v.height > 0 && !wrapped(v)) {
+                stray.add("webview:" + v.javaClass.name)
+            }
+            if (v is io.flutter.plugin.platform.PlatformViewWrapper) {
+                wrappers++
+                if (v.isAttachedToWindow && v.visibility == android.view.View.VISIBLE &&
+                    v.width > 0 && v.height > 0 && v.renderTargetWidth == 0
+                ) orphans++
+            }
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        val decor = a.window.decorView
+        walk(decor)
+        val content = a.findViewById<android.view.ViewGroup>(android.R.id.content)
+        if (content != null) {
+            for (i in 0 until content.childCount) {
+                val c = content.getChildAt(i)
+                if (c !is io.flutter.embedding.android.FlutterView && c.visibility == android.view.View.VISIBLE) {
+                    stray.add(c.javaClass.name)
+                }
+            }
+        }
+        if (decor is android.view.ViewGroup) {
+            for (i in 0 until decor.childCount) {
+                val c = decor.getChildAt(i)
+                // The decor's own children are the LinearLayout and the bar backgrounds;
+                // a full-size FrameLayout added there is a fullscreen custom view.
+                if (c.visibility == android.view.View.VISIBLE && c.id == android.view.View.NO_ID &&
+                    c.width >= decor.width && c.height >= decor.height / 2 && c !is android.widget.LinearLayout
+                ) stray.add("decor:" + c.javaClass.name)
+            }
+        }
+        return mapOf(
+            "orphanWrappers" to orphans,
+            "wrappers" to wrappers,
+            "flutterViews" to flutterViews,
+            "strayViews" to stray,
+        )
+    }
+
     fun detach(activity: Activity) {
         if (this.activity === activity) activityRef = null
     }
@@ -372,6 +442,14 @@ class DeviceControlsChannel(
                     result.success(true)
                 }
                 "enterPip" -> result.success(enterPip())
+                "uiCoverCheck" -> {
+                    val a = activity
+                    if (a == null) {
+                        result.success(null)
+                    } else {
+                        a.runOnUiThread { result.success(uiCoverCheck(a)) }
+                    }
+                }
                 "resetBrightness" -> {
                     val a = activity
                     if (a != null) {

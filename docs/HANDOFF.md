@@ -129,6 +129,35 @@ driven on the emulator (B.0), except Block ads (tests only). Nothing has run on 
   picture-in-picture (now keeps playing and shows only the video), and yt-dlp stalling on such a
   network (now told which family works).
 
+## Branch fix/swipe-away-playback (2026-11-24): swipe-away hand-off and the covered UI
+
+- **Online video after a swipe-away is native audio, by design.** Once the task is removed the
+  WebView has no window and Chromium pauses its <video> (it releases the decoder) whatever the page
+  does. So on `AppLifecycleState.detached` the hand-off (`OnlineBackgroundHandoff._onDetached`)
+  switches at once to the music player: a playing video is played natively from the page's
+  position (the page is paused only once the native player plays); a paused one is loaded natively,
+  paused, and the session is handed to it (`OnlineMediaSession.yieldToNative`), so Play on the
+  notification always reaches a player that can play. Reopening gives it back (native pauses
+  first, then the page seeks and plays; a paused hand-back makes the page claim the controls again,
+  `claimPaused`, so the media service never stops).
+- **Stream links.** Prefetched while the video plays and when the app goes to the background.
+  Each link is checked with a 2-byte request before use (`verifyHandoffStream`); a refused one
+  (HTTP 403, common for youtube_explode's ios client) moves to the next source: yt-dlp (the
+  extractor downloads use, `extractorHandoffStreams`; `getInfo` now returns each format's https
+  `url`), then youtube_explode's other clients. Nothing found: the page keeps the notification and
+  the old retry / headless page / "Tap to resume" chain applies.
+- **Covered UI diagnostic** (`DeviceControls.uiCoverCheck`, run 1.5 s after every resume on the
+  Online tab): reports platform-view wrappers without a render target (Flutter then draws the
+  WebView straight onto the window, over the whole UI), visible WebViews outside a wrapper, stray
+  views in the window (a fullscreen video's custom view) and the FlutterView count. When it finds
+  one, it logs `online_ui_covered_recovered` and starts a fresh WebView. A fullscreen page state is
+  dropped when the Activity goes away (`online_fullscreen_dropped_on_detach`).
+- **Offline fixture with real media**: `FIXTURE_MEDIA=http://127.0.0.1:8765 build_apks.sh emulator`
+  plus `python tools/device/fixture_media_server.py <dir>` and `adb reverse tcp:8765 tcp:8765`:
+  the fixture plays `<dir>/video.mp4` in a real <video> and the hand-off resolves to
+  `<dir>/audio.m4a`, so resolve, native play and hand-back run end to end without YouTube.
+- QA scripts used: `~/.mediahub/qa2/fix3_*.sh` (flows, long run, dock check).
+
 ## Branch feat/size-backup-data (2026-11-23, not yet tried on a device)
 
 - **Smaller APK**: release builds (and `build_apks.sh` test/family/testrel) ship arm64-v8a native

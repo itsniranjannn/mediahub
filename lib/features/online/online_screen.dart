@@ -36,6 +36,12 @@ import 'youtube_urls.dart';
 /// emulator that cannot reach YouTube. Always off in release builds.
 const bool kOnlineFixture = bool.fromEnvironment('MEDIAHUB_ONLINE_FIXTURE') && !kReleaseMode;
 
+/// Fixture builds only: `--dart-define=MEDIAHUB_FIXTURE_MEDIA=http://127.0.0.1:8765`
+/// makes the fixture play a real <video> (`/video.mp4`) from that local
+/// server and resolve its stream to `/audio.m4a` there, so the whole native
+/// hand-off (resolve, native play, hand back) runs offline. Empty: the tone.
+const String kOnlineFixtureMedia = kOnlineFixture ? String.fromEnvironment('MEDIAHUB_FIXTURE_MEDIA') : '';
+
 /// The fixture's page address (a valid-looking 11-character id).
 const String onlineFixtureUrl = 'https://m.youtube.com/watch?v=fixture0001';
 
@@ -48,7 +54,9 @@ class OnlineAssets {
 
 final onlineAssetsProvider = FutureProvider<OnlineAssets>((ref) async {
   final bridge = await rootBundle.loadString('assets/web/youtube_bridge.js');
-  final fixture = kOnlineFixture ? await rootBundle.loadString('assets/web/online_fixture.html') : null;
+  final fixture = kOnlineFixture
+      ? (await rootBundle.loadString('assets/web/online_fixture.html')).replaceAll('__FIXTURE_MEDIA__', kOnlineFixtureMedia)
+      : null;
   return OnlineAssets(bridgeSource: bridge, fixtureHtml: fixture);
 });
 
@@ -204,6 +212,7 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
 
   @override
   void dispose() {
+    _coverTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     DeviceControls.inPip.removeListener(_onPipChanged);
     _pipDismissedSub?.cancel();
@@ -488,13 +497,42 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
         _reachedHidden = false;
         _session.send(const BridgeCommand.requestState());
         _updatePipEligibility();
+        _scheduleCoverCheck();
       case AppLifecycleState.detached:
         _reachedHidden = true;
+        // The Activity (and the window a fullscreen video was shown in) is
+        // gone: a fullscreen state kept here would hide the toolbar and leave
+        // the page's fullscreen view half-attached in the next Activity.
+        if (_fullscreen && PlatformInfo.isAndroid) {
+          DiagnosticsService.instance.logEvent('online_fullscreen_dropped_on_detach');
+          _session.send(const BridgeCommand.exitFullscreen());
+          _onFullscreen(false);
+        }
         final inPip = DeviceControls.inPip.value || _session.browserPipActive.value;
         if (!ref.read(onlineBackgroundPlayProvider) && !inPip) {
           _session.send(const BridgeCommand.pause());
         }
     }
+  }
+
+  Timer? _coverTimer;
+
+  /// After the app comes back: checks that nothing native (the WebView drawn
+  /// without its texture, a fullscreen view left behind) covers the Flutter
+  /// UI, and if it does, logs it and starts a fresh WebView, which puts the
+  /// page back under the toolbar and the dock.
+  void _scheduleCoverCheck() {
+    if (!PlatformInfo.isAndroid) return;
+    _coverTimer?.cancel();
+    _coverTimer = Timer(const Duration(milliseconds: 1500), () async {
+      final report = await DeviceControls.uiCoverCheck();
+      if (!mounted || report == null) return;
+      final covered = report.covers(pageFullscreen: _fullscreen || DeviceControls.inPip.value);
+      DiagnosticsService.instance.logEvent('online_ui_cover_check', {...report.toDiagnostics(), 'covered': covered});
+      if (!covered) return;
+      DiagnosticsService.instance.logEvent('online_ui_covered_recovered');
+      _startFreshWebView();
+    });
   }
 
   bool _shouldAutoPip() =>
