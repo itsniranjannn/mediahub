@@ -587,6 +587,18 @@ class OnlineBackgroundHandoff {
   }
 }
 
+/// Whether the native hand-off may run: iOS only, with Background play on.
+///
+/// Android never hands the page's video to the music player. Its WebView
+/// keeps playing with the screen off and after the task is swiped away from
+/// recents (the Flutter engine, and the page in it, live on in the
+/// mediaPlayback foreground service). The hand-off there paused a playing
+/// video to re-fetch it as an audio stream, and when that stream would not
+/// play (an expired or refused link) it put back an empty music queue, which
+/// turned the session idle: audio_service then stopped its service, the
+/// notification went away and, with no Activity left, the engine with it.
+bool onlineHandoffEnabled({required bool isIOS, required bool backgroundPlay}) => isIOS && backgroundPlay;
+
 /// One hand-off for the app's lifetime, next to the media session.
 final onlineBackgroundHandoffProvider = Provider<OnlineBackgroundHandoff>((ref) {
   final session = ref.watch(onlineMediaSessionProvider);
@@ -599,9 +611,11 @@ final onlineBackgroundHandoffProvider = Provider<OnlineBackgroundHandoff>((ref) 
           : MusicHandoffPlayer.defaultAndroidStartTimeout,
     ),
     resolveStreams: (videoId) => ref.read(onlineSourceProvider).streams(videoId),
-    enabled: () => ref.read(onlineBackgroundPlayProvider),
+    enabled: () => onlineHandoffEnabled(isIOS: PlatformInfo.isIOS, backgroundPlay: ref.read(onlineBackgroundPlayProvider)),
   );
-  session.onDetachedPlay = handoff.startDetachedPlay;
+  // Android: a play the page cannot start without a window is retried in the
+  // page (OnlineMediaSession.externalPlay), never swapped for another player.
+  if (PlatformInfo.isIOS) session.onDetachedPlay = handoff.startDetachedPlay;
   ref.onDispose(() {
     if (identical(session.onDetachedPlay, handoff.startDetachedPlay)) {
       session.onDetachedPlay = null;

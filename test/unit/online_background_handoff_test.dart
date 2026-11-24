@@ -120,6 +120,18 @@ Future<void> _settle() async {
 }
 
 void main() {
+  group('onlineHandoffEnabled', () {
+    test('Android never hands the page to the music player (the WebView plays on after a swipe-away)', () {
+      expect(onlineHandoffEnabled(isIOS: false, backgroundPlay: true), isFalse);
+      expect(onlineHandoffEnabled(isIOS: false, backgroundPlay: false), isFalse);
+    });
+
+    test('iOS hands off only with Background play on', () {
+      expect(onlineHandoffEnabled(isIOS: true, backgroundPlay: true), isTrue);
+      expect(onlineHandoffEnabled(isIOS: true, backgroundPlay: false), isFalse);
+    });
+  });
+
   late _Host host;
   late OnlineMediaSession session;
   late _Player player;
