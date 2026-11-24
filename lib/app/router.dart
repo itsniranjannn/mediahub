@@ -159,7 +159,11 @@ final routerProvider = Provider<GoRouter>((ref) {
     final back = headless.handBack();
     if (back != null) {
       if (!ref.read(onlineOpenRequestProvider.notifier).open(back.url)) return;
-      if (back.playing) ref.read(onlineMediaSessionProvider).playOnNextPage();
+      // The page seeks there itself too (t= is YouTube's own, and not every
+      // page honours it).
+      ref
+          .read(onlineMediaSessionProvider)
+          .handoverOnNextPage(position: back.position, play: back.playing, onHandover: () async {});
       router.go('/online');
       return;
     }
