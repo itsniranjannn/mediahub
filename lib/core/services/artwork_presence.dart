@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import '../../domain/models/media_item.dart';
 import 'artwork_service.dart';
 

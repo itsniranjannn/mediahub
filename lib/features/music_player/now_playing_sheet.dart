@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -6,6 +8,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'equalizer/audio_effects.dart';
+import 'equalizer/equalizer_sheet.dart';
+import 'lyrics/lyrics_sheet.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_theme.dart';
@@ -1423,6 +1428,20 @@ class _StageFooter extends StatelessWidget {
         children: [
           _SpeedMenu(speed: speed, onSelected: onSpeed),
           const Spacer(),
+          IconButton(
+            tooltip: 'Lyrics',
+            icon: const Icon(Icons.lyrics_rounded),
+            color: palette.textSecondary,
+            onPressed: () => showLyricsSheet(context),
+          ),
+          // Android only: just_audio has no equalizer on the iPhone.
+          if (AudioEffects.supported)
+            IconButton(
+              tooltip: 'Equalizer',
+              icon: const Icon(Icons.equalizer_rounded),
+              color: palette.textSecondary,
+              onPressed: () => showEqualizerSheet(context),
+            ),
           _SleepButton(onPressed: onSleep),
           IconButton(
             tooltip: 'View Queue',

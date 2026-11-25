@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:async';
 import 'dart:io';
 import 'package:drift/drift.dart' as drift;
@@ -9,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
+import '../../core/platform/phone_media.dart';
 import '../../core/downloads/ios_playable_formats.dart';
 import '../../core/downloads/known_platform_checker.dart';
 import '../../core/platform_info.dart';
@@ -23,6 +26,7 @@ import '../../domain/models/download_state.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/repositories/platform_resolver.dart';
 import '../../data/repositories/library_repository_impl.dart';
+import '../../shared/widgets/choice_dialogs.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../library/media_context_menu.dart' show isPathInside;
 import '../music_player/playback_notifier.dart';
@@ -30,6 +34,7 @@ import '../../personal/extractor_backend.dart';
 import '../../personal/extractor_errors.dart';
 import '../../personal/extractor_hosts.dart';
 import '../../personal/personal_tools_notifier.dart';
+import '../app_lock/app_lock.dart' show appLockProvider, lockHidesDownloads;
 import 'download_link_inbox.dart';
 import 'download_providers.dart';
 import 'downloads_notifier.dart';
@@ -112,6 +117,7 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
       _inboxCheckScheduled = false;
       if (!mounted) return;
       if (!TickerMode.getValuesNotifier(context).value.enabled) return;
+      if (lockHidesDownloads(ref.read(appLockProvider))) return;
       final link = ref.read(downloadLinkInboxProvider.notifier).take();
       if (link != null) _acceptHandedLink(link);
     });
@@ -314,7 +320,10 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     // whenever a new one arrives, once this tab is on screen (an inactive
     // shell branch has tickers off, and turning them on rebuilds this).
     final linkWaiting = ref.watch(downloadLinkInboxProvider.select((link) => link != null));
-    if (linkWaiting && TickerMode.valuesOf(context).enabled) _scheduleInboxCheck();
+    // Never behind the App lock screen: the quality sheet would open over it.
+    // Unlocking rebuilds this and takes the link then.
+    final lockedOut = ref.watch(appLockProvider.select(lockHidesDownloads));
+    if (linkWaiting && !lockedOut && TickerMode.valuesOf(context).enabled) _scheduleInboxCheck();
     // A waiting handed-over link stops "waiting" once the user inspects it.
     ref.listen(inspectionProvider.select((s) => s.isInspecting), (_, inspecting) {
       final handed = _handedLink;
@@ -903,31 +912,26 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     // file is deleted.
     final downloadDir = ref.read(downloadDirectoryProvider.future)..ignore();
     final runner = task.engine == 'extractor' ? ref.read(extractorDownloadRunnerProvider) : null;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        icon: Icon(Icons.delete_outline_rounded, color: ctx.palette.error),
-        title: const Text('Delete download?'),
-        content: Text(
-          'Delete "${breakableTitle(task.fileName)}"? Your other files are safe.',
-          semanticsLabel: 'Delete "${task.fileName}"? Your other files are safe.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          // A destructive confirm is a text button in error (DESIGN.md 7.10).
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: ctx.palette.error),
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final phoneMedia = ref.read(phoneMediaProvider);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final confirmed = await confirmDestructive(
+      context,
+      title: 'Delete download?',
+      message: 'Delete "${breakableTitle(task.fileName)}"? Your other files are safe.',
+      messageSemantics: 'Delete "${task.fileName}"? Your other files are safe.',
     );
 
-    if (confirmed == true) {
+    if (confirmed) {
+      // Moved to the phone ("Save to phone"): the phone's file is the only
+      // copy, deleted through MediaStore (Android 11+ asks once more).
+      final onPhone = task.finalPath;
+      if (onPhone != null && onPhone.startsWith('content://media/')) {
+        final gone = await phoneMedia.deleteFromPhone([onPhone]).catchError((Object _) => false);
+        if (!gone) {
+          messenger?.showSnackBar(const SnackBar(content: Text('Not deleted.')));
+          return;
+        }
+      }
       // Delete files on disk if they exist (media + cover image), and only
       // inside the downloads folder: a row pointing anywhere else (a corrupt
       // or crafted database) never deletes that file.
@@ -976,7 +980,9 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
   Future<void> _playCompletedDownload(DownloadEntry task) async {
     if (task.finalPath == null) return;
     final file = File(task.finalPath!);
-    if (!file.existsSync()) {
+    // A download moved to the phone ("Save to phone") plays from MediaStore.
+    final onPhone = task.finalPath!.startsWith('content://');
+    if (!onPhone && !file.existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('File is missing from device storage.')),
       );
@@ -998,7 +1004,7 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
       mediaType: _kindOf(task) == 'video' ? MediaType.video : MediaType.audio,
       title: task.displayName,
       durationMs: 0,
-      sizeBytes: file.lengthSync(),
+      sizeBytes: onPhone ? (task.totalBytes ?? 0) : file.lengthSync(),
       dateAdded: task.createdAt,
       source: 'download',
       artworkPath: task.thumbnailPath,

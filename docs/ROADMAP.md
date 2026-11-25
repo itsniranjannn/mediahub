@@ -82,6 +82,27 @@ yt-dlp **updates itself**: after a failure a newer version may fix (at most ever
 a running download), and with a quiet weekly check at app start (not on mobile data). Spotify songs are
 refused with a plain explanation (they are protected).
 
+**Save to phone and delete from phone** (2026-11-25): Settings → Downloads → **Save downloads to**:
+Inside MediaHub (private, the default) or Phone storage. Phone storage on Android 10+ moves each finished
+download into MediaStore (Music/MediaHub for sound, Movies/MediaHub for video, written with IS_PENDING,
+no storage permission); it keeps its library id, so favourites, play counts, playlists and video
+positions stay, and the phone scan never shows it twice. Every download's menu also has **Save to
+phone**. Android 8 and 9 keep downloads inside MediaHub (no permission-free way). **Delete from phone**
+now also works for the phone's own songs and videos (Android 11+: the system's consent dialog; Android
+10: its RecoverableSecurityException dialog); favourites, playlists, history and the queue are cleaned.
+iPhone: songs show in the Files app, videos are also added to Photos; it deletes its own downloads only.
+
+**App lock** (2026-11-25, Settings → App lock, off by default): fingerprint, face or the phone's PIN
+(local_auth); locks at start and after 0, 1, 5, 15 or 30 minutes in the background; covers the whole app
+(default) or only Downloads and Online. Music, the notification, headset buttons, picture-in-picture and
+downloads keep working while locked; the lock never covers the picture-in-picture window.
+
+**Lyrics, equalizer, Android Auto** (2026-11-25): the Now Playing footer has **Lyrics** (a `.lrc` next to
+the file, then the file's own tag, then, only when Settings → Audio → Find lyrics online is on, LRCLIB;
+synced lines follow the music and a tap seeks) and, on Android, an **Equalizer** (seven presets, custom
+bands, loudness boost up to +10 dB; saved; music only). **Android Auto** browses Songs, Albums, Playlists
+and Favourites; a song picked there plays its whole list. CarPlay needs Apple's entitlement (not possible).
+
 **Playback with other apps** (Android): when another app plays, the music pauses, and it plays again
 about 10 seconds after that app stops (Settings → Audio & headset → Resume after other apps, on by
 default, within 30 minutes).
@@ -90,10 +111,12 @@ default, within 30 minutes).
 
 | Area | Decision |
 |------|----------|
-| Permissions | Read audio, read video, notifications, internet, foreground service (media playback, downloads), wake lock. Nothing else: no contacts, location, camera, microphone, storage write, partial photo access, Bluetooth scanning. The notification permission is only asked when you start your first download. |
+| Permissions | Read audio, read video, notifications, internet, foreground service (media playback, downloads), wake lock, biometric (App lock, no prompt). Nothing else: no contacts, location, camera, microphone, storage write, partial photo access, Bluetooth scanning. The notification permission is only asked when you start your first download. |
 | Other apps | No deep links; the router ignores routes handed in by the platform and always starts on Home. No share/view intent filters (taking shared links from other apps is deferred, see HANDOFF D). The download service is private. The media service is visible to the system (needed for Bluetooth, lock screen and car controls). Sharing a download goes through a private, read-only provider that serves only files inside the app's downloads folder. |
 | Online tab | Only YouTube's own page hosts, plus Google's three sign-in hosts (`accounts.google.com`, `accounts.youtube.com`, `gds.google.com`; https only, exact names, no other port), can load as the page (`youtube_urls.dart`); everything else, other Google pages included, opens outside or is blocked. The JavaScript bridge answers only YouTube origins, checks a per-page secret token on every message, and is off on the sign-in pages: no command goes into them and no message from them counts, so MediaHub never sees or touches the password. The login lives only in the WebView's own cookies on the phone; Settings → Online → **Clear YouTube data** removes it with the cache and site data. The WebView presents itself as Chrome and sends no `X-Requested-With` header (so Google treats it like a browser); third-party cookies stay off. A certificate the phone does not trust is always refused, never let through; when it is the page's own (an HTTPS-inspecting Wi-Fi), the tab says "This network is blocking a secure connection to YouTube" instead of staying blank, and a bad certificate on a picture or a video segment never covers a page that works. |
 | Block ads (Online tab) | All inside the bridge's own limits: YouTube pages only, main frame only, off on the sign-in pages; it sends no new kind of message to Dart. The page script removes only the ad keys (`adPlacements`, `playerAds`, `adSlots`, and the enforcement message) from YouTube's player data, hides ad boxes with CSS, mutes and skips an ad from the player's class change (no timer), and fails the page's own requests (fetch, XHR, sendBeacon) to ad hosts (doubleclick.net, googleadservices.com, googlesyndication.com, googletagservices.com, imasdk.googleapis.com) and YouTube's ad paths (`/pagead/`, `/api/stats/ads`, `/ptracking`, `/get_midroll_`). An ad is run to its end only when it is surely a mid-roll: just before the ad class came on, the same player element was seen playing the address's own video (its length, not near its end, the address and the latest player data naming it), and the ad is another stream, 30 s or shorter (an ad nobody can skip), clearly shorter than the video and not as long as another video seen; only the break's first stream is ever run to its end. On any doubt (a pre-roll, no video in the address, the address or the player data moved on, the video ended, the next video loading, an ad stitched into the video's stream, a longer ad, a second stream in the same break) it is only muted and its Skip pressed, so the video itself is never skipped. Native rules: iOS a WebKit content rule list. Android has **none**: the WebView plugin's Android content blockers send an extra HEAD request for every resource (video segments included), and its sub-frame pattern is never consulted for an http(s) frame, so on Android an ad `<script>`, `<img>` or `<iframe>` the page loads still loads (only the page's own fetch, XHR and sendBeacon calls fail). Never blocked: `googlevideo.com/videoplayback`, `/youtubei/v1/...`, `i.ytimg.com`. Risk: YouTube can detect ad blocking and show its "Ad blockers are not allowed" message or delay playback; the message is pruned and hidden, and the setting can be turned off. |
+| Lyrics online | Off by default. When on, only for a song without its own lyrics: one `GET https://lrclib.net/api/get` with its title, artist, album and length, through the safe HTTP client (https, public addresses, pinned DNS, 1 MB cap); an answer from any other host (a redirect) is dropped. The answer is kept on the phone (app support folder), so a song is asked about once. |
+| Save to / delete from phone | Writes only through MediaStore into Music/MediaHub and Movies/MediaHub, and only files from MediaHub's own downloads folder (checked natively). Deletes only `content://media` items, through the system's own consent dialog (Android 10+). |
 | Network | HTTPS only (cleartext disabled twice). Direct downloads refuse private/local addresses (DNS checked, every address checked, connections pinned to the checked addresses). The checked addresses are tried the way browsers do (IPv4 and IPv6 raced, RFC 8305), so a broken address family costs a quarter of a second, not a timeout. |
 | yt-dlp | Runs only for links you start, on an allowlist of 16 sites, with fixed safe options (no config files, no cookies, one item per link, live streams and playlists refused, lookups killed after 85 s; when only IPv4 or only IPv6 reaches the site, yt-dlp is told to use it). Output stays inside the app folder. Updates come from yt-dlp's official GitHub releases (not signature-checked, see HANDOFF D): by hand in Settings, after a failure a newer version may fix (at most every 12 hours), or in a weekly check at app start (release builds only, not on mobile data; a failed check waits a day). An update never replaces yt-dlp while it runs (a native lock, and downloads wait for each other). MediaHub ships its own, newer yt-dlp (from yt-dlp's PyPI package, `tools/device/update_ytdlp_asset.py`; 2026.10.26 today, the library's own is 2025.11.12) and installs it on first use when it is newer than the phone's copy, only while no yt-dlp runs. **Use the built-in yt-dlp** goes back to that shipped copy. |
 | Data | Everything stays on the phone. No account, no analytics, nothing in Google cloud backup. Diagnostics log stays local and strips links and file paths. Deleting a download removes its playlist entries and progress in one transaction; files are only ever deleted inside the downloads folder. |
@@ -115,13 +138,13 @@ default, within 30 minutes).
    boost loudness, Bluetooth, sharing).
 2. ~~**Library backup & restore**~~: done on `feat/size-backup-data` (Android; iPhone needs a document
    picker). Also there: arm64-only APKs and "Ask before big downloads on mobile data".
-3. **"Save to phone" for downloads**: copy finished downloads into the shared Music/Movies folders.
-4. **Delete from phone** for songs and videos that came with the phone (needs Android's delete consent dialog).
+3. ~~**"Save to phone" for downloads**~~: done (2026-11-25).
+4. ~~**Delete from phone** for songs and videos that came with the phone~~: done (2026-11-25).
 5. **iOS on a Mac**: the first build and a pass on a real iPhone (`docs/IOS.md` sections 6 and 7),
    then the share sheet, keeping downloads out of iCloud backup, Files import, picture-in-picture for
    local videos.
-6. **App lock** (fingerprint / PIN) for Downloads and Online if children use the phones.
-7. **Offline extras**: lyrics, equalizer presets, gapless albums, Android Auto browsing, Folders and Genres chips
-   (the data is already scanned).
+6. ~~**App lock** (fingerprint / PIN)~~: done (2026-11-25), whole app or Downloads + Online.
+7. **Offline extras**: ~~lyrics, equalizer presets, Android Auto browsing~~ done (2026-11-25); still open:
+   gapless albums, Folders and Genres chips (the data is already scanned), multi-select in the song list.
 8. **Release hygiene**: rename the Kotlin package from `com.example.mediahub`, a small CI that runs the
    analyzer and the tests on every push.

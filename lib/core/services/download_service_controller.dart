@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:async';
 import 'package:flutter/services.dart';
 import '../../core/logging/diagnostics_service.dart';
@@ -12,12 +14,22 @@ abstract final class DownloadServiceActions {
 
   /// The notification itself was tapped: show the Downloads tab.
   static const String openDownloads = 'openDownloads';
+
+  /// "Resume all" on the paused-downloads notification.
+  static const String resumeAll = 'resumeAll';
 }
 
 abstract class DownloadServiceController {
   Future<void> startService({required int count, int percent = -1, String? fileName});
   Future<void> updateProgress({required int count, int percent = -1, String? fileName});
   Future<void> stopService();
+
+  /// The quiet "N downloads paused" notification with Resume all (Android).
+  Future<void> showPausedNotice(int count) async {}
+
+  /// Removes [showPausedNotice]'s notification.
+  Future<void> hidePausedNotice() async {}
+
   Stream<String> get actionEvents;
   void dispose();
 }
@@ -56,6 +68,7 @@ class AndroidDownloadServiceController implements DownloadServiceController {
       case DownloadServiceActions.pauseAll:
       case DownloadServiceActions.timeout:
       case DownloadServiceActions.openDownloads:
+      case DownloadServiceActions.resumeAll:
         _actionEventsController.add(call.method);
         break;
       case 'wake_lock_acquired':
@@ -112,6 +125,20 @@ class AndroidDownloadServiceController implements DownloadServiceController {
     try {
       await _channel.invokeMethod('stop');
       DiagnosticsService.instance.logEvent('download_service_stopped', {});
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> showPausedNotice(int count) async {
+    try {
+      await _channel.invokeMethod('showPaused', {'count': count});
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> hidePausedNotice() async {
+    try {
+      await _channel.invokeMethod('hidePaused');
     } catch (_) {}
   }
 

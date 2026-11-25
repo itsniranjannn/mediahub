@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -116,6 +118,8 @@ class NowPlayingArt {
         if (base == null) return null;
         final dir = Directory('${base.path}${Platform.pathSeparator}$folderName');
         if (!await dir.exists()) await dir.create(recursive: true);
+        // Left by a write the app did not live to finish.
+        unawaited(prunePartFiles(dir));
         return dir;
       }();
 
@@ -164,16 +168,60 @@ class NowPlayingArt {
   /// half-written picture.
   Future<void> _writeAtomically(File target, Uint8List bytes) async {
     final temp = File('${target.path}.part');
-    await temp.writeAsBytes(bytes, flush: true);
-    await temp.rename(target.path);
+    try {
+      await temp.writeAsBytes(bytes, flush: true);
+      await temp.rename(target.path);
+    } catch (_) {
+      try {
+        if (await temp.exists()) await temp.delete();
+      } catch (_) {}
+      rethrow;
+    }
     if (++_writesSincePrune >= 20) {
       _writesSincePrune = 0;
       unawaited(_prune(target.parent));
     }
   }
 
+  /// `.part` files older than this are leftovers (a write takes milliseconds).
+  static const Duration stalePartAge = Duration(minutes: 10);
+
+  /// Deletes leftover `.part` files in [dir] older than [stalePartAge].
+  /// Returns how many went. Never throws.
+  @visibleForTesting
+  static Future<int> prunePartFiles(Directory dir, {DateTime? now}) async {
+    var deleted = 0;
+    final cutoff = (now ?? DateTime.now()).subtract(stalePartAge);
+    try {
+      await for (final entity in dir.list()) {
+        if (entity is! File || !entity.path.endsWith('.part')) continue;
+        try {
+          if ((await entity.lastModified()).isBefore(cutoff)) {
+            await entity.delete();
+            deleted++;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return deleted;
+  }
+
+  /// Deletes [id]'s cover (the song was deleted). Placeholders are shared
+  /// and stay. Never throws.
+  Future<void> forget(String id) async {
+    _known.remove(id);
+    _placeholderGeneration.remove(id);
+    try {
+      final dir = await _artDirectory();
+      if (dir == null) return;
+      final file = File('${dir.path}${Platform.pathSeparator}${fileNameFor(id)}');
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
   /// Keeps the newest [maxCachedFiles] covers (placeholders always stay).
   Future<void> _prune(Directory dir) async {
+    unawaited(prunePartFiles(dir));
     try {
       final covers = <File>[];
       await for (final entity in dir.list()) {

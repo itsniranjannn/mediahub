@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'package:flutter/material.dart';
 import 'app_palette.dart';
 
@@ -109,6 +111,9 @@ abstract final class AppTypography {
   static const String fraunces = 'Fraunces';
   static const String poppins = 'Poppins';
   static const String dmMono = 'DMMono';
+
+  /// The author's signature (Settings footer, Home byline). Latin only.
+  static const String signature = 'GreatVibes';
 
   /// Fraunces is Latin only: a Nepali word in a static heading falls back to
   /// Poppins.

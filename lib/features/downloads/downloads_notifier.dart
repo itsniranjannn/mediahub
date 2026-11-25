@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:async';
 import 'package:drift/drift.dart';
 import 'package:flutter/services.dart';
@@ -259,6 +261,10 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
           await pauseTask(t);
         }
         await serviceController.stopService();
+        // The shade keeps a way back: "N downloads paused" with Resume all.
+        if (active.isNotEmpty) await serviceController.showPausedNotice(active.length);
+      } else if (event == 'resumeAll') {
+        await resumeAllPaused();
       }
     });
 
@@ -393,6 +399,17 @@ class DownloadQueueCoordinatorNotifier extends Notifier<void> {
       return ref.read(extractorDownloadRunnerProvider).pause(task.id);
     }
     return ref.read(downloadEngineProvider).pause(task.id);
+  }
+
+  /// Queues every paused download again (the paused notification's Resume
+  /// all). Each continues from what it already has.
+  Future<int> resumeAllPaused() async {
+    final db = ref.read(appDatabaseProvider);
+    final n = await (db.update(db.downloadsTable)..where((t) => t.state.equals(DownloadTaskState.paused.name)))
+        .write(DownloadsTableCompanion(state: Value(DownloadTaskState.queued.name), updatedAt: Value(DateTime.now())));
+    await ref.read(downloadServiceControllerProvider).hidePausedNotice();
+    await trigger();
+    return n;
   }
 
   /// Cancel a task with the engine that owns it.

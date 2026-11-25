@@ -50,12 +50,12 @@ void main() {
       if (permissions != null) mediaPermissionServiceProvider.overrideWithValue(permissions),
     ]);
     addTearDown(container.dispose);
-    tester.view.physicalSize = const Size(1080, 6000);
+    tester.view.physicalSize = const Size(1080, 11000);
     tester.view.devicePixelRatio = 2.5;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(home: SettingsScreen()),
+      child: MaterialApp(home: SettingsSectionPage(section: SettingsSection.privacy)),
     ));
     await tester.pump();
   }

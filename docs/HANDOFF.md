@@ -1,7 +1,7 @@
 # Handoff: continue on another machine
 
-Last updated: 2026-11-20. `feat/post-6-1-fixes` was merged into `main` on 2026-11-20; start new work on
-a fresh branch from `main`. The 2026-11-19
+Last updated: 2026-11-25 (branch `chore/license-authorship`, not merged). `feat/post-6-1-fixes` was merged
+into `main` on 2026-11-20; start new work on a fresh branch from `main`. The 2026-11-19
 round (section A0) is committed on top of `cc43807` in five area commits.
 Read `docs/ROADMAP.md` for the goals checklist and security model, `docs/DESIGN.md` for the
 "Sindur" design system, `docs/IOS.md` for the iPhone, and `docs/DECISIONS.md` (items 15–19) for why
@@ -15,8 +15,8 @@ tried with real YouTube yet. What is left needs the family phone, a Mac, or a de
 and D).
 
 - `dart analyze lib test tools`: clean.
-- `flutter test`: 1593 pass (`flutter test --concurrency=3`, about 4 minutes).
-- `node --test "test/js/*_test.js"` (the YouTube page bridge): 73 pass.
+- `flutter test`: 1872 pass (`flutter test --concurrency=3`, about 4 minutes; 2026-11-25).
+- `node --test "test/js/*_test.js"` (the YouTube page bridge): 74 pass.
 - Emulator: release build (`relx64`) and the Online stand-in build (`emulator`), dark and light, on
   2026-11-18. The 2026-11-19 round was driven on the emulator too (section B.0); the phone checks are
   in B.3.
@@ -58,6 +58,8 @@ and D).
   - `relx64`: release x86_64 for the emulator (checks R8 didn't strip anything).
   - `testrel`: release arm64 test app for the phone. `family` and `testrel` both write `app-release.apk`,
     so copy it away before building the other one.
+- `tools/device/gen_media.py <dir>` writes tagged test WAV files (titles, artists, Devanagari) to push
+  to the emulator.
 - `tools/device/dev.py` is a small adb helper (screenshots, UI dump, tap by label, swipes, crash log).
   `tools/device/qa_pass.py <round> [--install APK] [--only home,music,...]` visits every screen and saves
   screenshots to `tools/device/shots/` (git-ignored).
@@ -128,6 +130,54 @@ driven on the emulator (B.0), except Block ads (tests only). Nothing has run on 
   network where IPv4 or IPv6 is broken (now raced like a browser), YouTube pausing itself in
   picture-in-picture (now keeps playing and shows only the video), and yt-dlp stalling on such a
   network (now told which family works).
+
+## Branch chore/license-authorship (2026-11-25): phone storage, delete, App lock, lyrics, EQ, Auto
+
+Driven on the emulator (hnbg_pixel, Android 14, `relx64` release build, `com.mediahub.app.audit`).
+
+- **Save downloads to** (Settings → Downloads; default Inside MediaHub) and **Save to phone** (a
+  download's menu). Android 10+: `PhoneMediaChannel.kt` (`mediahub/phone_media`) copies the file into
+  MediaStore (Music/MediaHub, Movies/MediaHub, IS_PENDING), then `SaveToPhoneService` points the same
+  library row and download row at the `content://` URI and deletes the app copy (a **move**: one copy,
+  same id, so favourites, plays, playlists and video positions stay). The scan ignores MediaStore rows a
+  download already points at (`LibraryRepositoryImpl._downloadClaimedUris`), so it shows once. Both
+  engines call `DownloadFinishedHook` after a finished download; main.dart points it at the service.
+  Android 8/9: not offered (no permission-free way; the row says so). Emulator: a direct MP3 saved in the
+  app, liked, Save to phone → `/sdcard/Music/MediaHub/` (owner = the app), still 9 songs after a rescan,
+  still liked, plays from MediaStore; with Phone storage on, a direct MP4 landed in Movies/MediaHub by
+  itself. The "space used" figure still counts moved downloads (they are downloads, on the phone).
+- **Delete from phone** for the phone's own songs and videos (and moved downloads): Android 11+
+  `MediaStore.createDeleteRequest` (the system dialog replaces MediaHub's own question), Android 10
+  `RecoverableSecurityException`, Android 8/9 own files only. Favourites, playlists, history, video
+  progress, the download row and the queue are cleaned. Emulator: Deny → "Not deleted." and the file
+  stays; Allow → gone from disk and the library; a liked shell-pushed WAV left Favourites. There is no
+  multi-select in the lists yet, so it is one item at a time (the channel takes a list).
+- **App lock** (Settings → App lock, off by default; `lib/features/app_lock/app_lock.dart`): local_auth
+  (fingerprint / face / the phone's PIN), lock at start and after 0/1/5/15/30 min in the background,
+  whole app (default) or Downloads + Online. It only covers the UI (`AppLockGate` in MaterialApp's
+  builder, `AppLockTabCover` in the shell), never the picture-in-picture window. `MainActivity` now
+  extends `AudioServiceFragmentActivity` (same cached engine as `AudioServiceActivity`) and the
+  pre-Android-12 themes are `Theme.AppCompat.NoActionBar` (+ androidx.appcompat), as local_auth asks.
+  Checked after the switch: PiP (mode=pinned), swipe-away playback, notification play/pause, reopening,
+  the backup picker's `onActivityResult`, media session. Emulator has no screen lock, so only the "set a
+  screen lock first" path was driven; the PIN/fingerprint prompt itself needs a phone (or an AVD PIN).
+- **Lyrics** (Now Playing → Lyrics): `.lrc` next to the file, then the file's tag (ID3 USLT, MP4 ©lyr,
+  FLAC LYRICS), then LRCLIB only when Settings → Audio → Find lyrics online is on (safe HTTP client,
+  lrclib.net only, answer cached in app support). Synced lines follow the music, a tap seeks. On
+  Android 13+ a `.lrc` next to a *phone* song cannot be read (no permission covers non-media files);
+  embedded lyrics and downloads work. Emulator: a hand-made MP3 with a synced USLT tag highlighted the
+  right line.
+- **Equalizer** (Android; Now Playing and Settings → Audio): just_audio `AndroidEqualizer` +
+  `AndroidLoudnessEnhancer` in the music player's pipeline (`AudioEffects`), 7 presets, custom bands,
+  loudness up to +10 dB, saved. Emulator: real 5 bands (60 Hz–14 kHz), Rock applied.
+- **Android Auto**: `AutoBrowseTree` (Songs, Albums, Playlists, Favourites; ids `<folder>|<song>` play
+  the list from that song), `androidBrowsableRootExtras`, `res/xml/automotive_app_desc.xml` +
+  `com.google.android.gms.car.application`. Checked: unit tests, the manifest/resource in the release
+  APK, `dumpsys media_session`. No Desktop Head Unit on this PC and no MediaBrowser client app, so the
+  browse tree has not been seen in a car UI yet (B.3).
+- iOS (written, not built): see `docs/IOS.md` 5b.
+- Not checked here: YouTube downloads and the Online tab with real YouTube (this PC's network inspects
+  HTTPS: both show the "network is blocking a secure connection" message, as designed).
 
 ## Branch fix/swipe-away-playback (2026-11-24): swipe-away hand-off and the covered UI
 
@@ -401,6 +451,11 @@ From earlier rounds:
 - Sharing a download with spaces or Devanagari in its name to Gmail, Drive or Telegram (it must arrive as
   audio or video, not "unknown file").
 - Auto-rescan after copying songs onto the phone; likes kept after a file is re-added.
+- 2026-11-25 round: App lock with a real fingerprint and PIN (lock, wait the set minutes, music keeps
+  playing; Downloads+Online scope); Save to phone on Android 13 (Samsung Gallery and My Files show
+  Music/MediaHub and Movies/MediaHub); Delete from phone with One UI's dialog; Android Auto in a car or
+  the Desktop Head Unit (Songs, Albums, Playlists, Favourites; picking a song plays its list); the
+  equalizer and loudness boost by ear; lyrics from a real LRCLIB lookup.
 - Real phone video decoders: the emulator's own decoder failed twice on one screen-recording file
   (B.1); a phone should play it without the retry.
 
@@ -425,8 +480,7 @@ app in place and keeps its data.
    (needed for Bluetooth and lock screen), jackson version inside youtubedl-android.
 2. Deferred, owner's decision: taking links shared from other apps (share intents, SEC-7). It would let
    any app hand MediaHub a link; today you paste links yourself.
-3. Android "Delete from phone" for songs and videos that came with the phone needs Android's delete
-   consent dialog (`MediaStore.createDeleteRequest`); downloads can already be deleted.
+3. Done 2026-11-25: Delete from phone for the phone's own songs and videos. Open: multi-select.
 4. iOS: everything that is the same, different or missing on iPhone, what was fixed without a Mac,
    the first-build checklist and the device test list are in `docs/IOS.md`. Picture-in-picture for the
    Online tab needs no Swift (WebKit's own); for local videos it does.

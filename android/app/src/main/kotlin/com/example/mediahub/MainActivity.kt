@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 package com.example.mediahub
 
 import android.app.Activity
@@ -16,7 +18,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.lifecycle.Lifecycle
-import com.ryanheise.audioservice.AudioServiceActivity
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -26,7 +28,12 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.lang.ref.WeakReference
 
-class MainActivity : AudioServiceActivity() {
+/**
+ * A FragmentActivity (audio_service's AudioServiceFragmentActivity: the same cached engine
+ * as AudioServiceActivity, so music, the media session and Android Auto keep one engine),
+ * because local_auth's fingerprint / PIN prompt (App lock) is a fragment.
+ */
+class MainActivity : AudioServiceFragmentActivity() {
 
     companion object {
         /** The download notification's tap: open the Downloads tab (explicit, app-internal). */
@@ -34,6 +41,8 @@ class MainActivity : AudioServiceActivity() {
 
         /** Compiled binary watermark: SHA-256 validation of the original author. */
         private const val AUTHOR_HASH = "d56ca469cd129c015f682724560baaf653914ef21fff1817512186d67b18c7f5"
+        private const val FULL_NAME_HASH = "e927626c60c9d07f9c8fcfbd4a8bab939c9297b5d857cc8e77a3a651ed87bf6b"
+        private val FULL_NAME_XOR_BYTES = byteArrayOf(20, 51, 40, 59, 52, 48, 59, 52, 122, 17, 59, 46, 45, 59, 54)
         private val AUTHOR_XOR_BYTES = byteArrayOf(20, 51, 40, 59, 52, 48, 59, 52)
 
         private fun verifyWatermark(): Boolean {
@@ -41,7 +50,10 @@ class MainActivity : AudioServiceActivity() {
             val name = String(decoded, Charsets.UTF_8)
             val digest = java.security.MessageDigest.getInstance("SHA-256")
             val hash = digest.digest(name.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-            return hash == AUTHOR_HASH
+            if (hash != AUTHOR_HASH) return false
+            val full = FULL_NAME_XOR_BYTES.map { (it.toInt() xor 0x5A).toByte() }.toByteArray()
+            val fullHash = digest.digest(full).joinToString("") { "%02x".format(it) }
+            return String(full, Charsets.UTF_8).startsWith(name) && fullHash == FULL_NAME_HASH
         }
     }
 
@@ -66,6 +78,7 @@ class MainActivity : AudioServiceActivity() {
         var backupFiles: BackupFilesChannel? = null
         var network: NetworkChannel? = null
         var playbackLocks: PlaybackLocksChannel? = null
+        var phoneMedia: PhoneMediaChannel? = null
 
         fun bind(activity: MainActivity, flutterEngine: FlutterEngine) {
             if (engine?.get() !== flutterEngine) {
@@ -81,12 +94,14 @@ class MainActivity : AudioServiceActivity() {
                 backupFiles = BackupFilesChannel(messenger)
                 network = NetworkChannel(app, messenger)
                 playbackLocks = PlaybackLocksChannel(app, messenger)
+                phoneMedia = PhoneMediaChannel(app, messenger)
                 if (ExtractorChannel.PERSONAL_TOOLS) extractor = ExtractorChannel(app, messenger)
                 engine = WeakReference(flutterEngine)
             }
             deviceControls?.attach(activity)
             share?.attach(activity)
             backupFiles?.attach(activity)
+            phoneMedia?.attach(activity)
         }
 
         private fun release() {
@@ -99,6 +114,7 @@ class MainActivity : AudioServiceActivity() {
             runCatching { backupFiles?.cleanup() }
             runCatching { network?.cleanup() }
             runCatching { playbackLocks?.cleanup() }
+            runCatching { phoneMedia?.cleanup() }
             mediaStore = null
             downloadService = null
             extractor = null
@@ -108,6 +124,7 @@ class MainActivity : AudioServiceActivity() {
             backupFiles = null
             network = null
             playbackLocks = null
+            phoneMedia = null
         }
     }
 
@@ -154,11 +171,13 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
-    // The backup file pickers (Settings, Backup & restore) answer here.
+    // The backup file pickers (Settings, Backup & restore) and the delete consent dialog answer here.
     @Deprecated("Deprecated in Java")
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (EngineChannels.backupFiles?.onActivityResult(requestCode, resultCode, data) == true) return
+        // "Delete from phone": the system's delete consent dialog answers here.
+        if (EngineChannels.phoneMedia?.onActivityResult(requestCode, resultCode) == true) return
         super.onActivityResult(requestCode, resultCode, data)
     }
 
@@ -197,6 +216,7 @@ class MainActivity : AudioServiceActivity() {
         EngineChannels.deviceControls?.detach(this)
         EngineChannels.share?.detach(this)
         EngineChannels.backupFiles?.detach(this)
+        EngineChannels.phoneMedia?.detach(this)
         super.onDestroy()
     }
 }

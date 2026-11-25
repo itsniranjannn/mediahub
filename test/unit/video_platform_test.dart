@@ -39,6 +39,10 @@ class _FakeDownloads implements DownloadServiceController {
   @override
   Future<void> stopService() async {}
   @override
+  Future<void> showPausedNotice(int count) async {}
+  @override
+  Future<void> hidePausedNotice() async {}
+  @override
   void dispose() => events.close();
 }
 

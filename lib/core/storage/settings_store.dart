@@ -1,7 +1,10 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+
+import 'app_private_dir.dart';
 
 /// Tiny persistent key/value store (a JSON file in the app documents folder)
 /// so settings survive an app restart. Reads are synchronous after [load].
@@ -41,7 +44,7 @@ class SettingsStore {
 
   Future<void> load() async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await appPrivateDataDir();
       await loadFromDirectory(dir);
     } catch (_) {
       _data = {};

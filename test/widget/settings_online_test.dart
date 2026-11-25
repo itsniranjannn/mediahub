@@ -55,12 +55,12 @@ void main() {
       if (backend != null) extractorBackendProvider.overrideWithValue(backend),
     ]);
     addTearDown(container.dispose);
-    tester.view.physicalSize = const Size(1080, 4000);
+    tester.view.physicalSize = const Size(1080, 11000);
     tester.view.devicePixelRatio = 2.5;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(home: SettingsScreen()),
+      child: const MaterialApp(home: SettingsSectionPage.combined([SettingsSection.online, SettingsSection.downloads])),
     ));
     await tester.pump();
     return container;
@@ -241,7 +241,7 @@ void main() {
       await tester.tap(update);
       await tester.pumpAndSettle();
       final failed = tester.widget<Text>(find.text('Could not update. Check your connection.'));
-      final palette = tester.element(find.byType(SettingsScreen)).palette;
+      final palette = tester.element(find.byType(SettingsSectionPage)).palette;
       expect(failed.style!.color, palette.error);
       expect(c.read(personalToolsProvider).updateFailed, isTrue);
 

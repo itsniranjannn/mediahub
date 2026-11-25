@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:io';
 import 'package:mediahub/core/security/ip_guard.dart';
 import 'package:mediahub/core/security/url_policy.dart';

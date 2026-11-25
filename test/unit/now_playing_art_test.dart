@@ -55,6 +55,49 @@ void main() {
     } catch (_) {}
   });
 
+  group('audit 2026-11-25: leftovers', () {
+    test('stale .part files are pruned, fresh ones and covers stay', () async {
+      final dir = Directory('${cache.path}/np_art')..createSync();
+      final now = DateTime(2026, 11, 25, 12);
+      final stale = File('${dir.path}/a.jpg.part')
+        ..writeAsStringSync('x')
+        ..setLastModifiedSync(now.subtract(const Duration(hours: 1)));
+      final fresh = File('${dir.path}/b.jpg.part')
+        ..writeAsStringSync('x')
+        ..setLastModifiedSync(now.subtract(const Duration(minutes: 1)));
+      final cover = File('${dir.path}/c.jpg')
+        ..writeAsStringSync('x')
+        ..setLastModifiedSync(now.subtract(const Duration(days: 3)));
+      expect(await NowPlayingArt.prunePartFiles(dir, now: now), 1);
+      expect(stale.existsSync(), isFalse);
+      expect(fresh.existsSync(), isTrue);
+      expect(cover.existsSync(), isTrue);
+    });
+
+    test('forget deletes the cover file of a deleted song', () async {
+      final song = _song(7);
+      embedded[song.uri] = _jpeg;
+      final art = resolver();
+      final uri = (await art.resolve(song))!;
+      final file = File(uri.toFilePath());
+      expect(file.existsSync(), isTrue);
+      await art.forget(song.id);
+      expect(file.existsSync(), isFalse);
+      expect(art.peek(song), isNull);
+    });
+
+    test('a failed write leaves no .part behind', () async {
+      // The target is a folder: the rename fails after the .part was written.
+      final song = _song(8);
+      embedded[song.uri] = _jpeg;
+      final dir = Directory('${cache.path}/np_art')..createSync();
+      Directory('${dir.path}/${NowPlayingArt.fileNameFor(song.id)}').createSync();
+      final art = resolver();
+      await art.resolve(song);
+      expect(dir.listSync().where((e) => e.path.endsWith('.part')), isEmpty);
+    });
+  });
+
   group('the cover the media session can open', () {
     test('F1: a phone (content://) song ends with a file:// cover holding its art', () async {
       final song = _song(1);

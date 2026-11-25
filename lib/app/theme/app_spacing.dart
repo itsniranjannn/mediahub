@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 /// The 4 dp grid, radii and touch targets (docs/DESIGN.md 7.1).
 abstract class AppSpacing {
   static const double xs4 = 4.0;

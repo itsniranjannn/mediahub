@@ -9,7 +9,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mediahub/core/platform/phone_media.dart';
+import 'package:mediahub/features/downloads/save_to_phone.dart';
+import '../unit/save_to_phone_test.dart' show FakePhoneMedia;
 import 'package:mediahub/app/theme/app_palette.dart';
 import 'package:mediahub/app/theme/app_theme.dart';
 import 'package:mediahub/core/services/artwork_service.dart';
@@ -23,6 +27,7 @@ import 'package:mediahub/features/downloads/download_providers.dart';
 import 'package:mediahub/features/library/detail_screens.dart';
 import 'package:mediahub/features/library/media_context_menu.dart';
 import 'package:mediahub/features/library/media_song_row.dart';
+import 'package:mediahub/features/music_player/lyrics/lyrics_repository.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
 import 'package:mocktail/mocktail.dart';
@@ -110,12 +115,21 @@ class _FakeDeleter implements MediaFileDeleter {
   final List<String> deleted = [];
   bool fails = false;
 
+  bool phoneFiles = false;
+
   @override
-  bool canDelete(MediaItem item) => item.source == 'download';
+  bool canDelete(MediaItem item) => item.source == 'download' || phoneFiles;
+
+  bool systemAsksAnswer = false;
+  bool declines = false;
+
+  @override
+  Future<bool> systemAsks(MediaItem item) async => systemAsksAnswer;
 
   @override
   Future<void> delete(MediaItem item) async {
     if (fails) throw const FileSystemException('busy');
+    if (declines) throw const DeleteDeclined();
     deleted.add(item.id);
   }
 }
@@ -195,6 +209,8 @@ Future<_Harness> _pump(
   bool inkWrapper = false,
   PlaylistEntryRef? playlistEntry,
   Set<String> playlistsHolding = const {},
+  List<Override> extraOverrides = const [],
+  bool phoneFiles = false,
 }) async {
   tester.view.physicalSize = size * 3;
   tester.view.devicePixelRatio = 3;
@@ -208,6 +224,7 @@ Future<_Harness> _pump(
     updatedAt: DateTime(2026),
   )))
     ..favorite = favorite;
+  h.deleter.phoneFiles = phoneFiles;
 
   when(() => h.repo.toggleFavorite(any())).thenAnswer((_) async {});
   when(() => h.repo.watchPlaylists()).thenAnswer((_) => Stream.value([
@@ -266,6 +283,7 @@ Future<_Harness> _pump(
         isFavoriteProvider.overrideWith((ref, id) => Stream.value(h.favorite)),
         mediaMenuPlatformProvider.overrideWithValue(h.platform),
         mediaFileDeleterProvider.overrideWithValue(h.deleter),
+        ...extraOverrides,
       ],
       child: MaterialApp(
         theme: theme ?? AppTheme.darkTheme,
@@ -631,6 +649,54 @@ void main() {
       expect(find.text('Deleted "Resham Firiri"'), findsOneWidget);
     });
 
+    testWidgets("the phone's own song: Android asks itself, MediaHub does not ask twice", (tester) async {
+      final h = await _pump(tester, _song(), phoneFiles: true);
+      h.deleter.systemAsksAnswer = true;
+      await _open(tester);
+      await _choose(tester, 'Delete from phone');
+      expect(find.text('Delete from phone?'), findsNothing);
+      expect(h.deleter.deleted, ['song_1']);
+      expect(find.text('Deleted "Resham Firiri"'), findsOneWidget);
+    });
+
+    testWidgets('"Deny" in the phone dialog keeps the song and says so', (tester) async {
+      final h = await _pump(tester, _song(), phoneFiles: true);
+      h.deleter
+        ..systemAsksAnswer = true
+        ..declines = true;
+      await _open(tester);
+      await _choose(tester, 'Delete from phone');
+      expect(h.deleter.deleted, isEmpty);
+      expect(find.text('Not deleted.'), findsOneWidget);
+    });
+
+    testWidgets('Save to phone moves a download and says where', (tester) async {
+      final phone = FakePhoneMedia();
+      final saver = _FakeSaver();
+      final tmp = Directory.systemTemp.createTempSync('save_sheet');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final file = File('${tmp.path}/song_1.mp3')..writeAsBytesSync([1]);
+      final h = await _pump(tester, _song(source: 'download').copyWith(uri: file.path), extraOverrides: [
+        phoneMediaProvider.overrideWithValue(phone),
+        saveToPhoneServiceProvider.overrideWithValue(saver),
+      ]);
+      await _open(tester);
+      final labels = _sheetLabels(tester);
+      expect(labels.sublist(labels.length - 2), ['Save to phone', 'Delete from phone']);
+      await _choose(tester, 'Save to phone');
+      expect(saver.saved, ['song_1']);
+      expect(find.text('Saved to Music/MediaHub'), findsOneWidget);
+      expect(h.deleter.deleted, isEmpty);
+    });
+
+    testWidgets('no Save to phone where the phone cannot (Android 9)', (tester) async {
+      await _pump(tester, _song(source: 'download'), extraOverrides: [
+        phoneMediaProvider.overrideWithValue(FakePhoneMedia(canSave: false)),
+      ]);
+      await _open(tester);
+      expect(find.text('Save to phone'), findsNothing);
+    });
+
     testWidgets('a failed delete says so', (tester) async {
       final h = await _pump(tester, _song(source: 'download'));
       h.deleter.fails = true;
@@ -914,6 +980,39 @@ void main() {
       expect([for (final e in entries) (e.mediaId, e.position)], [('other', 0), ('other', 1)]);
     });
 
+    test('also removes the .lrc saved next to it and its cached online lyrics', () async {
+      final file = File('${dir.path}/song2.mp3')..writeAsStringSync('audio');
+      final lrc = File('${dir.path}/song2.lrc')..writeAsStringSync('[00:01.00]x');
+      final cacheDir = Directory('${dir.path}/lyrics_cache');
+      final lyrics = LyricsRepository(phoneMedia: FakePhoneMedia(), cacheDir: () async => cacheDir);
+      final item = MediaItem(
+        id: 'dl_3',
+        uri: file.path,
+        mediaType: MediaType.audio,
+        title: 'dl_3',
+        durationMs: 1000,
+        sizeBytes: 10,
+        dateAdded: DateTime(2026),
+        source: 'download',
+      );
+      await insertSong('dl_3', file.path);
+      // A cached online answer for this song.
+      cacheDir.createSync();
+      final c = ProviderContainer(overrides: [
+        appDatabaseProvider.overrideWithValue(db),
+        libraryRepositoryProvider.overrideWithValue(LibraryRepositoryImpl(db)),
+        downloadDirectoryProvider.overrideWith((ref) async => dir),
+        lyricsRepositoryProvider.overrideWithValue(lyrics),
+      ]);
+      addTearDown(c.dispose);
+      await lyrics.find(item); // nothing online (switch off): writes nothing
+      final cached = File('${cacheDir.path}/${lyricsCacheFileName(item)}')..writeAsStringSync('[00:01.00]y');
+      await c.read(mediaFileDeleterProvider).delete(item);
+      expect(file.existsSync(), isFalse);
+      expect(lrc.existsSync(), isFalse);
+      expect(cached.existsSync(), isFalse);
+    });
+
     test('a download whose path is outside the downloads folder keeps that file', () async {
       final outsideDir = Directory.systemTemp.createTempSync('media_sheet_outside');
       addTearDown(() => outsideDir.deleteSync(recursive: true));
@@ -974,4 +1073,17 @@ void main() {
       });
     }
   });
+}
+
+class _FakeSaver implements SaveToPhoneService {
+  final List<String> saved = [];
+
+  @override
+  Future<SaveToPhoneResult> save(String mediaId) async {
+    saved.add(mediaId);
+    return SaveToPhoneResult.saved;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

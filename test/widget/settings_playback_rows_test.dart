@@ -49,12 +49,12 @@ void main() {
       extractorBackendProvider.overrideWithValue(backend ?? FakeExtractorBackend()),
     ]);
     addTearDown(container.dispose);
-    tester.view.physicalSize = const Size(1080, 6000);
+    tester.view.physicalSize = const Size(1080, 11000);
     tester.view.devicePixelRatio = 2.5;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(home: SettingsScreen()),
+      child: const MaterialApp(home: SettingsSectionPage.combined([SettingsSection.playback, SettingsSection.downloads])),
     ));
     await tester.pump();
     return container;

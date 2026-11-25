@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 /// Settings → Online → Block ads: the request rules the Online WebView gets

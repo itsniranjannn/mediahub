@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 package com.example.mediahub
 
 import android.content.Context
@@ -63,6 +65,14 @@ class DownloadServiceChannel(
                 } catch (e: Exception) {
                     result.error("SERVICE_UPDATE_FAILED", e.localizedMessage, null)
                 }
+            }
+            "showPaused" -> {
+                DownloadService.showPausedNotice(context, call.argument<Int>("count") ?: 1)
+                result.success(true)
+            }
+            "hidePaused" -> {
+                DownloadService.cancelPausedNotice(context)
+                result.success(true)
             }
             "takePendingActions" -> {
                 val pending = if (pendingOpenDownloads) listOf("openDownloads") else emptyList()

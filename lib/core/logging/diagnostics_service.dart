@@ -1,9 +1,12 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+
+import '../storage/app_private_dir.dart';
 
 class DiagnosticsService {
   static final DiagnosticsService instance = DiagnosticsService._();
@@ -22,7 +25,7 @@ class DiagnosticsService {
   Future<void> init() async {
     if (_initialized) return;
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await appPrivateDataDir();
       await initWithFile(File('${dir.path}/diagnostics.log'));
     } catch (e) {
       debugPrint('[Diagnostics] Init error: $e');

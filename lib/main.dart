@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
@@ -5,15 +7,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app/app.dart';
+import 'core/storage/app_private_dir.dart';
 import 'core/storage/settings_store.dart';
 import 'core/logging/diagnostics_service.dart';
 import 'core/platform/other_audio_watcher.dart';
 import 'core/platform_info.dart';
 import 'data/database/app_database.dart';
+import 'data/downloads/download_finished_hook.dart';
 import 'data/repositories/library_repository_impl.dart';
 import 'data/repositories/playback_repository_impl.dart';
 import 'features/downloads/downloads_notifier.dart';
+import 'features/downloads/save_to_phone.dart';
 import 'features/music_player/audio_service_start.dart';
+import 'features/music_player/auto_browse.dart';
+import 'features/music_player/equalizer/audio_effects.dart';
 import 'features/music_player/music_audio_handler.dart';
 import 'features/music_player/playback_notifier.dart';
 import 'features/music_player/resume_after_other_apps.dart';
@@ -41,6 +48,8 @@ Future<void> _bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Draw behind the system bars (DESIGN.md 8.2; Android 15 enforces it anyway).
   unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+  // iPhone: settings, database and log leave the Files-visible Documents (once).
+  await migratePrivateFilesOutOfDocuments();
   await DiagnosticsService.instance.init();
   await SettingsStore.instance.load();
 
@@ -97,6 +106,8 @@ Future<void> _bootstrap() async {
   );
   // "Resume when headphones reconnect" turned off stays off from launch on
   // (it used to reach the handler only once Settings had been opened).
+  // Android Auto: Songs, Albums, Playlists and Favourites to browse.
+  handler.browse = AutoBrowseTree(libraryRepo);
   handler.setResumeOnHeadphonesReconnect(ResumeOnHeadphonesReconnectNotifier.isOn());
   final audioHandler = await startAudioService<MusicAudioHandler>(
     handler,
@@ -120,9 +131,14 @@ Future<void> _bootstrap() async {
         // A white-on-transparent status bar glyph (the launcher icon shows as a
         // grey square there).
         androidNotificationIcon: 'drawable/ic_stat_mediahub',
+        // Android Auto shows the browse folders as lists.
+        androidBrowsableRootExtras: AutoBrowseTree.rootExtras,
       ),
     ),
   );
+
+  // The saved equalizer (Android), applied once the player has a session.
+  unawaited(AudioEffects.instance.apply(EqualizerSettings.load(SettingsStore.instance)));
 
   final container = ProviderContainer(
     overrides: [
@@ -131,6 +147,10 @@ Future<void> _bootstrap() async {
       audioHandlerProvider.overrideWithValue(audioHandler),
     ],
   );
+
+  // Settings → Downloads → "Save downloads to: Phone storage" moves each
+  // finished download into the phone's Music / Movies folders.
+  DownloadFinishedHook.onFinished = container.read(saveToPhoneServiceProvider).onDownloadFinished;
 
   runApp(
     UncontrolledProviderScope(

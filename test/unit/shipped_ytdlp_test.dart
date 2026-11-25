@@ -96,7 +96,13 @@ void main() {
     });
 
     test('Update compares against it and "Use the built-in yt-dlp" means it', () {
-      expect(src, contains('ensureInitialized()\n                installShippedYtDlpLocked()\n                val status = YoutubeDL.getInstance().updateYoutubeDL('));
+      expect(src, contains('ensureInitialized()\n                installShippedYtDlpLocked()'));
+      // The library's unchecked updateYoutubeDL is never called: the update is
+      // checked against the release's SHA2-256SUMS first.
+      expect(src, contains('val statusName = verifiedYtDlpUpdateLocked()'));
+      expect(src, isNot(contains('getInstance().updateYoutubeDL(')));
+      expect(src, contains('"SHA2-256SUMS" -> sumsUrl = url'));
+      expect(src, contains('does not match its published checksum'));
       expect(src, contains('YoutubeDL.getInstance().init_ytdlp(app, ytdlpDir)\n                bundledVersion = null\n                installShippedYtDlpLocked()'));
     });
   });

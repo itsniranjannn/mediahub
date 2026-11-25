@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 /// Pure-Dart helpers for the Online (YouTube) tab: which hosts may load inside
 /// the WebView, which page kind is open, the video id, and the clean link that
 /// "Copy link" and "Download" hand on. No Flutter imports, so they are cheap to

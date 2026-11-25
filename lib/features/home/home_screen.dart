@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -8,14 +10,13 @@ import '../../app/theme/motion_tokens.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
-import '../../core/app_config.dart';
-import '../../core/core_watermark.dart';
 import '../../core/platform_info.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/repositories/library_repository.dart';
+import '../../shared/widgets/brand_marks.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../library/detail_screens.dart';
 import '../library/media_context_menu.dart';
@@ -131,21 +132,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        // The app's own name and author tagline: Fraunces with Poppins byline.
-        title: Column(
+        // The app's wordmark and the author's signature, as in the Settings
+        // footer: Fraunces "MediaHub", "by" in italic Fraunces, the name in
+        // Great Vibes with the brand gradient.
+        title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(AppConfig.appName, style: context.typography.sectionTitle),
-            Text(
-              'by ${CoreWatermark.author}',
-              style: context.typography.caption.copyWith(
-                color: context.palette.primary,
-                letterSpacing: 0.4,
-                fontWeight: FontWeight.w600,
-                fontSize: 11,
-              ),
-            ),
+            MediaHubWordmark(fontSize: 21),
+            AuthorMark(kicker: 'by', full: false, nameSize: 17, inline: true),
           ],
         ),
         actions: [

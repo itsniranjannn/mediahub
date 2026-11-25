@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -55,7 +57,9 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
   }
 
   static bool _isPlayable(MediaItem item) {
-    if (item.source == 'download' || item.availability == MediaAvailability.missing) {
+    if (item.availability == MediaAvailability.missing) return false;
+    // A download moved to the phone ("Save to phone") is a MediaStore file now.
+    if (item.source == 'download' && !item.uri.contains('://')) {
       try {
         return File(item.uri).existsSync();
       } catch (_) {

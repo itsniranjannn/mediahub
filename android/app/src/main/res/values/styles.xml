@@ -2,14 +2,14 @@
 <resources>
     <!-- Launch screen (Android 8-11): the Volt play-bolt on ink in light and dark system
          mode alike, like the Android 12+ splash (values-v31). -->
-    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+    <style name="LaunchTheme" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@drawable/launch_background</item>
         <item name="android:statusBarColor">@color/mediahub_canvas</item>
         <item name="android:navigationBarColor">@color/mediahub_canvas</item>
     </style>
     <!-- Window colour behind the Flutter UI while it runs (e.g. during rotation / PiP):
          paper or ink, following the system theme like the app (colors.xml). -->
-    <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+    <style name="NormalTheme" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@color/mediahub_window</item>
     </style>
 </resources>

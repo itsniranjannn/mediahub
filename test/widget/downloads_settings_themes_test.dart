@@ -223,6 +223,19 @@ void main() {
         await _shot(tester, 'settings_${theme}_${width.toInt()}_${(scale * 10).toInt()}');
       });
 
+      testWidgets('$theme $size: every Settings page holds', (tester) async {
+        phone(tester, width, scale);
+        tester.view.physicalSize = Size(width * 3, 4800 * 3);
+        final handler = _handler();
+        addTearDown(handler.dispose);
+        await tester.pumpWidget(ProviderScope(
+          overrides: [audioHandlerProvider.overrideWithValue(handler)],
+          child: app(palette, const SettingsSectionPage.combined(SettingsSection.values)),
+        ));
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      });
+
       testWidgets('$theme $size: Diagnostics holds', (tester) async {
         phone(tester, width, scale);
         await DiagnosticsService.instance.clear();
@@ -302,12 +315,12 @@ void main() {
       addTearDown(handler.dispose);
       final container = ProviderContainer(overrides: [audioHandlerProvider.overrideWithValue(handler)]);
       addTearDown(container.dispose);
-      tester.view.physicalSize = const Size(1080, 6000);
+      tester.view.physicalSize = const Size(1080, 11000);
       tester.view.devicePixelRatio = 2.5;
       addTearDown(tester.view.reset);
       await tester.pumpWidget(UncontrolledProviderScope(
         container: container,
-        child: const MaterialApp(home: SettingsScreen()),
+        child: MaterialApp(home: SettingsSectionPage(section: SettingsSection.appearance)),
       ));
       await tester.pump();
       return container;

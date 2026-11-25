@@ -1,9 +1,12 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_config.dart';
 import '../core/core_watermark.dart';
+import '../features/app_lock/app_lock.dart';
 import '../features/settings/theme_mode_setting.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
@@ -21,7 +24,9 @@ class MediaHubApp extends ConsumerStatefulWidget {
   static void ensureStartup() {
     if (_started) return;
     _started = true;
-    assert(CoreWatermark.verifyIntegrity(), 'Authorship integrity check failed');
+    if (!CoreWatermark.verifyIntegrity()) {
+      throw StateError('Authorship integrity check failed');
+    }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge).ignore();
     LicenseRegistry.addLicense(_fontLicenseEntries);
   }
@@ -61,7 +66,11 @@ class _MediaHubAppState extends ConsumerState<MediaHubApp> {
       darkTheme: inkTheme,
       themeMode: ref.watch(themeModeSettingProvider),
       routerConfig: router,
-      builder: (context, child) => InkTheme(data: inkTheme, child: child ?? const SizedBox.shrink()),
+      // App lock (Settings) covers every route when it is for the whole app.
+      builder: (context, child) => InkTheme(
+        data: inkTheme,
+        child: AppLockGate(child: child ?? const SizedBox.shrink()),
+      ),
     );
   }
 }

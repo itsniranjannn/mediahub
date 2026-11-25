@@ -73,12 +73,12 @@ void main() {
       backupFilePickerProvider.overrideWithValue(picker),
     ]);
     addTearDown(container.dispose);
-    tester.view.physicalSize = const Size(1080, 8000);
+    tester.view.physicalSize = const Size(1080, 11000);
     tester.view.devicePixelRatio = 2.5;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(home: SettingsScreen()),
+      child: const MaterialApp(home: SettingsSectionPage.combined([SettingsSection.backup, SettingsSection.downloads])),
     ));
     await tester.pumpAndSettle();
     return (container, picker, db);
