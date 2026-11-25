@@ -112,6 +112,9 @@ abstract final class AppTypography {
   static const String poppins = 'Poppins';
   static const String dmMono = 'DMMono';
 
+  /// The author's signature (Settings footer, Home byline). Latin only.
+  static const String signature = 'GreatVibes';
+
   /// Fraunces is Latin only: a Nepali word in a static heading falls back to
   /// Poppins.
   static const List<String> headingFallback = [poppins];

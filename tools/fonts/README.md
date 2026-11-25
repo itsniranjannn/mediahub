@@ -1,6 +1,6 @@
 # Fonts
 
-The app bundles three open-licensed (SIL OFL 1.1, no Reserved Font Name) families; see `docs/DESIGN.md` section 5 for
+The app bundles four open-licensed (SIL OFL 1.1, no Reserved Font Name) families; see `docs/DESIGN.md` section 5 for
 roles. Licences are in `assets/fonts/licenses/`, embedded in `lib/app/theme/font_licenses.dart` and registered on the
 app's licences page.
 
@@ -9,9 +9,10 @@ app's licences page.
 | Fraunces | `Fraunces-SemiBold.ttf`, `Fraunces-Bold.ttf` (static instances) | github.com/google/fonts `ofl/fraunces/Fraunces[SOFT,WONK,opsz,wght].ttf` |
 | Poppins (Latin + Devanagari) | `Poppins-{Regular,Medium,SemiBold,Bold}.ttf` (unmodified) | github.com/google/fonts `ofl/poppins/` |
 | DM Mono | `DMMono-{Regular,Medium}.ttf` (unmodified) | github.com/google/fonts `ofl/dmmono/` |
+| Great Vibes (the author's signature only) | `GreatVibes-Regular.ttf` (unmodified, 447 KB) | github.com/google/fonts `ofl/greatvibes/` |
 
 Licence files: `ofl/fraunces/OFL.txt` as `Fraunces-OFL.txt`, `ofl/poppins/OFL.txt` as `Poppins-OFL.txt`,
-`ofl/dmmono/OFL.txt` as `DMMono-OFL.txt`.
+`ofl/dmmono/OFL.txt` as `DMMono-OFL.txt`, `ofl/greatvibes/OFL.txt` as `GreatVibes-OFL.txt`.
 
 ## Rebuilding the Fraunces instances
 

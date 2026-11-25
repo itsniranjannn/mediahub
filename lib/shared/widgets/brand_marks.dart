@@ -8,8 +8,8 @@ import '../../core/app_config.dart';
 import '../../core/core_watermark.dart';
 
 /// The MediaHub brand marks: the launch-screen logo, the wordmark and the
-/// author's line. Only bundled fonts: Fraunces for the wordmark, DM Mono in
-/// spaced capitals (a small-caps look) for the author.
+/// author's signature. Only bundled fonts: Fraunces for the wordmark, Great
+/// Vibes (a script face) for the author's name.
 
 /// The app icon as the launch screen shows it (the crimson play-bolt on the
 /// near-black-to-wine field), from `assets/brand/mediahub_mark.png`, a
@@ -83,28 +83,61 @@ class MediaHubWordmark extends StatelessWidget {
   }
 }
 
-/// The author's line: a tiny spaced kicker over the name in spaced DM Mono
-/// capitals. [CoreWatermark] supplies the name (the integrity check relies
-/// on these reads staying in the app).
+/// The author's signature: a small italic Fraunces "Crafted by" over the
+/// name set in Great Vibes (a script face) and painted with the brand
+/// gradient, like a signature under a letter. [CoreWatermark] supplies the
+/// name (the integrity check relies on these reads staying in the app).
 class AuthorMark extends StatelessWidget {
-  const AuthorMark({super.key, this.kicker = 'Crafted by', this.full = true, this.alignEnd = false});
+  const AuthorMark({super.key, this.kicker = 'Crafted by', this.full = true, this.nameSize = 24, this.inline = false});
 
-  /// The short line above the name ('' for none).
+  /// The small line before the name ('' for none).
   final String kicker;
 
   /// [CoreWatermark.fullName] when true, else [CoreWatermark.author].
   final bool full;
 
-  /// Right-aligned (the end of the footer strip).
-  final bool alignEnd;
+  /// The signature's font size (Great Vibes is small on its em: 24 reads
+  /// like 15 pt Poppins).
+  final double nameSize;
 
-  /// The name line on its own, for one-line bylines (Home).
+  /// The kicker beside the name on one line (Home's "by Niranjan") instead
+  /// of above it.
+  final bool inline;
+
+  /// The kicker: Fraunces, slanted, quiet.
+  static TextStyle kickerStyle(AppPalette palette, {double fontSize = 11}) => TextStyle(
+        fontFamily: AppTypography.fraunces,
+        fontFamilyFallback: AppTypography.headingFallback,
+        fontSize: fontSize,
+        height: 1.2,
+        letterSpacing: 0.02 * fontSize,
+        fontWeight: FontWeight.w600,
+        fontStyle: FontStyle.italic,
+        color: palette.textMuted,
+      );
+
+  /// The signature itself (painted by [AuthorMark] with the brand gradient).
+  static TextStyle signatureStyle(AppPalette palette, {double fontSize = 24}) => TextStyle(
+        fontFamily: AppTypography.signature,
+        fontFamilyFallback: AppTypography.headingFallback,
+        fontSize: fontSize,
+        height: 1.15,
+        fontWeight: FontWeight.w400,
+        color: palette.primary,
+      );
+
+  /// The brand gradient the signature is painted with.
+  static LinearGradient signatureGradient(AppPalette palette) => LinearGradient(
+        colors: [palette.primary, Color.lerp(palette.primary, palette.accent, 0.55)!],
+      );
+
+  /// Small mono print (the version number).
   static TextStyle nameStyle(AppPalette palette, {double fontSize = 11, Color? color}) => TextStyle(
         fontFamily: AppTypography.dmMono,
         fontFamilyFallback: AppTypography.readingFallback,
         fontSize: fontSize,
         height: 1.3,
-        letterSpacing: 0.18 * fontSize,
+        letterSpacing: 0.06 * fontSize,
         fontWeight: FontWeight.w500,
         color: color ?? palette.textSecondary,
       );
@@ -113,26 +146,42 @@ class AuthorMark extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final name = full ? CoreWatermark.fullName : CoreWatermark.author;
-    return MergeSemantics(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        children: [
-          if (kicker.isNotEmpty)
-            Text(
-              kicker.toUpperCase(),
-              style: nameStyle(palette, fontSize: 9, color: palette.textMuted),
-              maxLines: 1,
-            ),
-          Text(
-            name.toUpperCase(),
-            semanticsLabel: name,
-            style: nameStyle(palette, fontSize: 12, color: palette.textPrimary),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+    final gradient = signatureGradient(palette);
+    final signature = ShaderMask(
+      blendMode: BlendMode.srcIn,
+      shaderCallback: gradient.createShader,
+      child: Text(
+        name,
+        style: signatureStyle(palette, fontSize: nameSize),
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.fade,
       ),
+    );
+    final hasKicker = kicker.isNotEmpty;
+    return Semantics(
+      label: hasKicker ? '$kicker $name' : name,
+      excludeSemantics: true,
+      child: inline
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (hasKicker) ...[
+                  Text(kicker, style: kickerStyle(palette, fontSize: nameSize * 0.5), maxLines: 1),
+                  SizedBox(width: nameSize * 0.2),
+                ],
+                Flexible(child: signature),
+              ],
+            )
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (hasKicker) Text(kicker, style: kickerStyle(palette), maxLines: 1),
+                signature,
+              ],
+            ),
     );
   }
 }

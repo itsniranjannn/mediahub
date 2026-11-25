@@ -10,7 +10,6 @@ import '../../app/theme/motion_tokens.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
-import '../../core/core_watermark.dart';
 import '../../core/platform_info.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/artwork_thumbnail.dart';
@@ -133,19 +132,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        // The app's wordmark and the author's byline, as in the Settings
-        // footer: Fraunces "MediaHub", spaced DM Mono capitals for the name.
-        title: Column(
+        // The app's wordmark and the author's signature, as in the Settings
+        // footer: Fraunces "MediaHub", "by" in italic Fraunces, the name in
+        // Great Vibes with the brand gradient.
+        title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const MediaHubWordmark(fontSize: 21),
-            const SizedBox(height: 1),
-            Text(
-              'BY ${CoreWatermark.author.toUpperCase()}',
-              semanticsLabel: 'by ${CoreWatermark.author}',
-              style: AuthorMark.nameStyle(context.palette, fontSize: 9.5, color: context.palette.textMuted),
-            ),
+            MediaHubWordmark(fontSize: 21),
+            AuthorMark(kicker: 'by', full: false, nameSize: 17, inline: true),
           ],
         ),
         actions: [

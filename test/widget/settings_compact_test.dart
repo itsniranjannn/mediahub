@@ -1,11 +1,14 @@
 // Settings is compact: 32 dp row icons, rows still 48 dp touch targets, no
 // overflow at 360 dp with 1.3x text.
+import 'dart:ui' show SemanticsAction;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mediahub/core/core_watermark.dart';
 import 'package:mediahub/core/logging/diagnostics_service.dart';
+import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/features/music_player/music_audio_handler.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/features/settings/settings_screen.dart';
@@ -94,7 +97,23 @@ void main() {
   testWidgets('the footer carries the logo, the wordmark, the author and the licences link', (tester) async {
     await pump(tester);
     expect(find.byKey(const ValueKey('settings_footer')), findsOneWidget);
-    expect(find.text(CoreWatermark.fullName.toUpperCase()), findsOneWidget);
+    // Pinned: the Scaffold's bottom bar, not a row of the list.
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(scaffold.bottomNavigationBar, isA<SettingsFooter>());
+    // A slim strip, never a screen-filling one (the bar's height is loose).
+    final footerHeight = tester.getSize(find.byKey(const ValueKey('settings_footer'))).height;
+    expect(footerHeight, lessThan(110));
+    // Every row stays reachable above it.
+    await tester.drag(find.byType(ListView), const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getBottomLeft(find.byKey(const ValueKey('settings_licences'))).dy,
+      lessThanOrEqualTo(tester.getTopLeft(find.byKey(const ValueKey('settings_footer'))).dy),
+    );
+    expect(find.text(CoreWatermark.fullName), findsOneWidget);
+    expect(find.text('Crafted by'), findsOneWidget);
+    // The signature reads as one phrase.
+    expect(find.bySemanticsLabel('Crafted by ${CoreWatermark.fullName}'), findsOneWidget);
     expect(find.byType(MediaHubWordmark), findsOneWidget);
     expect(find.byType(MediaHubLogo), findsOneWidget);
     expect(find.text('Open-source licenses'), findsNothing, reason: 'no big licences row any more');
@@ -108,6 +127,7 @@ void main() {
     tester.view.physicalSize = const Size(280 * 3, 8000 * 3);
     await tester.pump();
     expect(tester.takeException(), isNull);
+    expect(tester.getSize(find.byKey(const ValueKey('settings_footer'))).height, lessThan(260));
   });
 
   testWidgets('the settings picker marks the current choice, returns a tap and fits landscape', (tester) async {
@@ -166,5 +186,43 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('confirm_destructive')));
     await tester.pumpAndSettle();
     expect(result, isTrue);
+  });
+
+  testWidgets('Equalizer and "Save downloads to" are each their own tappable node', (tester) async {
+    PlatformInfo.debugIsAndroid = true;
+    addTearDown(PlatformInfo.resetForTests);
+    final handle = tester.ensureSemantics();
+    await pump(tester);
+    for (final (section, label) in [
+      (SettingsSection.playback, 'Equalizer'),
+      (SettingsSection.downloads, 'Save downloads to'),
+    ]) {
+      await tester.tap(find.byKey(ValueKey('settings_section_${section.name}')));
+      await tester.pumpAndSettle();
+      final node = tester.getSemantics(find.text(label));
+      final card = tester.getRect(find.ancestor(of: find.text(label), matching: find.byType(ClipRRect)).first);
+      expect(node.rect.height, lessThan(card.height), reason: '$label is not the whole card');
+      final row = tester.getSize(find.ancestor(of: find.text(label), matching: find.byType(ListTile)).first);
+      expect(node.rect.height, moreOrLessEquals(row.height, epsilon: 1), reason: '$label: the row, not more');
+      // "Save downloads to" is disabled on this test phone (no MediaStore save).
+      final tappable = tester.widget<ListTile>(find.ancestor(of: find.text(label), matching: find.byType(ListTile)).first).onTap != null;
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), tappable, reason: label);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+    }
+    handle.dispose();
+  });
+
+  testWidgets('"Save downloads to" on a phone that cannot is disabled, not a dead tap', (tester) async {
+    PlatformInfo.debugIsAndroid = true;
+    addTearDown(PlatformInfo.resetForTests);
+    await pump(tester);
+    await tester.tap(find.byKey(const ValueKey('settings_section_downloads')));
+    await tester.pumpAndSettle();
+    final tile = tester.widget<ListTile>(
+      find.descendant(of: find.byKey(const ValueKey('save_location_row')), matching: find.byType(ListTile)),
+    );
+    expect(tile.onTap, isNull);
+    expect(tile.enabled, isFalse);
   });
 }

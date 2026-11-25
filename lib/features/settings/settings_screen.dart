@@ -114,7 +114,6 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
     final sections = SettingsSection.values.where((s) => s.isAvailable).toList();
     Widget card(Iterable<SettingsSection> group) {
       final rows = group.toList();
@@ -132,15 +131,18 @@ class SettingsScreen extends StatelessWidget {
           child: Text('Settings', style: context.typography.screenTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
         ),
       ),
+      bottomNavigationBar: const SettingsFooter(),
       body: _ReadableColumn(
         child: ListView(
-          padding: EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.xl20 + bottomInset),
+          // The pinned footer takes the bottom inset; this only keeps the
+          // last row clear of it.
+          padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.lg16),
           children: [
             EntranceFade(child: card(sections.where(_firstCard.contains))),
             const SizedBox(height: AppSpacing.md12),
             EntranceFade(index: 1, child: card(sections.where((s) => !_firstCard.contains(s)))),
-            const SizedBox(height: AppSpacing.xl20),
-            const EntranceFade(index: 2, child: SettingsFooter()),
+            const SizedBox(height: AppSpacing.md12),
+            const EntranceFade(index: 2, child: SettingsLicencesLink()),
           ],
         ),
       ),
@@ -280,10 +282,12 @@ class _SectionRow extends ConsumerWidget {
   }
 }
 
-/// The strip at the foot of Settings: the launch-screen logo and the
-/// MediaHub wordmark on one side, the author on the other, and the
-/// open-source licences link under them (the OFL fonts and the packages
-/// require that attribution).
+/// The footer pinned to the bottom of Settings (the Scaffold's
+/// bottomNavigationBar, so it never scrolls away): the author's signature
+/// on the left, the launch-screen logo with the MediaHub wordmark and the
+/// version on the right, a soft vertical rule between them.
+/// [SettingsLicencesLink] (the OFL fonts and the packages require that
+/// attribution) sits at the end of the list instead.
 class SettingsFooter extends StatelessWidget {
   const SettingsFooter({super.key});
 
@@ -297,89 +301,123 @@ class SettingsFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final type = AppTypography.of(palette);
     final brand = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const MediaHubLogo(size: 36),
-        const SizedBox(width: AppSpacing.md12),
         Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            const MediaHubWordmark(fontSize: 19),
+            const MediaHubWordmark(fontSize: 17),
+            const SizedBox(height: 2),
             Text('v$_appVersion', style: AuthorMark.nameStyle(palette, fontSize: 10, color: palette.textMuted)),
           ],
         ),
+        const SizedBox(width: AppSpacing.sm8 + 2),
+        const MediaHubLogo(size: 32),
       ],
     );
+    const signature = AuthorMark(nameSize: 25);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          key: const ValueKey('settings_footer'),
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.md12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-            border: Border.all(color: palette.divider),
-            gradient: LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-              colors: [
-                palette.surface,
-                Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.25), palette.surface),
-                Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.6), palette.surface),
-              ],
-              stops: const [0, 0.45, 1],
+    return DecoratedBox(
+      key: const ValueKey('settings_footer'),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(top: BorderSide(color: palette.divider)),
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.35), palette.surface),
+            palette.surface,
+            palette.surface,
+          ],
+          stops: const [0, 0.55, 1],
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Center(
+          heightFactor: 1,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.xl20, AppSpacing.sm8 + 2, AppSpacing.lg16, AppSpacing.sm8 + 2),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // Narrow or large text: the signature over the brand.
+                  final scale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+                  if (constraints.maxWidth < 310 * scale) {
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: signature),
+                        const SizedBox(height: AppSpacing.xs4),
+                        Align(
+                          alignment: AlignmentDirectional.centerEnd,
+                          heightFactor: 1,
+                          child: FittedBox(fit: BoxFit.scaleDown, child: brand),
+                        ),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      const Expanded(
+                        child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: signature),
+                      ),
+                      Container(
+                        width: 1,
+                        height: 34,
+                        margin: const EdgeInsets.symmetric(horizontal: AppSpacing.md12),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [palette.divider.withValues(alpha: 0), palette.outline, palette.divider.withValues(alpha: 0)],
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Align(
+                          alignment: AlignmentDirectional.centerEnd,
+                          // Its own height only: the bottom bar's height is loose.
+                          heightFactor: 1,
+                          child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerRight, child: brand),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
             ),
           ),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              // Narrow or large text: the two halves stack, centred.
-              final scale = MediaQuery.textScalerOf(context).scale(1);
-              if (constraints.maxWidth < 300 * scale.clamp(1.0, 2.0)) {
-                return Column(
-                  children: [
-                    brand,
-                    const SizedBox(height: AppSpacing.md12),
-                    const AuthorMark(),
-                  ],
-                );
-              }
-              return Row(
-                children: [
-                  Flexible(
-                    child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: brand),
-                  ),
-                  Container(
-                    width: 1,
-                    height: 32,
-                    margin: const EdgeInsets.symmetric(horizontal: AppSpacing.md12),
-                    color: palette.divider,
-                  ),
-                  const Expanded(
-                    child: Align(alignment: AlignmentDirectional.centerEnd, child: AuthorMark(alignEnd: true)),
-                  ),
-                ],
-              );
-            },
-          ),
         ),
-        const SizedBox(height: AppSpacing.xs4),
-        Center(
-          child: TextButton(
-            key: const ValueKey('settings_licences'),
-            style: TextButton.styleFrom(
-              foregroundColor: palette.textSecondary,
-              textStyle: type.caption.copyWith(decoration: TextDecoration.underline),
-              visualDensity: VisualDensity.compact,
-            ),
-            onPressed: () => openLicences(context),
-            child: const Text('Open-source licences'),
-          ),
+      ),
+    );
+  }
+}
+
+/// "Open-source licences", the last thing in the Settings list.
+class SettingsLicencesLink extends StatelessWidget {
+  const SettingsLicencesLink({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final type = AppTypography.of(palette);
+    return Center(
+      child: TextButton(
+        key: const ValueKey('settings_licences'),
+        style: TextButton.styleFrom(
+          foregroundColor: palette.textSecondary,
+          textStyle: type.caption.copyWith(decoration: TextDecoration.underline),
+          visualDensity: VisualDensity.compact,
         ),
-      ],
+        onPressed: () => SettingsFooter.openLicences(context),
+        child: const Text('Open-source licences'),
+      ),
     );
   }
 }
@@ -999,7 +1037,7 @@ class _SaveLocationRow extends ConsumerWidget {
       subtitle: supported
           ? '${_label(location)}. ${_explain(location)}'
           : 'Inside MediaHub. Phone storage needs Android 10 or newer.',
-      onTap: supported ? () => _choose(context, ref, location) : () {},
+      onTap: supported ? () => _choose(context, ref, location) : null,
     );
   }
 
@@ -1062,7 +1100,9 @@ class _AppLockCard extends ConsumerWidget {
             key: const ValueKey('app_lock_scope_row'),
             icon: Icons.shield_rounded,
             title: 'What it locks',
-            subtitle: AppLockSettings.scopeLabel(s.scope),
+            subtitle: s.scope == AppLockScope.wholeApp
+                ? AppLockSettings.scopeLabel(s.scope)
+                : '${AppLockSettings.scopeLabel(s.scope)}. ${AppLockSettings.scopeHint(s.scope)}',
             onTap: () async {
               final picked = await _pick<AppLockScope>(
                 context,
@@ -1279,7 +1319,9 @@ class _NavRow extends StatelessWidget {
   final String title;
   final String subtitle;
   final IconData trailingIcon;
-  final VoidCallback onTap;
+
+  /// Null: shown greyed out and not tappable (nothing to choose here).
+  final VoidCallback? onTap;
 
   const _NavRow({
     super.key,
@@ -1294,18 +1336,24 @@ class _NavRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final type = AppTypography.of(palette);
-    return ListTile(
-      minVerticalPadding: _rowVerticalPadding,
-      visualDensity: _rowDensity,
-      horizontalTitleGap: AppSpacing.md12,
-      leading: _RowIcon(icon),
-      title: Text(title, style: _rowTitleStyle(type)),
-      subtitle: Padding(
-        padding: const EdgeInsets.only(top: 2),
-        child: Text(subtitle, style: _subtitleStyle(type)),
+    // Its own semantics node: without it a row can merge into the card and
+    // be read (and tapped) as one node with the whole card's bounds.
+    return Semantics(
+      container: true,
+      child: ListTile(
+        minVerticalPadding: _rowVerticalPadding,
+        visualDensity: _rowDensity,
+        horizontalTitleGap: AppSpacing.md12,
+        enabled: onTap != null,
+        leading: _RowIcon(icon),
+        title: Text(title, style: _rowTitleStyle(type)),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(subtitle, style: _subtitleStyle(type)),
+        ),
+        trailing: onTap == null ? null : Icon(trailingIcon, color: palette.textMuted),
+        onTap: onTap,
       ),
-      trailing: Icon(trailingIcon, color: palette.textMuted),
-      onTap: onTap,
     );
   }
 }
