@@ -192,7 +192,7 @@ void main() {
     await tester.tap(find.text('Playback & audio'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 800));
-    expect(find.text('Audio & headset'), findsOneWidget);
+    expect(find.text('Equalizer'), findsOneWidget);
     await tester.pageBack();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 800));

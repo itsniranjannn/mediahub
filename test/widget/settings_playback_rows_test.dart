@@ -60,30 +60,17 @@ void main() {
     return container;
   }
 
-  testWidgets('Android: "Resume after other apps" is on by default; a tap turns it off and saves it', (tester) async {
+  testWidgets('Playback & audio: shows Equalizer and Find lyrics online; auto-resume toggles removed', (tester) async {
     PlatformInfo.debugIsAndroid = true;
     PlatformInfo.debugIsIOS = false;
-    final c = await pump(tester);
-
-    expect(find.text('Resume after other apps'), findsOneWidget);
-    expect(find.text('Plays your music again when another app stops playing, within 30 minutes.'), findsOneWidget);
-    expect(find.text('How playback reacts to your headphones and other apps.'), findsOneWidget);
-    expect(c.read(resumeAfterOtherAppsProvider), isTrue);
-
-    await tester.tap(find.text('Resume after other apps'));
-    await tester.pump();
-    expect(c.read(resumeAfterOtherAppsProvider), isFalse);
-    // The music handler reads the saved choice itself, from launch on.
-    expect(ResumeAfterOtherAppsNotifier.isOn(), isFalse);
-  });
-
-  testWidgets('iPhone: no such row (the iPhone itself says when music may come back)', (tester) async {
-    PlatformInfo.debugIsAndroid = false;
-    PlatformInfo.debugIsIOS = true;
     await pump(tester);
+
+    expect(find.text('Playback & audio'), findsWidgets);
+    expect(find.text('Equalizer'), findsOneWidget);
+    expect(find.text('Find lyrics online'), findsOneWidget);
+    // Auto-resume switches were removed from settings and left always enabled by default
     expect(find.text('Resume after other apps'), findsNothing);
-    expect(find.text('How playback reacts to your headphones.'), findsOneWidget);
-    expect(find.text('Resume when headphones reconnect'), findsOneWidget);
+    expect(find.text('Resume when headphones reconnect'), findsNothing);
   });
 
   testWidgets('Personal tools: the yt-dlp row says when MediaHub last updated it', (tester) async {
