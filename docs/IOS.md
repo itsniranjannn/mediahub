@@ -1,6 +1,6 @@
 # MediaHub on iPhone
 
-Last updated: 2026-11-23. Branch: `feat/size-backup-data`.
+Last updated: 2026-11-25. Branch: `chore/license-authorship`.
 
 **Read this first.** The iPhone app has never been built or run, because building it needs a Mac.
 Everything below comes from reading MediaHub's code and the plugins' own iPhone code, plus tests that
@@ -94,7 +94,9 @@ songs and videos that are already on the iPhone.
 | Instagram, TikTok, Facebook, X, Vimeo, SoundCloud, Dailymotion, Reddit links | yt-dlp cannot run on iPhone | Not possible the same way |
 | YouTube above 720p | YouTube keeps picture and sound apart there | Joining them in Swift, medium to large |
 | Downloads that keep going with the app closed | iPhone pauses the app | Swift background transfers, large |
-| CarPlay browsing | Not set up | Large |
+| CarPlay browsing | Apple must grant the CarPlay audio entitlement to the developer account first (a request form, rarely given to a private app) | Not possible for MediaHub today |
+| Equalizer and loudness boost | just_audio has no equalizer on iPhone (AVPlayer has no band EQ); the Now Playing and Settings rows are hidden | An AVAudioEngine player of our own, large |
+| Deleting the iPhone's own songs and videos | MediaHub never sees them (no Music or Photos library access) | MediaHub deletes its own downloads only; that is the limit |
 
 ## 5. Fixed today (2026-11-19), iPhone side
 
@@ -167,6 +169,38 @@ Swift lives in `ios/Runner/AppDelegate.swift` (no new Xcode files), registered i
   the iPhone itself says when music may come back).
 - **Choose quality**: audio rows say "M4A (AAC) · 128 kbps" on iPhone, and there are never MP3 rows.
 - The launch image was already the app glyph (not Flutter's placeholder), so it was left as it is.
+
+## 5b. Added 2026-11-25, iPhone side (written, never compiled)
+
+Swift is again in `ios/Runner/AppDelegate.swift` (`PhoneMediaChannel`, `mediahub/phone_media`),
+registered next to the backup and network channels. Dart tests act as an iPhone; nothing here has been
+built.
+
+- **Save downloads to: Phone storage** (Settings → Downloads) and **Save to phone** (a download's menu):
+  - *Audio*: nothing moves. `Info.plist` now has `UIFileSharingEnabled` and
+    `LSSupportsOpeningDocumentsInPlace`, so MediaHub's Documents folder (with `downloads/`) shows in the
+    Files app under On My iPhone → MediaHub. "Save to phone" on a song says "Already in the Files app".
+  - *Video*: a copy is added to Photos with `PHPhotoLibrary` (add-only access,
+    `NSPhotoLibraryAddUsageDescription`). MediaHub keeps its own copy to play it and never reads Photos,
+    so the library still shows it once. Formats Photos refuses (WebM, MKV) give `UNSUPPORTED`; a refused
+    permission gives "Allow MediaHub to add to Photos in Settings".
+  - **Risk to check on the first build**: with file sharing on, the Files app shows *everything* in
+    Documents, also `settings.json`, the diagnostics log and the database (`media_hub_db.sqlite`).
+    Deleting those in Files loses favourites and playlists. The fix is moving them to Library/Application
+    Support with a one-time migration (section 8, small); not done blind without a Mac.
+- **App lock**: `local_auth` (Face ID / Touch ID, the passcode as fallback). `Info.plist` has
+  `NSFaceIDUsageDescription`. The lock screen covers the app or only the Downloads and Online tabs;
+  music and the lock-screen controls keep working.
+- **Delete from phone**: only MediaHub's own downloads (as before). The iPhone's own Music and Photos
+  are never read, so they cannot be deleted from MediaHub; `deleteFromPhone` answers false.
+- **Lyrics**: the same on both phones for downloads (a `.lrc` next to the file, ID3 `USLT`, MP4
+  `©lyr`, FLAC `LYRICS`, and LRCLIB when turned on). No Swift.
+- **Equalizer**: hidden (see section 4).
+- **CarPlay**: not possible without Apple's entitlement (section 4). Android Auto has no iPhone part.
+
+To try on the iPhone: Files app → On My iPhone → MediaHub → downloads shows the songs; "Save to phone" on
+a video asks for Photos once and the video appears in Photos; App lock with Face ID and with the
+passcode; lock, leave the app for the set minutes, come back (locked), music keeps playing meanwhile.
 
 ## 6. First build on a Mac (checklist)
 
