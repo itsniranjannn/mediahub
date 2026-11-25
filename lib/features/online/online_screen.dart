@@ -525,7 +525,7 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
   /// UI, and if it does, logs it and starts a fresh WebView, which puts the
   /// page back under the toolbar and the dock.
   void _scheduleCoverCheck() {
-    if (!PlatformInfo.isAndroid) return;
+    if (!PlatformInfo.isAndroid || !_visible) return;
     _coverTimer?.cancel();
     _coverTimer = Timer(const Duration(milliseconds: 1500), () async {
       final report = await DeviceControls.uiCoverCheck();

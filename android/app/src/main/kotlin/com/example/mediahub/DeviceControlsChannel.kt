@@ -140,9 +140,6 @@ class DeviceControlsChannel(
             }
             if (v is io.flutter.plugin.platform.PlatformViewWrapper) {
                 wrappers++
-                if (v.isAttachedToWindow && v.visibility == android.view.View.VISIBLE &&
-                    v.width > 0 && v.height > 0 && v.renderTargetWidth == 0
-                ) orphans++
             }
             if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
         }
