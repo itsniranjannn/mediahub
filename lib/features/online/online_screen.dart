@@ -533,6 +533,11 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
       final covered = report.covers(pageFullscreen: _fullscreen || DeviceControls.inPip.value);
       DiagnosticsService.instance.logEvent('online_ui_cover_check', {...report.toDiagnostics(), 'covered': covered});
       if (!covered) return;
+      // Only recreate the WebView if a native fullscreen decor view is actually stuck.
+      final stuckFullscreen = !_fullscreen &&
+          !DeviceControls.inPip.value &&
+          report.strayViews.any((v) => v.startsWith('decor:'));
+      if (!stuckFullscreen) return;
       DiagnosticsService.instance.logEvent('online_ui_covered_recovered');
       _startFreshWebView();
     });
