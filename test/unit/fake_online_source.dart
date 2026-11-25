@@ -36,7 +36,7 @@ class FakeOnlineSource implements OnlineSource {
   Future<List<OnlineVideo>> search(String query) async => const [];
 
   @override
-  Future<OnlineStreams> streams(String videoId) {
+  Future<OnlineStreams> streams(String videoId, {int variant = 0}) {
     streamCalls.add(videoId);
     final handler = onStreams;
     // Called without an await on purpose: a handler may throw synchronously.

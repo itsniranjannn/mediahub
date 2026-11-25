@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/platform/device_controls.dart';
+import '../../core/platform/playback_locks.dart';
 import '../../core/platform_info.dart';
 import '../music_player/music_audio_handler.dart';
 import '../music_player/playback_notifier.dart';
@@ -45,13 +46,14 @@ typedef BridgeCommandSender = Future<bool> Function(BridgeCommand command);
 class OnlineMediaSession implements ExternalPlaybackDelegate {
   OnlineMediaSession({
     required this.host,
-    this.pausedRelease = const Duration(minutes: 30),
+    this.pausedRelease,
     this.idleRelease = const Duration(seconds: 15),
     this.staleAfter = const Duration(seconds: 6),
     this.claimAfter = const Duration(seconds: 3),
     this.playCheckAfter = const Duration(seconds: 3),
     this.resumeBackgroundInterruptions = false,
     Stream<void> Function()? becomingNoisy,
+    this.onStreamingChanged,
     DateTime Function()? clock,
   })  : _clock = clock ?? DateTime.now,
         _becomingNoisy = becomingNoisy; // ignore: prefer_initializing_formals
@@ -60,9 +62,12 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   final ExternalPlaybackHost host;
   final DateTime Function() _clock;
 
-  /// How long a paused video keeps the notification (the music player's own
-  /// paused-idle stop is also 30 minutes).
-  final Duration pausedRelease;
+  /// How long a paused video keeps the notification; null (the default):
+  /// until the user closes it. A paused video's notification must keep a
+  /// working Play button however long it waits, also after the app was
+  /// swiped away from recents (letting go of the session there stops the
+  /// media service, and with it the page).
+  final Duration? pausedRelease;
   final Duration idleRelease;
   final Duration staleAfter;
 
@@ -82,6 +87,24 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   /// iOS: WebKit pauses the page's video as the app leaves the screen. A
   /// pause within [backgroundInterruptWindow] of that is undone once.
   final bool resumeBackgroundInterruptions;
+
+  /// Told true while the page's video plays as the phone's media session
+  /// and false once it stops (Android holds a Wi-Fi lock meanwhile, so a
+  /// stream keeps loading with the screen off and the app swiped away).
+  final void Function(bool streaming)? onStreamingChanged;
+  bool _streaming = false;
+
+  void _setStreaming(bool value) {
+    if (value == _streaming) return;
+    _streaming = value;
+    final cb = onStreamingChanged;
+    if (cb == null) return;
+    try {
+      cb(value);
+    } catch (e) {
+      debugPrint('[Online] streaming lock change failed: $e');
+    }
+  }
 
   /// Headphones unplugged (DeviceControls.watchBecomingNoisy('online')).
   final Stream<void> Function()? _becomingNoisy;
@@ -156,7 +179,13 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   Future<bool> send(BridgeCommand command) async {
     final sender = _sender;
     if (sender == null || _disposed) return false;
-    if (command.kind == BridgeCommandKind.pause) _lastCommandedPauseAt = _clock();
+    if (command.kind == BridgeCommandKind.pause) {
+      _lastCommandedPauseAt = _clock();
+      _lastCommandWasPause = true;
+    } else if (command.kind == BridgeCommandKind.play) {
+      _lastCommandWasPause = false;
+      _holdPausedUntil = null;
+    }
     try {
       return await sender(command);
     } catch (e) {
@@ -178,26 +207,87 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
         documentReplaced(pageUrl);
         final pos = _handoverPosition;
         _handoverPosition = null;
-        final play = _handoverPlay;
+        final handover = _handoverPending;
+        _handoverPending = false;
+        // A pause pressed after the hand-off was set up (on the
+        // notification, while the page was loading) wins over its "play".
+        final play = _handoverPlay && !_pausedSinceHandover;
         _handoverPlay = false;
+        _pausedSinceHandover = false;
+        final pauseNext = _pauseOnNextPage;
+        _pauseOnNextPage = false;
         final handoverCb = _onHandover;
         _onHandover = null;
         _handoverTimeout?.cancel();
         _handoverTimeout = null;
 
-        if (pos != null) {
-          send(BridgeCommand.seekTo(pos));
-        }
-        if (play || _playOnNextPage) {
-          _playOnNextPage = false;
-          expectPagePlay();
-          DiagnosticsService.instance.logEvent('online_play_restored_page');
-          send(const BridgeCommand.play());
+        final playNext = play || _playOnNextPage;
+        _playOnNextPage = false;
+        void toPage() {
+          if (pos != null) {
+            send(BridgeCommand.seekTo(pos));
+          }
+          if (playNext) {
+            expectPagePlay();
+            DiagnosticsService.instance.logEvent('online_play_restored_page');
+            send(const BridgeCommand.play());
+          } else if (handover || pauseNext) {
+            // The user was not playing: YouTube's watch page plays by itself,
+            // so it is told to stay paused, now and when its video starts.
+            DiagnosticsService.instance.logEvent('online_handover_paused');
+            _holdPausedUntil = _clock().add(holdPausedFor);
+            send(const BridgeCommand.pause());
+          }
         }
         if (handoverCb != null) {
-          unawaited(handoverCb());
+          // The native player stops (and the user's queue comes back) before
+          // the page plays and claims the controls, never after.
+          unawaited(() async {
+            try {
+              await handoverCb();
+            } catch (_) {}
+            if (!_disposed) toPage();
+          }());
+        } else {
+          toPage();
         }
     }
+  }
+
+  /// How long after a paused hand-off the page's own autoplay is undone.
+  static const Duration holdPausedFor = Duration(seconds: 12);
+
+  /// Until then, the page playing by itself (no play from MediaHub) is paused.
+  DateTime? _holdPausedUntil;
+
+  /// The last play or pause MediaHub sent was a pause.
+  bool _lastCommandWasPause = false;
+
+  /// A pause was sent after the last state the page reported: that state
+  /// ("playing") is out of date.
+  bool get pausePending {
+    final pausedAt = _lastCommandedPauseAt;
+    if (!_lastCommandWasPause || pausedAt == null) return false;
+    final at = _lastStateAt;
+    return at == null || !pausedAt.isBefore(at);
+  }
+
+  /// Whether the video is playing as far as the user is concerned: the
+  /// page's last report, unless a pause was sent since.
+  bool get userPlaying => (media.value?.isPlaying ?? false) && !pausePending;
+
+  void _maybeContinueDetached(OnlineMediaState s) {
+    final at = _detachedAt;
+    if (!_detached || at == null || !_playingWhenDetached) return;
+    if (s.status != OnlineMediaStatus.paused) return;
+    _playingWhenDetached = false;
+    if (_clock().difference(at) > detachedPauseWindow || pausePending) return;
+    final commanded = _lastCommandedPauseAt;
+    if (commanded != null && !commanded.isBefore(at)) return;
+    final detachedPlay = onDetachedPlay;
+    if (detachedPlay == null) return;
+    DiagnosticsService.instance.logEvent('online_detached_continue');
+    unawaited(detachedPlay());
   }
 
   /// The page loaded a new document (the bridge says "ready" once per
@@ -213,6 +303,20 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
     if (s.isPlaying && _playWaitsForWindow) {
       _playWaitsForWindow = false; // it started after all
       _playCheckTimer?.cancel();
+    }
+    // Without a window (Android, swiped away) Chromium starts a <video> and
+    // pauses it again within milliseconds: such a "playing" is no success,
+    // so it does not reset the retry (that looped on retries for ever).
+    if (s.isPlaying && !_detached) _playRetried = false;
+    _maybeContinueDetached(s);
+    final hold = _holdPausedUntil;
+    if (hold != null) {
+      if (!_clock().isBefore(hold)) {
+        _holdPausedUntil = null;
+      } else if (s.isPlaying) {
+        DiagnosticsService.instance.logEvent('online_autoplay_held_paused');
+        send(const BridgeCommand.pause());
+      }
     }
     final previous = media.value;
     final now = _clock();
@@ -234,11 +338,13 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
         _active = true;
         DiagnosticsService.instance.logEvent('online_media_session_claimed');
         host.setExternalSource(this, snapshotOf(s));
+        _setStreaming(true);
         _listenForNoisy();
         _watchTicks();
         return;
       }
       host.updateExternalMedia(this, snapshotOf(s));
+      _setStreaming(true);
       _watchTicks();
       return;
     }
@@ -246,9 +352,15 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
     _playingSince = null;
     _suppressed = false;
     _stopTickWatch();
+    _setStreaming(false);
     if (!_active) return;
     host.updateExternalMedia(this, snapshotOf(s));
-    _scheduleRelease(s.status == OnlineMediaStatus.none ? idleRelease : pausedRelease);
+    if (s.status == OnlineMediaStatus.none) {
+      _scheduleRelease(idleRelease);
+    } else {
+      final after = pausedRelease;
+      if (after != null) _scheduleRelease(after);
+    }
     if (s.status == OnlineMediaStatus.paused && s.event == 'pause' && (previous?.isPlaying ?? false)) {
       _lastPause = s;
       _lastPauseAt = now;
@@ -292,7 +404,12 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
         _appInForeground = false;
-        if (state == AppLifecycleState.detached) _detached = true;
+        if (state == AppLifecycleState.detached && !_detached) {
+          _detached = true;
+          _detachedAt = _clock();
+          _playingWhenDetached = media.value?.isPlaying ?? false;
+          onDetachedPrefetch?.call(media.value?.videoId);
+        }
         if (_backgroundedAt == null) {
           _backgroundedAt = _clock();
           // A pause that came just before the app finished leaving counts too.
@@ -406,6 +523,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       if (!_active || _disposed) return;
       DiagnosticsService.instance.logEvent('online_media_session_released', {'reason': 'idle'});
       _active = false;
+      _setStreaming(false);
       _stopNoisy();
       host.clearExternalSource(this);
     });
@@ -439,6 +557,8 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
 
   Duration? _handoverPosition;
   bool _handoverPlay = false;
+  bool _handoverPending = false;
+  bool _pausedSinceHandover = false;
   Future<void> Function()? _onHandover;
   Timer? _handoverTimeout;
 
@@ -453,6 +573,8 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   }) {
     _handoverPosition = position;
     _handoverPlay = play;
+    _handoverPending = true;
+    _pausedSinceHandover = false;
     _onHandover = onHandover;
     _handoverTimeout?.cancel();
     _handoverTimeout = Timer(const Duration(seconds: 15), () {
@@ -467,31 +589,54 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   /// (swiped away from recents), this starts native stream playback instead.
   Future<bool> Function()? onDetachedPlay;
 
+  /// Resolves the video's stream ahead of a detached play (task swiped away).
+  void Function(String? videoId)? onDetachedPrefetch;
+
+  DateTime? _detachedAt;
+  bool _playingWhenDetached = false;
+
+  /// After the task is swiped away, a video that was playing and is paused by
+  /// the browser (not by MediaHub) within this long carries on natively.
+  static const Duration detachedPauseWindow = Duration(seconds: 6);
+
+  /// A play from the phone's controls was sent a second time (it did not
+  /// start the first time, without a window).
+  bool _playRetried = false;
+
   @override
   Future<void> externalPlay() async {
+    // The page (and its session) is still there after a pause, however long
+    // ago: Play goes to it, never to the local music.
+    _playRetried = false;
     final sent = await send(const BridgeCommand.play());
     if (!_detached || _disposed) return;
-    // No window: some WebViews (Samsung, Android 13) will not start a video
-    // in a page that lost its window. Check, and if it did not start, try
-    // native detached playback; if that is unavailable, say so in the
-    // notification and play once MediaHub is opened.
+    // No window (swiped away from recents): check that it started. If not,
+    // ask once more (a page that lost its window may take a moment, or drop
+    // the first play), then try native detached playback where there is
+    // one (iOS); only then say so in the notification and play once
+    // MediaHub is opened.
     _playCheckTimer?.cancel();
-    if (!sent) {
-      if (onDetachedPlay != null) {
-        final started = await onDetachedPlay!();
-        if (started) return;
+    _playCheckTimer = Timer(sent ? playCheckAfter : Duration.zero, _checkDetachedPlay);
+  }
+
+  Future<void> _checkDetachedPlay() async {
+    if (_disposed || !_detached || (media.value?.isPlaying ?? false)) return;
+    if (!_playRetried && hasSender) {
+      _playRetried = true;
+      DiagnosticsService.instance.logEvent('online_play_retry_detached');
+      final sent = await send(const BridgeCommand.play());
+      if (sent) {
+        send(const BridgeCommand.requestState());
+        _playCheckTimer = Timer(playCheckAfter, _checkDetachedPlay);
+        return;
       }
-      _waitForWindow();
-      return;
     }
-    _playCheckTimer = Timer(playCheckAfter, () async {
-      if (_disposed || !_detached || (media.value?.isPlaying ?? false)) return;
-      if (onDetachedPlay != null) {
-        final started = await onDetachedPlay!();
-        if (started) return;
-      }
-      _waitForWindow();
-    });
+    final detachedPlay = onDetachedPlay;
+    if (detachedPlay != null) {
+      final started = await detachedPlay();
+      if (started) return;
+    }
+    _waitForWindow();
   }
 
   void _waitForWindow() {
@@ -508,6 +653,11 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
   void playOnNextPage() => _playOnNextPage = true;
   bool _playOnNextPage = false;
 
+  /// The app opened a video the notification brought back after a restart
+  /// while it was paused: the next page must not play it by itself.
+  void pauseOnNextPage() => _pauseOnNextPage = true;
+  bool _pauseOnNextPage = false;
+
   /// A play is waiting for MediaHub to be opened (see [externalPlay]).
   bool get playWaitsForWindow => _playWaitsForWindow;
 
@@ -519,6 +669,8 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
       final st = media.value;
       if (st != null && _active) host.updateExternalMedia(this, snapshotOf(st));
     }
+    if (_handoverPending) _pausedSinceHandover = true;
+    _playOnNextPage = false;
     return send(const BridgeCommand.pause());
   }
 
@@ -536,15 +688,46 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
     _cancelRelease();
     _stopTickWatch();
     _stopNoisy();
+    _setStreaming(false);
     if (!_active) return;
     _active = false;
     _suppressed = true;
     _releasedAt = _clock();
   }
 
+  /// The native hand-off loaded the video paused (the task was swiped away
+  /// while it was paused): the phone's controls now belong to the native
+  /// player, so their Play starts it instead of the page, which cannot play
+  /// without a window.
+  /// The hand-off gave a paused video back to the page: the page takes the
+  /// phone's controls again (paused), so the notification and the media
+  /// service stay, and a later swipe-away still finds a session to keep.
+  void claimPaused() {
+    final s = media.value;
+    if (_disposed || _active || _sender == null || s == null || s.videoId == null) return;
+    DiagnosticsService.instance.logEvent('online_media_session_claimed', {'paused': true});
+    _suppressed = false;
+    _active = true;
+    host.setExternalSource(this, snapshotOf(s.isPlaying ? s.withStatus(OnlineMediaStatus.paused, event: 'handback') : s));
+  }
+
+  void yieldToNative() {
+    if (_disposed || !_active) return;
+    DiagnosticsService.instance.logEvent('online_media_session_released', {'reason': 'native_handoff'});
+    _cancelRelease();
+    _stopTickWatch();
+    _stopNoisy();
+    _setStreaming(false);
+    _active = false;
+    _suppressed = true;
+    _releasedAt = _clock();
+    host.clearExternalSource(this);
+  }
+
   /// The WebView went away (or was recreated): hand the session back.
   void detachPage() {
     _sender = null;
+    _setStreaming(false);
     _cancelRelease();
     _stopTickWatch();
     _stopNoisy();
@@ -562,6 +745,7 @@ class OnlineMediaSession implements ExternalPlaybackDelegate {
     _handoverTimeout = null;
     _onHandover = null;
     onDetachedPlay = null;
+    onDetachedPrefetch = null;
     detachPage();
     _disposed = true;
     media.dispose();
@@ -575,6 +759,7 @@ final onlineMediaSessionProvider = Provider<OnlineMediaSession>((ref) {
     host: ref.watch(audioHandlerProvider),
     resumeBackgroundInterruptions: PlatformInfo.isIOS,
     becomingNoisy: () => DeviceControls.watchBecomingNoisy(DeviceControls.pipOwnerOnline),
+    onStreamingChanged: (streaming) => PlaybackLocks.setStreaming(streaming),
   );
   ref.onDispose(session.dispose);
   return session;

@@ -204,6 +204,18 @@ class DeviceControls {
   }
 
   /// Enters picture-in-picture now. Returns false if the device cannot.
+  /// Diagnostic: what in the app's window could draw over the Flutter UI
+  /// (see [UiCoverReport]); null where it cannot be checked.
+  static Future<UiCoverReport?> uiCoverCheck() async {
+    if (!available) return null;
+    try {
+      final raw = await _channel.invokeMapMethod<String, Object?>('uiCoverCheck');
+      return raw == null ? null : UiCoverReport.fromMap(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<bool> enterPip() async {
     if (!available) return false;
     try {
@@ -335,4 +347,38 @@ class DeviceControls {
       await _channel.invokeMethod<bool>(method, {'value': value.clamp(0.0, 1.0)});
     } catch (_) {}
   }
+}
+
+/// What the window holds besides the Flutter UI ([DeviceControls.uiCoverCheck]).
+@immutable
+class UiCoverReport {
+  const UiCoverReport({this.orphanWrappers = 0, this.wrappers = 0, this.flutterViews = 1, this.strayViews = const []});
+
+  factory UiCoverReport.fromMap(Map<String, Object?> m) => UiCoverReport(
+        orphanWrappers: (m['orphanWrappers'] as num?)?.toInt() ?? 0,
+        wrappers: (m['wrappers'] as num?)?.toInt() ?? 0,
+        flutterViews: (m['flutterViews'] as num?)?.toInt() ?? 1,
+        strayViews: [for (final v in (m['strayViews'] as List?) ?? const []) '$v'],
+      );
+
+  /// Platform-view wrappers without a render target: they draw the WebView
+  /// straight onto the window, over the whole Flutter UI.
+  final int orphanWrappers;
+  final int wrappers;
+  final int flutterViews;
+
+  /// Views in the window besides the FlutterView (a fullscreen video's view).
+  final List<String> strayViews;
+
+  /// Whether something native covers the Flutter UI. A stray view is
+  /// expected only while the page shows a video fullscreen.
+  bool covers({required bool pageFullscreen}) =>
+      orphanWrappers > 0 || flutterViews != 1 || (!pageFullscreen && strayViews.isNotEmpty);
+
+  Map<String, Object> toDiagnostics() => {
+        'orphan_wrappers': orphanWrappers,
+        'wrappers': wrappers,
+        'flutter_views': flutterViews,
+        'stray': strayViews.join(','),
+      };
 }

@@ -12,6 +12,9 @@
 #
 # Env:
 #   BUILD_COPY        scratch copy location (default: $HOME/.mediahub/build-copy)
+#   FIXTURE_MEDIA     emulator mode: base URL of tools/device/fixture_media_server.py (e.g.
+#                     http://127.0.0.1:8765 with `adb reverse tcp:8765 tcp:8765`): the fixture plays a
+#                     real video and the native hand-off resolves to the server's audio
 #   FLUTTER_BIN       folder to put first on PATH (e.g. /c/Users/me/flutter-sdk/bin)
 #   SDK_PLATFORM_FIX  set to 1 if your Android SDK installs the platform as "android-37.0"
 #                     (AGP then can't find "android-37"; this patches compileSdk in the copy)
@@ -67,7 +70,7 @@ ARM=(--target-platform android-arm64 -P mediahub.abis=arm64-v8a)
 X64=(--target-platform android-x64 -P mediahub.abis=x86_64)
 case "$MODE" in
   test)     flutter build apk --debug "${ARM[@]}" ;;
-  emulator) flutter build apk --debug "${X64[@]}" --dart-define=MEDIAHUB_DEMO=true --dart-define=MEDIAHUB_ONLINE_FIXTURE=true ;;
+  emulator) flutter build apk --debug "${X64[@]}" --dart-define=MEDIAHUB_DEMO=true --dart-define=MEDIAHUB_ONLINE_FIXTURE=true ${FIXTURE_MEDIA:+--dart-define=MEDIAHUB_FIXTURE_MEDIA=$FIXTURE_MEDIA} ;;
   family)   flutter build apk --release "${ARM[@]}" ;;
   relx64)   flutter build apk --release "${X64[@]}" ;;
   testrel)  flutter build apk --release "${ARM[@]}" ;;

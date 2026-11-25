@@ -4,6 +4,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:mediahub/core/platform_info.dart';
 import 'package:mediahub/domain/models/media_item.dart' as domain;
 import 'package:mediahub/features/music_player/music_audio_handler.dart';
 
@@ -457,6 +458,27 @@ void main() {
         await h.dispose();
       });
 
+      test('no window after a restart: the restored video shows as starting (playing), or back to "tap to resume"', () async {
+        final saved = ExternalResumeItem(
+          id: 'online:dQw4w9WgXcQ',
+          pageUrl: _watch,
+          title: 'A YouTube video',
+          position: const Duration(seconds: 95),
+        ).encode();
+        final h = MusicAudioHandler(player: player, loadExternalHeld: () => true, loadExternalResume: () => saved);
+        await h.play();
+        expect(h.takeRestoredExternal(), isNotNull);
+        h.showRestoredStarting();
+        expect(h.playbackState.value.playing, isTrue, reason: 'the service enters the foreground on the press');
+        expect(h.playbackState.value.processingState, AudioProcessingState.buffering);
+        expect(h.mediaItem.value?.title, 'A YouTube video');
+        h.showRestoredWaiting();
+        expect(h.playbackState.value.playing, isFalse);
+        expect(h.mediaItem.value?.artist, MusicAudioHandler.tapToResumeLine);
+        verifyNever(() => player.play());
+        await h.dispose();
+      });
+
       test('after a restart the notification shows the video; play asks for the app, never local music', () async {
         final saved = ExternalResumeItem(
           id: 'online:dQw4w9WgXcQ',
@@ -517,6 +539,38 @@ void main() {
           await h.dispose();
         }
       });
+    });
+  });
+
+  group('swiped away from recents (Android)', () {
+    setUp(() => PlatformInfo.debugIsAndroid = true);
+    tearDown(() => PlatformInfo.debugIsAndroid = null);
+
+    test('task removal stops nothing: YouTube keeps playing with working controls', () async {
+      handler.setExternalSource(yt, _yt());
+      await handler.onTaskRemoved();
+      expect(handler.isExternalActive, isTrue);
+      expect(handler.playbackState.value.playing, isTrue);
+      expect(handler.playbackState.value.processingState, AudioProcessingState.ready);
+      await handler.pause();
+      handler.updateExternalMedia(yt, _yt(playing: false));
+      await handler.play();
+      expect(yt.calls, ['pause', 'play'], reason: 'never local music');
+      expect(playing, isFalse);
+    });
+
+    test('task removal with local music: it plays on', () async {
+      await handler.loadQueue([_song('1'), _song('2')]);
+      await handler.onTaskRemoved();
+      expect(playing, isTrue);
+      verifyNever(() => player.stop());
+    });
+
+    test('a paused YouTube video is never ended by a timer', () async {
+      handler.setExternalSource(yt, _yt());
+      handler.updateExternalMedia(yt, _yt(playing: false));
+      expect(handler.idleStopArmed, isFalse);
+      expect(handler.playbackState.value.processingState, isNot(AudioProcessingState.idle));
     });
   });
 }

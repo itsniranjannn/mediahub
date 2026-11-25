@@ -133,13 +133,14 @@ class ExternalResumeItem {
     return pageUrl.replace(queryParameters: q);
   }
 
-  ExternalMediaSnapshot toSnapshot({String? artistLine}) => ExternalMediaSnapshot(
+  ExternalMediaSnapshot toSnapshot({String? artistLine, bool starting = false}) => ExternalMediaSnapshot(
         id: id,
         title: title,
         artist: artistLine ?? artist,
         album: album,
         artUri: artUri,
-        playing: false,
+        playing: starting,
+        buffering: starting,
         position: position,
         duration: duration,
         pageUrl: pageUrl,
@@ -288,9 +289,12 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   final void Function(bool held)? saveExternalHeld;
 
   /// Paused this long, the session ends: the foreground service, its wake
-  /// lock and the notification go (docs: ONL-8). Shared with the Online tab.
-  static const Duration defaultPausedIdleTimeout = Duration(minutes: 30);
-  final Duration pausedIdleTimeout;
+  /// lock and the notification go (docs: ONL-8). Off by default (null): a
+  /// paused session, local or the Online tab's, keeps its notification and a
+  /// working Play button until the user closes it, also after the app was
+  /// swiped away from recents. Paused, the service holds no wake lock.
+  static const Duration? defaultPausedIdleTimeout = null;
+  final Duration? pausedIdleTimeout;
 
   /// How long a seek waits for the player to finish loading.
   static const Duration loadingWaitTimeout = Duration(seconds: 10);
@@ -763,6 +767,25 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return ExternalResumeRequest(r.item, play: play);
   }
 
+  /// Android, with no window (the process restarted after the task was
+  /// swiped away): the restored video is starting in a page without one
+  /// (OnlineHeadlessPlayer). Shown as loading, and playing, right away, so
+  /// the media service enters the foreground while the press of Play still
+  /// allows it; the page's own reports take over once it plays.
+  void showRestoredStarting() {
+    final r = _restored;
+    if (r == null || !identical(_external, r)) return;
+    DiagnosticsService.instance.logEvent('external_restored_starting');
+    _applyExternal(r.item.toSnapshot(starting: true));
+  }
+
+  /// The page without a window could not start: back to "tap to resume".
+  void showRestoredWaiting() {
+    final r = _restored;
+    if (r == null || !identical(_external, r)) return;
+    _applyExternal(r.item.toSnapshot(artistLine: tapToResumeLine));
+  }
+
   void _restoredWants({required bool play}) {
     final r = _restored;
     if (r == null || !identical(_external, r)) return;
@@ -833,6 +856,15 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
 
   /// A local start the user made in the app: local music owns the controls again.
   void _localChosen() => _setExternalHeld(false);
+
+  /// The Online hand-off loaded its stream here (paused) because the page
+  /// lost its window: the phone's controls belong to this player now, also
+  /// its Play (no "held" page source left to send it to).
+  void takeControlsFromExternal({required String reason}) {
+    _localChosen();
+    _releaseExternal(reason: reason);
+    _broadcastAudioServiceState();
+  }
 
   // --- favourite (the notification's heart) ----------------------------------
   StreamSubscription<bool>? _favoriteSub;
@@ -2038,11 +2070,28 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     return drift > 2500 || (!b.playing && drift > 0);
   }
 
+  // No audio focus is asked for the Online tab's page: Android's WebView
+  // holds it itself (Chromium's AudioFocusDelegate, in the app's process).
+  // Asking for it here as well took it from the WebView, which then paused
+  // the video on every Play (seen on the emulator: onAudioFocusChange(-1)
+  // to AudioFocusDelegate every few seconds after a swipe-away).
+
+  /// Swiped away from recents: nothing stops. The service is a started
+  /// foreground service (stopWithTask="false"), the engine and the Online
+  /// page live on in it, and the notification keeps working.
+  @override
+  Future<void> onTaskRemoved() async {
+    DiagnosticsService.instance.logEvent('task_removed', {
+      'target': _external != null ? 'external' : 'local',
+      'playing': playbackState.value.playing,
+    });
+  }
+
   // --- paused-idle stop (ONL-8) ----------------------------------------------------
 
   /// The foreground service stays up while paused (androidStopForegroundOnPause
-  /// is false, for YouTube's gaps between videos), so after
-  /// [pausedIdleTimeout] of pause the session ends, local or external.
+  /// is false). Only when [pausedIdleTimeout] is set (it is off by default)
+  /// does a long pause end the session, local or external.
   void _onSessionPlaying(bool playing) {
     if (playing) {
       _sessionPlaying = true;
@@ -2051,9 +2100,12 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     } else if (_sessionPlaying) {
       _sessionPlaying = false;
       _idleStopTimer?.cancel();
-      _idleStopTimer = Timer(pausedIdleTimeout, () {
+      _idleStopTimer = null;
+      final idle = pausedIdleTimeout;
+      if (idle == null) return;
+      _idleStopTimer = Timer(idle, () {
         _idleStopTimer = null;
-        DiagnosticsService.instance.logEvent('paused_idle_stop', {'minutes': pausedIdleTimeout.inMinutes});
+        DiagnosticsService.instance.logEvent('paused_idle_stop', {'minutes': idle.inMinutes});
         stop(reason: 'paused_idle').catchError((Object e) {
           debugPrint('[MusicAudioHandler] idle stop failed: $e');
         });

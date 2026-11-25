@@ -21,6 +21,9 @@ class ExtractorFormat {
   final String vcodec;
   final String acodec;
 
+  /// The direct https link to this format, when the extractor gave one.
+  final String? url;
+
   const ExtractorFormat({
     required this.formatId,
     required this.ext,
@@ -35,6 +38,7 @@ class ExtractorFormat {
     this.fps = 0,
     this.vcodec = '',
     this.acodec = '',
+    this.url,
   });
 
   factory ExtractorFormat.fromMap(Map<dynamic, dynamic> map) {
@@ -52,6 +56,7 @@ class ExtractorFormat {
       fps: (map['fps'] as num?)?.toDouble() ?? 0,
       vcodec: map['vcodec']?.toString() ?? '',
       acodec: map['acodec']?.toString() ?? '',
+      url: map['url'] is String && (map['url'] as String).startsWith('https://') ? map['url'] as String : null,
     );
   }
 

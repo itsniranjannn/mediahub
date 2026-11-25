@@ -667,3 +667,91 @@ class _InAppController implements OnlineWebController {
     await _c.setSettings(settings: current);
   }
 }
+
+// --- a page without a window (Android) ---------------------------------------
+
+/// A YouTube page running in a WebView that has no window: Android, after
+/// the process was restarted with MediaHub's task gone from recents, so there
+/// is no Activity for the Online tab's own WebView.
+abstract class OnlineHeadlessPage {
+  Future<Object?> evaluateJavascript(String source);
+  Future<void> dispose();
+}
+
+/// Starts [url] in a page without a window, with the bridge [bridgeScript]
+/// (and, in fixture builds, [fixtureHtml] in place of the real page).
+typedef OnlineHeadlessLauncher = Future<OnlineHeadlessPage> Function({
+  required Uri url,
+  required String bridgeScript,
+  String? fixtureHtml,
+  required void Function(Object? args) onBridgeMessage,
+});
+
+/// The real launcher: flutter_inappwebview's HeadlessInAppWebView, which on
+/// Android builds its WebView on the application context when there is no
+/// Activity. Same settings and rules as the Online tab's WebView: YouTube
+/// pages only, untrusted certificates refused, no permissions.
+Future<OnlineHeadlessPage> launchInAppHeadlessPage({
+  required Uri url,
+  required String bridgeScript,
+  String? fixtureHtml,
+  required void Function(Object? args) onBridgeMessage,
+}) async {
+  final ua = await onlineBrowserUserAgent(isIOS: false);
+  final view = HeadlessInAppWebView(
+    initialSettings: onlineWebViewSettings(backgroundPlay: true, isIOS: false, userAgent: ua),
+    initialUserScripts: UnmodifiableListView([
+      UserScript(
+        groupName: 'mediahub',
+        source: bridgeScript,
+        injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+        forMainFrameOnly: true,
+        allowedOriginRules: _bridgeOrigins,
+      ),
+    ]),
+    initialUrlRequest: fixtureHtml == null ? URLRequest(url: WebUri.uri(url)) : null,
+    initialData: fixtureHtml == null
+        ? null
+        : InAppWebViewInitialData(data: fixtureHtml, baseUrl: WebUri.uri(url), historyUrl: WebUri.uri(url)),
+    onWebViewCreated: (controller) {
+      controller.addJavaScriptHandler(
+        handlerName: onlineBridgeHandlerName,
+        callback: (args) {
+          onBridgeMessage(args);
+          return null;
+        },
+      );
+    },
+    shouldOverrideUrlLoading: (controller, action) async {
+      final decision = decideOnlineNavigation(action.request.url, isMainFrame: action.isForMainFrame);
+      final upgraded = decision.uri;
+      if (decision.kind != OnlineNavigationKind.allow) return NavigationActionPolicy.CANCEL;
+      final requested = action.request.url;
+      if (upgraded != null && requested != null && upgraded.toString() != requested.toString()) {
+        await controller.loadUrl(urlRequest: URLRequest(url: WebUri.uri(upgraded)));
+        return NavigationActionPolicy.CANCEL;
+      }
+      return NavigationActionPolicy.ALLOW;
+    },
+    onReceivedServerTrustAuthRequest: (controller, challenge) async =>
+        ServerTrustAuthResponse(action: ServerTrustAuthResponseAction.CANCEL),
+    onPermissionRequest: (controller, request) async =>
+        PermissionResponse(resources: request.resources, action: PermissionResponseAction.DENY),
+    onGeolocationPermissionsShowPrompt: (controller, origin) async =>
+        GeolocationPermissionShowPromptResponse(origin: origin, allow: false, retain: false),
+  );
+  await view.run();
+  return _InAppHeadlessPage(view);
+}
+
+class _InAppHeadlessPage implements OnlineHeadlessPage {
+  _InAppHeadlessPage(this._view);
+  final HeadlessInAppWebView _view;
+
+  @override
+  Future<Object?> evaluateJavascript(String source) async =>
+      _view.webViewController?.evaluateJavascript(source: source);
+
+  @override
+  Future<void> dispose() => _view.dispose();
+}

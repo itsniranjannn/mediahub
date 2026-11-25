@@ -107,9 +107,11 @@ Future<void> _bootstrap() async {
       // starts the mediaPlayback foreground service (and its wake lock) whenever
       // the broadcast state turns to playing, whichever source it comes from, so
       // YouTube audio keeps the process alive with the screen off. It stays in
-      // the foreground while paused (androidStopForegroundOnPause: false) and
-      // stops once the state goes idle: after 30 minutes of pause the handler
-      // ends the session itself (MusicAudioHandler.defaultPausedIdleTimeout).
+      // the foreground while paused (androidStopForegroundOnPause: false), and
+      // swiping the app away from recents stops nothing (onTaskRemoved; the
+      // service is stopWithTask="false"). It stops only once the state goes
+      // idle, which happens when the user closes the session: a pause never
+      // times out (MusicAudioHandler.defaultPausedIdleTimeout is off).
       config: const AudioServiceConfig(
         androidNotificationChannelId: 'com.mediahub.app.audio',
         androidNotificationChannelName: 'MediaHub Playback',

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show HttpClient, HttpHeaders, HttpStatus;
 
 import 'package:audio_service/audio_service.dart' show AudioServiceRepeatMode;
 import 'package:flutter/foundation.dart';
@@ -13,6 +14,8 @@ import '../../domain/models/media_item.dart' as domain;
 import '../../domain/models/playback_state.dart' as domain;
 import '../explore/online_models.dart';
 import '../explore/online_source.dart';
+import '../../personal/extractor_backend.dart';
+import '../../personal/personal_tools_notifier.dart';
 import '../music_player/music_audio_handler.dart';
 import '../music_player/playback_notifier.dart';
 import 'online_bridge_protocol.dart';
@@ -38,7 +41,10 @@ abstract class HandoffPlayer {
   /// Plays [item] alone, from [position], and returns once it really plays.
   /// Throws (a [HandoffPlaybackException]) when the stream is refused or
   /// does not start in time; nothing plays then.
-  Future<void> playAlone(domain.MediaItem item, Duration position);
+  ///
+  /// With [play] false the item is only loaded, paused at [position] (ready
+  /// for a Play from the phone's controls); it returns once it is loaded.
+  Future<void> playAlone(domain.MediaItem item, Duration position, {bool play = true});
 
   HandoffPlayerState get current;
 
@@ -91,7 +97,7 @@ class MusicHandoffPlayer implements HandoffPlayer {
   }
 
   @override
-  Future<void> playAlone(domain.MediaItem item, Duration position) async {
+  Future<void> playAlone(domain.MediaItem item, Duration position, {bool play = true}) async {
     final handler = _handler;
     bool onItem() => handler.getCurrentDomainState().currentItemId == item.id;
     final failed = Completer<void>();
@@ -126,6 +132,12 @@ class MusicHandoffPlayer implements HandoffPlayer {
         }
         if (position > Duration.zero) await _playback.seek(position);
         if (gaveUp) throw const HandoffPlaybackException('too_late');
+        if (!play) {
+          // Loaded and paused: the notification's Play must start it, not
+          // go to the page (which cannot play without a window).
+          handler.takeControlsFromExternal(reason: 'native_handoff');
+          return;
+        }
         states = handler.player.playerStateStream.listen((_) => check());
         // Local playback starting hands the media session over from the page
         // (which is told to pause).
@@ -135,8 +147,7 @@ class MusicHandoffPlayer implements HandoffPlayer {
           started.future,
           failed.future.then<void>((_) => throw const HandoffPlaybackException('failed')),
         ]);
-      }()
-          .timeout(startTimeout);
+      }().timeout(startTimeout);
     } catch (e) {
       // Nothing may start late, once the page has been asked to play on.
       gaveUp = true;
@@ -145,7 +156,9 @@ class MusicHandoffPlayer implements HandoffPlayer {
         if (onItem()) await _playback.pause();
       } catch (_) {}
       DiagnosticsService.instance.logEvent('online_handoff_play_failed', {
-        'reason': e is HandoffPlaybackException ? e.reason : (e is TimeoutException ? 'timeout' : e.runtimeType.toString()),
+        'reason': e is HandoffPlaybackException
+            ? e.reason
+            : (e is TimeoutException ? 'timeout' : e.runtimeType.toString()),
       });
       if (e is HandoffPlaybackException) rethrow;
       throw HandoffPlaybackException(e is TimeoutException ? 'timeout' : e.runtimeType.toString());
@@ -200,8 +213,7 @@ OnlineStream? pickHandoffStream(OnlineStreams streams) {
     return c == 'mp4' || c == 'm4a';
   }
 
-  final audio = streams.audio.where(isMp4).toList()
-    ..sort((a, b) => (b.bitrateKbps ?? 0).compareTo(a.bitrateKbps ?? 0));
+  final audio = streams.audio.where(isMp4).toList()..sort((a, b) => (b.bitrateKbps ?? 0).compareTo(a.bitrateKbps ?? 0));
   if (audio.isNotEmpty) return audio.first;
   final video = streams.video.where(isMp4).toList()..sort((a, b) => (a.height ?? 0).compareTo(b.height ?? 0));
   return video.isEmpty ? null : video.first;
@@ -236,17 +248,40 @@ class OnlineBackgroundHandoff {
     required this.player,
     required Future<OnlineStreams> Function(String videoId) resolveStreams,
     required bool Function() enabled,
+    bool Function()? detachedEnabled,
     DateTime Function()? clock,
     this.streamLifetime = const Duration(hours: 4),
     this.pipSettle = const Duration(milliseconds: 700),
-  })  : _resolveStreams = resolveStreams, // ignore: prefer_initializing_formals
-        _enabled = enabled, // ignore: prefer_initializing_formals
-        _clock = clock ?? DateTime.now;
+    this.allowLoopbackStreams = false,
+    Future<OnlineStreams> Function(String videoId, int variant)? resolveStreamsVariant,
+    Future<bool> Function(Uri url)? verifyStream,
+  }) : _resolveVariant = resolveStreamsVariant,
+       _verifyStream = verifyStream, // ignore: prefer_initializing_formals
+       _resolveStreams = resolveStreams, // ignore: prefer_initializing_formals
+       _enabled = enabled, // ignore: prefer_initializing_formals
+       _detachedEnabled = detachedEnabled ?? enabled,
+       _clock = clock ?? DateTime.now;
 
   final OnlineMediaSession session;
   final HandoffPlayer player;
   final Future<OnlineStreams> Function(String videoId) _resolveStreams;
+
+  /// Another YouTube client's streams for a retry (null: [_resolveStreams] only).
+  final Future<OnlineStreams> Function(String videoId, int variant)? _resolveVariant;
+
+  /// Checks that the stream server accepts a link (null: not checked).
+  final Future<bool> Function(Uri url)? _verifyStream;
+
+  /// Which client the next lookup of a video uses (raised after a refused link).
+  final Map<String, int> _variant = {};
+
+  /// How many client variants a refused stream is retried with.
+  static const int maxVariants = 6;
   final bool Function() _enabled;
+
+  /// Whether a play the page cannot start without a window may be played
+  /// natively ([startDetachedPlay]); defaults to [_enabled].
+  final bool Function() _detachedEnabled;
   final DateTime Function() _clock;
 
   /// Stream links stop working after some hours: older ones are resolved again.
@@ -255,6 +290,10 @@ class OnlineBackgroundHandoff {
   /// After an automatic picture-in-picture request, how long to wait for the
   /// page to say whether it went into picture-in-picture.
   final Duration pipSettle;
+
+  /// Debug fixture builds: a stream served by the local fixture server
+  /// (http://127.0.0.1) is accepted too.
+  final bool allowLoopbackStreams;
 
   /// Prefetch failures are not retried sooner than this.
   static const Duration prefetchRetry = Duration(minutes: 2);
@@ -294,6 +333,9 @@ class OnlineBackgroundHandoff {
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
+        if (state == AppLifecycleState.detached) _onDetached();
+        // Have the stream ready in case the task is swiped away next.
+        if (!_left && !_enabled() && (session.media.value?.isPlaying ?? false)) prefetch(session.media.value?.videoId);
         if (_left) return;
         _left = true;
         _onLeft();
@@ -304,6 +346,38 @@ class OnlineBackgroundHandoff {
         _pipTimer = null;
         unawaited(_onReturned());
     }
+  }
+
+  /// Android: the Activity is gone (swiped away from recents, or destroyed).
+  /// The WebView has no window now and Chromium pauses its video within
+  /// milliseconds, so a playing video moves to the native player at once,
+  /// without waiting for that pause.
+  void _onDetached() {
+    String? skip;
+    final s = session.media.value;
+    if (_disposed) {
+      skip = 'disposed';
+    } else if (_enabled() || !_detachedEnabled()) {
+      skip = 'off';
+    } else if (_phase != _Phase.idle) {
+      skip = 'busy_${_phase.name}';
+    } else if (session.browserPipActive.value) {
+      skip = 'browser_pip';
+    } else if (s == null || s.videoId == null) {
+      skip = 'no_video';
+    } else if (!session.isActive) {
+      skip = 'not_session';
+    }
+    if (skip != null) {
+      if (!_disposed) DiagnosticsService.instance.logEvent('online_handoff_proactive_skipped', {'why': skip});
+      return;
+    }
+    final playing = (s!.isPlaying || _playingWhenInactive) && !session.pausePending;
+    DiagnosticsService.instance.logEvent('online_handoff_proactive', {'playing': playing});
+    // Paused: the native player is loaded, paused, at the page's position, so
+    // the notification's Play (which the page cannot honour without a window)
+    // goes straight to it.
+    unawaited(startDetachedPlay(proactive: true, play: playing));
   }
 
   void _onLeft() {
@@ -339,12 +413,19 @@ class OnlineBackgroundHandoff {
     unawaited(_start(generation, videoId));
   }
 
-  Future<void> _start(int generation, String videoId) async {
+  Future<void> _start(int generation, String videoId, {bool pauseFirst = true, bool play = true}) async {
     String? url;
-    try {
-      url = await _streamUrl(videoId);
-    } catch (e) {
-      url = null;
+    // Two tries: a lookup fails now and then (a slow or refused request).
+    for (var attempt = 0; attempt < 2 && url == null; attempt++) {
+      if (attempt > 0) {
+        if (generation != _generation || _phase != _Phase.resolving) return;
+        DiagnosticsService.instance.logEvent('online_handoff_resolve_retry');
+      }
+      try {
+        url = await _streamUrl(videoId);
+      } catch (e) {
+        url = null;
+      }
     }
     if (generation != _generation || _phase != _Phase.resolving) return; // back already
     final s = session.media.value;
@@ -366,36 +447,63 @@ class OnlineBackgroundHandoff {
       source: 'online',
       artworkPath: s.artworkUrl ?? youTubeThumbnailFor(videoId),
     );
-    // Paused on purpose (and not to be resumed: holdPage).
-    await session.send(const BridgeCommand.pause());
+    // Paused on purpose (and not to be resumed: holdPage). A proactive
+    // hand-off keeps the page going until the native player really plays.
+    if (pauseFirst) await session.send(const BridgeCommand.pause());
     if (generation != _generation) return; // back meanwhile: the page was told to play on
     _saved = player.captureLocal();
-    var played = await _tryPlay(item, position);
-    if (!played && generation == _generation) {
-      // Stream links expire, and they only work from the network they were
-      // made on (a cached one breaks after a move from Wi-Fi to mobile
-      // data): one more try with a new link.
-      DiagnosticsService.instance.logEvent('online_handoff_retry');
+    var played = await _tryPlay(item, position, play: play);
+    // Stream links expire, they only work from the network they were made
+    // on (a cached one breaks after a move from Wi-Fi to mobile data), and
+    // some clients' links are refused (HTTP 403): new links, through the
+    // next YouTube client each time.
+    for (var retry = 1; !played && generation == _generation && retry < maxVariants; retry++) {
+      DiagnosticsService.instance.logEvent('online_handoff_retry', {'retry': retry});
       _cache.remove(videoId);
+      if (_resolveVariant != null) _variant[videoId] = ((_variant[videoId] ?? 0) + 1) % maxVariants;
       String? fresh;
       try {
         fresh = await _streamUrl(videoId);
       } catch (_) {
         fresh = null;
       }
-      if (fresh != null && generation == _generation) {
-        played = await _tryPlay(item.copyWith(uri: fresh), position);
+      if (fresh == null || generation != _generation) {
+        if (_resolveVariant == null) break;
+        continue;
       }
+      played = await _tryPlay(item.copyWith(uri: fresh), position, play: play);
+      if (_resolveVariant == null) break;
     }
     if (!played) {
       final saved = _saved;
       _saved = null;
+      if (!play) {
+        // Only getting ready (the video was paused): the page keeps the
+        // session, and a later Play takes the page's own retry path.
+        _phase = _Phase.idle;
+        session.holdPage = false;
+        DiagnosticsService.instance.logEvent('online_handoff_prepare_failed');
+        try {
+          if (player.current.itemId == item.id) {
+            await player.restoreLocal(saved);
+          } else {
+            await player.restoreSettings();
+          }
+        } catch (_) {}
+        return;
+      }
       // The page first (iOS gives a backgrounded app only seconds), then the
       // user's own queue comes back, paused, unless other music took over.
       if (generation == _generation) _fail('play_failed');
       try {
         if (player.current.itemId == item.id) {
-          await player.restoreLocal(saved);
+          if (saved == null && !_enabled()) {
+            // Android: an empty queue would turn the session idle and stop
+            // the service (and, with no Activity, the engine). Paused instead.
+            await player.pause();
+          } else {
+            await player.restoreLocal(saved);
+          }
         } else {
           await player.restoreSettings();
         }
@@ -412,13 +520,17 @@ class OnlineBackgroundHandoff {
       return;
     }
     _phase = _Phase.native;
+    // Only one audio source: the page stops now that the native player plays.
+    if (!pauseFirst) await session.send(const BridgeCommand.pause());
+    // Loaded paused: the phone's Play must reach the native player.
+    if (!play) session.yieldToNative();
     DiagnosticsService.instance.logEvent('online_handoff_native');
   }
 
   /// True once [item] really plays natively.
-  Future<bool> _tryPlay(domain.MediaItem item, Duration position) async {
+  Future<bool> _tryPlay(domain.MediaItem item, Duration position, {bool play = true}) async {
     try {
-      await player.playAlone(item, position);
+      await player.playAlone(item, position, play: play);
       return true;
     } catch (e) {
       debugPrint('[Online] hand-off playback failed: $e');
@@ -480,11 +592,27 @@ class OnlineBackgroundHandoff {
     }
     if (now.itemId == ours) {
       if (session.hasSender) {
+        // Native first, so the two never play at once; then the user's own
+        // queue (or an empty player) comes back, before the page plays and
+        // claims the controls: emptying the player afterwards would end the
+        // media session under the playing page.
+        try {
+          await player.pause();
+          await player.restoreLocal(saved);
+        } catch (e) {
+          debugPrint('[Online] hand-off restore failed: $e');
+        }
         await session.send(BridgeCommand.seekTo(now.position));
         if (now.playing) {
           session.expectPagePlay();
           await session.send(const BridgeCommand.play());
+        } else if (saved == null) {
+          // A paused video: the page keeps the controls, so the notification
+          // and the media service stay.
+          session.claimPaused();
         }
+        DiagnosticsService.instance.logEvent('online_handoff_back', {'synced': true});
+        return;
       } else {
         // App was swiped away and reopened: WebView hasn't loaded the page yet.
         // Handover once the page is ready so music continues playing seamlessly!
@@ -515,17 +643,26 @@ class OnlineBackgroundHandoff {
 
   /// Starts native stream playback when the phone's controls are pressed while
   /// the app is detached (swiped away from recents).
-  Future<bool> startDetachedPlay() async {
-    if (_disposed || !_enabled()) return false;
+  Future<bool> startDetachedPlay({bool proactive = false, bool play = true}) async {
+    if (_disposed || !_detachedEnabled()) {
+      DiagnosticsService.instance.logEvent('online_detached_play_skipped', {'why': _disposed ? 'disposed' : 'off'});
+      return false;
+    }
+    // Already handed off (the proactive switch, or a play under way).
+    if (_phase == _Phase.native) return true;
+    if (_phase == _Phase.resolving) return false;
     final s = session.media.value;
     final videoId = s?.videoId;
-    if (videoId == null || !isValidYouTubeVideoId(videoId)) return false;
+    if (videoId == null || !isValidYouTubeVideoId(videoId)) {
+      DiagnosticsService.instance.logEvent('online_detached_play_skipped', {'why': 'no_video'});
+      return false;
+    }
     _left = true;
-    _leftPlaying = true;
+    _leftPlaying = play;
     session.holdPage = true;
     _phase = _Phase.resolving;
     final generation = ++_generation;
-    await _start(generation, videoId);
+    await _start(generation, videoId, pauseFirst: !proactive || !play, play: play);
     return _phase == _Phase.native;
   }
 
@@ -535,7 +672,8 @@ class OnlineBackgroundHandoff {
   /// have to wait for the network (iOS gives a backgrounded app only seconds).
   /// The Online screen calls it while a video plays with Background play on.
   void prefetch(String? videoId) {
-    if (_disposed || videoId == null || !isValidYouTubeVideoId(videoId) || !_enabled()) return;
+    if (_disposed || videoId == null || !isValidYouTubeVideoId(videoId)) return;
+    if (!_enabled() && !_detachedEnabled()) return;
     if (_fresh(videoId) != null || _pending.containsKey(videoId)) return;
     final failed = _failedAt[videoId];
     if (failed != null && _clock().difference(failed) < prefetchRetry) return;
@@ -559,19 +697,44 @@ class OnlineBackgroundHandoff {
     if (pending != null) return pending;
     final future = () async {
       try {
-        final streams = await _resolveStreams(videoId);
-        final pick = pickHandoffStream(streams);
-        final uri = pick == null ? null : Uri.tryParse(pick.url);
-        if (uri == null || uri.scheme != 'https') {
-          _failedAt[videoId] = _clock();
-          return null;
+        Object? lastError;
+        final resolveVariant = _resolveVariant;
+        // Without other clients: one lookup. With them: each client in turn
+        // until one gives a link the stream server accepts (checked with a
+        // 2-byte request when [_verifyStream] is set), so a link that would
+        // be refused (HTTP 403) is never what the hand-off starts with.
+        final last = resolveVariant == null ? (_variant[videoId] ?? 0) : maxVariants - 1;
+        for (var variant = _variant[videoId] ?? 0; variant <= last; variant++) {
+          OnlineStreams streams;
+          try {
+            streams = (variant > 0 && resolveVariant != null)
+                ? await resolveVariant(videoId, variant)
+                : await _resolveStreams(videoId);
+          } catch (e) {
+            lastError = e;
+            _logResolveFailure(e, variant);
+            continue;
+          }
+          final pick = pickHandoffStream(streams);
+          final uri = pick == null ? null : Uri.tryParse(pick.url);
+          if (uri == null ||
+              !(uri.scheme == 'https' || (allowLoopbackStreams && uri.scheme == 'http' && uri.host == '127.0.0.1'))) {
+            continue;
+          }
+          final verify = _verifyStream;
+          if (verify != null && !await verify(uri)) {
+            DiagnosticsService.instance.logEvent('online_stream_refused', {'variant': variant});
+            continue;
+          }
+          _variant[videoId] = variant;
+          if (_cache.length >= 3) _cache.remove(_cache.keys.first);
+          _cache[videoId] = _CachedStream(pick!.url, _clock());
+          if (variant > 0) DiagnosticsService.instance.logEvent('online_stream_resolved', {'variant': variant});
+          return pick.url;
         }
-        if (_cache.length >= 3) _cache.remove(_cache.keys.first);
-        _cache[videoId] = _CachedStream(pick!.url, _clock());
-        return pick.url;
-      } catch (e) {
         _failedAt[videoId] = _clock();
-        rethrow;
+        if (lastError != null) throw lastError;
+        return null;
       } finally {
         _pending.remove(videoId);
       }
@@ -580,12 +743,70 @@ class OnlineBackgroundHandoff {
     return future;
   }
 
+  void _logResolveFailure(Object e, int variant) {
+    final text = '$e';
+    DiagnosticsService.instance.logEvent('online_stream_resolve_failed', {
+      'variant': variant,
+      'error': text.length > 160 ? text.substring(0, 160) : text,
+    });
+    debugPrint('[Online] stream lookup failed (variant $variant): $e');
+  }
+
   void dispose() {
     _disposed = true;
     _pipTimer?.cancel();
     _generation++;
   }
 }
+
+const bool _fixtureMedia = !kReleaseMode && bool.fromEnvironment('MEDIAHUB_ONLINE_FIXTURE');
+
+/// [videoId]'s audio-only links from yt-dlp (Android's extractor).
+Future<OnlineStreams> extractorHandoffStreams(ExtractorBackend backend, String videoId) async {
+  final info = await backend.getInfo('https://www.youtube.com/watch?v=$videoId');
+  return OnlineStreams(audio: [
+    for (final f in info.formats)
+      if (f.isAudioOnly && f.url != null)
+        OnlineStream(
+          url: f.url!,
+          kind: OnlineStreamKind.audio,
+          label: '${f.abr.round()} kbps',
+          container: f.ext,
+          sizeBytes: f.filesize,
+          bitrateKbps: f.abr.round(),
+        ),
+  ], video: const []);
+}
+
+/// Whether the stream server serves [url] (a 2-byte request): links from
+/// some YouTube clients are refused (HTTP 403) and would never play.
+Future<bool> verifyHandoffStream(Uri url) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+  try {
+    final request = await client.getUrl(url).timeout(const Duration(seconds: 8));
+    request.headers.set(HttpHeaders.rangeHeader, 'bytes=0-1');
+    final response = await request.close().timeout(const Duration(seconds: 8));
+    await response.drain<void>().catchError((Object _) {});
+    return response.statusCode == HttpStatus.ok || response.statusCode == HttpStatus.partialContent;
+  } catch (_) {
+    // Unknown (a slow network): let the player try it.
+    return true;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+/// Whether the native hand-off may run: iOS only, with Background play on.
+///
+/// Android never hands the page's video to the music player. Its WebView
+/// keeps playing with the screen off and after the task is swiped away from
+/// recents (the Flutter engine, and the page in it, live on in the
+/// mediaPlayback foreground service). The hand-off there paused a playing
+/// video to re-fetch it as an audio stream, and when that stream would not
+/// play (an expired or refused link) it put back an empty music queue, which
+/// turned the session idle: audio_service then stopped its service, the
+/// notification went away and, with no Activity left, the engine with it.
+bool onlineHandoffEnabled({required bool isIOS, required bool backgroundPlay}) => isIOS && backgroundPlay;
 
 /// One hand-off for the app's lifetime, next to the media session.
 final onlineBackgroundHandoffProvider = Provider<OnlineBackgroundHandoff>((ref) {
@@ -599,9 +820,29 @@ final onlineBackgroundHandoffProvider = Provider<OnlineBackgroundHandoff>((ref) 
           : MusicHandoffPlayer.defaultAndroidStartTimeout,
     ),
     resolveStreams: (videoId) => ref.read(onlineSourceProvider).streams(videoId),
-    enabled: () => ref.read(onlineBackgroundPlayProvider),
+    // Android: the first retry asks yt-dlp (the extractor downloads use),
+    // whose clients' links the stream server accepts where youtube_explode's
+    // are often refused (HTTP 403); then youtube_explode's other clients.
+    resolveStreamsVariant: (videoId, variant) {
+      if (PlatformInfo.isAndroid && variant == 1 && !_fixtureMedia) {
+        return extractorHandoffStreams(ref.read(extractorBackendProvider), videoId);
+      }
+      final v = PlatformInfo.isAndroid && variant > 1 ? variant - 1 : variant;
+      return ref.read(onlineSourceProvider).streams(videoId, variant: v);
+    },
+    verifyStream: PlatformInfo.isAndroid ? verifyHandoffStream : null,
+    enabled: () =>
+        onlineHandoffEnabled(isIOS: PlatformInfo.isIOS, backgroundPlay: ref.read(onlineBackgroundPlayProvider)),
+    // Both platforms: a play the page cannot start without a window. On
+    // Android, once the task is swiped away the WebView has no window and
+    // Chromium will not start a hidden <video> (it pauses again at once), so
+    // the page is retried first (OnlineMediaSession.externalPlay) and then the
+    // video plays as an audio stream in the music player.
+    detachedEnabled: () => ref.read(onlineBackgroundPlayProvider),
+    allowLoopbackStreams: _fixtureMedia,
   );
   session.onDetachedPlay = handoff.startDetachedPlay;
+  session.onDetachedPrefetch = handoff.prefetch;
   ref.onDispose(() {
     if (identical(session.onDetachedPlay, handoff.startDetachedPlay)) {
       session.onDetachedPlay = null;

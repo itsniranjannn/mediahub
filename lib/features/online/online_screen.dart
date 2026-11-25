@@ -36,6 +36,12 @@ import 'youtube_urls.dart';
 /// emulator that cannot reach YouTube. Always off in release builds.
 const bool kOnlineFixture = bool.fromEnvironment('MEDIAHUB_ONLINE_FIXTURE') && !kReleaseMode;
 
+/// Fixture builds only: `--dart-define=MEDIAHUB_FIXTURE_MEDIA=http://127.0.0.1:8765`
+/// makes the fixture play a real <video> (`/video.mp4`) from that local
+/// server and resolve its stream to `/audio.m4a` there, so the whole native
+/// hand-off (resolve, native play, hand back) runs offline. Empty: the tone.
+const String kOnlineFixtureMedia = kOnlineFixture ? String.fromEnvironment('MEDIAHUB_FIXTURE_MEDIA') : '';
+
 /// The fixture's page address (a valid-looking 11-character id).
 const String onlineFixtureUrl = 'https://m.youtube.com/watch?v=fixture0001';
 
@@ -48,7 +54,9 @@ class OnlineAssets {
 
 final onlineAssetsProvider = FutureProvider<OnlineAssets>((ref) async {
   final bridge = await rootBundle.loadString('assets/web/youtube_bridge.js');
-  final fixture = kOnlineFixture ? await rootBundle.loadString('assets/web/online_fixture.html') : null;
+  final fixture = kOnlineFixture
+      ? (await rootBundle.loadString('assets/web/online_fixture.html')).replaceAll('__FIXTURE_MEDIA__', kOnlineFixtureMedia)
+      : null;
   return OnlineAssets(bridgeSource: bridge, fixtureHtml: fixture);
 });
 
@@ -68,6 +76,9 @@ const String youTubeMusicHomeUrl = 'https://music.youtube.com/';
 /// How far the dock's ink reaches up under the bottom of the YouTube page
 /// (covers device-pixel rounding of the WebView's size).
 const double onlinePageSeamHeight = 3;
+
+/// Below this height the load-error panel shows only its icon and title.
+const double onlineCompactErrorHeight = 360;
 
 /// Opens the media sheet (Like, Add to playlist ...) for an online item from
 /// the watch strip's Save button. Tests override it.
@@ -201,6 +212,7 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
 
   @override
   void dispose() {
+    _coverTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     DeviceControls.inPip.removeListener(_onPipChanged);
     _pipDismissedSub?.cancel();
@@ -485,13 +497,42 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
         _reachedHidden = false;
         _session.send(const BridgeCommand.requestState());
         _updatePipEligibility();
+        _scheduleCoverCheck();
       case AppLifecycleState.detached:
         _reachedHidden = true;
+        // The Activity (and the window a fullscreen video was shown in) is
+        // gone: a fullscreen state kept here would hide the toolbar and leave
+        // the page's fullscreen view half-attached in the next Activity.
+        if (_fullscreen && PlatformInfo.isAndroid) {
+          DiagnosticsService.instance.logEvent('online_fullscreen_dropped_on_detach');
+          _session.send(const BridgeCommand.exitFullscreen());
+          _onFullscreen(false);
+        }
         final inPip = DeviceControls.inPip.value || _session.browserPipActive.value;
         if (!ref.read(onlineBackgroundPlayProvider) && !inPip) {
           _session.send(const BridgeCommand.pause());
         }
     }
+  }
+
+  Timer? _coverTimer;
+
+  /// After the app comes back: checks that nothing native (the WebView drawn
+  /// without its texture, a fullscreen view left behind) covers the Flutter
+  /// UI, and if it does, logs it and starts a fresh WebView, which puts the
+  /// page back under the toolbar and the dock.
+  void _scheduleCoverCheck() {
+    if (!PlatformInfo.isAndroid) return;
+    _coverTimer?.cancel();
+    _coverTimer = Timer(const Duration(milliseconds: 1500), () async {
+      final report = await DeviceControls.uiCoverCheck();
+      if (!mounted || report == null) return;
+      final covered = report.covers(pageFullscreen: _fullscreen || DeviceControls.inPip.value);
+      DiagnosticsService.instance.logEvent('online_ui_cover_check', {...report.toDiagnostics(), 'covered': covered});
+      if (!covered) return;
+      DiagnosticsService.instance.logEvent('online_ui_covered_recovered');
+      _startFreshWebView();
+    });
   }
 
   bool _shouldAutoPip() =>
@@ -583,15 +624,11 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
           'Picture-in-picture is off',
           action: SnackBarAction(label: 'Settings', onPressed: _openAppSettings),
         );
-      } else if (mounted) {
-        _snack('Entering picture-in-picture');
       }
       return;
     }
     final ok = await _session.send(const BridgeCommand.enterPip());
-    if (ok && mounted) {
-      _snack('Entering picture-in-picture');
-    } else if (!ok && mounted) {
+    if (!ok && mounted) {
       _snack('Picture-in-picture is not available for this video');
     }
   }
@@ -845,26 +882,56 @@ class _OnlineScreenState extends ConsumerState<OnlineScreen> with WidgetsBinding
                         key: const ValueKey('online_error_slot'),
                         child: ColoredBox(
                           color: p.background,
-                          child: EmptyHint(
-                            key: const ValueKey('online_error'),
-                            icon: _error!.secureConnectionBlocked
-                                ? Icons.gpp_bad_rounded
-                                : _error!.offline
-                                    ? Icons.wifi_off_rounded
-                                    : Icons.cloud_off_rounded,
-                            title: _error!.secureConnectionBlocked
-                                ? "Can't connect securely"
-                                : _error!.offline
-                                    ? "You're offline"
-                                    : "Couldn't load YouTube",
-                            message: _error!.secureConnectionBlocked
-                                ? onlineSecureConnectionBlockedMessage
-                                : _error!.mobileDataOff
-                                    ? 'Mobile data is off for MediaHub. Turn it on in Settings, or use Wi-Fi.'
-                                    : _error!.offline
-                                        ? 'Connect to the internet to browse YouTube.'
-                                        : 'Something went wrong while opening the page.',
-                            action: FilledButton(onPressed: _retry, child: const Text('Retry')),
+                          child: LayoutBuilder(
+                            builder: (context, box) {
+                              final err = _error!;
+                              final icon = err.secureConnectionBlocked
+                                  ? Icons.gpp_bad_rounded
+                                  : err.offline
+                                      ? Icons.wifi_off_rounded
+                                      : Icons.cloud_off_rounded;
+                              final title = err.secureConnectionBlocked
+                                  ? "Can't connect securely"
+                                  : err.offline
+                                      ? "You're offline"
+                                      : "Couldn't load YouTube";
+                              // The picture-in-picture window (or any very
+                              // small one): only the icon and the title,
+                              // scaled down to fit; the full panel returns
+                              // with the full window.
+                              if (DeviceControls.inPip.value || box.maxHeight < onlineCompactErrorHeight) {
+                                return Center(
+                                  key: const ValueKey('online_error_compact'),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(AppSpacing.xs4),
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(icon, size: 32, color: p.textSecondary),
+                                          const SizedBox(height: AppSpacing.xs4),
+                                          Text(title, textAlign: TextAlign.center),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
+                              return EmptyHint(
+                                key: const ValueKey('online_error'),
+                                icon: icon,
+                                title: title,
+                                message: err.secureConnectionBlocked
+                                    ? onlineSecureConnectionBlockedMessage
+                                    : err.mobileDataOff
+                                        ? 'Mobile data is off for MediaHub. Turn it on in Settings, or use Wi-Fi.'
+                                        : err.offline
+                                            ? 'Connect to the internet to browse YouTube.'
+                                            : 'Something went wrong while opening the page.',
+                                action: FilledButton(onPressed: _retry, child: const Text('Retry')),
+                              );
+                            },
                           ),
                         ),
                       ),
@@ -1079,7 +1146,7 @@ class _WatchActionPill extends StatelessWidget {
 class _WatchTogglePill extends StatelessWidget {
   const _WatchTogglePill({
     super.key,
-    this.label,
+    this.label, // ignore: unused_element_parameter
     required this.selected,
     required this.onSelected,
     this.semanticsLabel,
@@ -1160,7 +1227,7 @@ class _WatchTogglePill extends StatelessWidget {
                         Text(
                           label!,
                           semanticsLabel: semanticsLabel,
-                          style: (type.chipLabel ?? type.label).copyWith(
+                          style: type.chipLabel.copyWith(
                             color: foregroundColor,
                             fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                           ),

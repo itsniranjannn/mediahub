@@ -56,7 +56,7 @@ class _Player implements HandoffPlayer {
   int failNext = 0;
 
   @override
-  Future<void> playAlone(domain.MediaItem item, Duration position) async {
+  Future<void> playAlone(domain.MediaItem item, Duration position, {bool play = true}) async {
     log.add('play ${item.id} @${position.inMilliseconds}');
     this.item = item;
     if (failNext > 0) {
@@ -65,7 +65,7 @@ class _Player implements HandoffPlayer {
       throw const HandoffPlaybackException('failed');
     }
     host.localPlaybackStarts();
-    current = HandoffPlayerState(itemId: item.id, position: position, playing: true);
+    current = HandoffPlayerState(itemId: item.id, position: position, playing: play);
   }
 
   @override
@@ -120,6 +120,18 @@ Future<void> _settle() async {
 }
 
 void main() {
+  group('onlineHandoffEnabled', () {
+    test('Android never hands the page to the music player (the WebView plays on after a swipe-away)', () {
+      expect(onlineHandoffEnabled(isIOS: false, backgroundPlay: true), isFalse);
+      expect(onlineHandoffEnabled(isIOS: false, backgroundPlay: false), isFalse);
+    });
+
+    test('iOS hands off only with Background play on', () {
+      expect(onlineHandoffEnabled(isIOS: true, backgroundPlay: true), isTrue);
+      expect(onlineHandoffEnabled(isIOS: true, backgroundPlay: false), isFalse);
+    });
+  });
+
   late _Host host;
   late OnlineMediaSession session;
   late _Player player;
@@ -436,6 +448,171 @@ void main() {
     handoff.prefetch(null);
     await _settle();
     expect(resolves, 0);
+  });
+
+  group('Android: swiped away from recents (proactive)', () {
+    late bool detachedOn;
+    OnlineBackgroundHandoff buildAndroid() => OnlineBackgroundHandoff(
+          session: session,
+          player: player,
+          resolveStreams: (id) {
+            resolves++;
+            return resolver(id);
+          },
+          enabled: () => false,
+          detachedEnabled: () => detachedOn,
+          clock: () => now,
+        );
+
+    void swipeAway() {
+      lifecycle(AppLifecycleState.inactive);
+      lifecycle(AppLifecycleState.hidden);
+      lifecycle(AppLifecycleState.paused);
+      lifecycle(AppLifecycleState.detached);
+    }
+
+    setUp(() {
+      handoff.dispose();
+      detachedOn = true;
+      handoff = buildAndroid();
+    });
+
+    test('a playing video moves to the native player at once, without waiting for the browser to pause it', () async {
+      push(_state(OnlineMediaStatus.playing, event: 'play'));
+      // Going home prefetches the stream.
+      lifecycle(AppLifecycleState.inactive);
+      lifecycle(AppLifecycleState.hidden);
+      await _settle();
+      expect(resolves, 1);
+      lifecycle(AppLifecycleState.paused);
+      lifecycle(AppLifecycleState.detached);
+      await _settle();
+      expect(handoff.isHandedOff, isTrue);
+      expect(player.current.playing, isTrue);
+      expect(player.log.first, startsWith('play yt_dQw4w9WgXcQ @42'));
+      expect(resolves, 1, reason: 'the prefetched link is used');
+      // The page is paused only after the native player plays: one source.
+      expect(sent.where((c) => c.kind == BridgeCommandKind.pause), isNotEmpty);
+      expect(session.holdPage, isTrue);
+    });
+
+    test('a paused video is loaded natively, paused, so the notification Play goes to it', () async {
+      push(_state(OnlineMediaStatus.playing, event: 'play'));
+      push(_state(OnlineMediaStatus.paused, event: 'pause'));
+      swipeAway();
+      await _settle();
+      expect(handoff.isHandedOff, isTrue);
+      expect(player.current.playing, isFalse);
+      expect(player.current.itemId, 'yt_dQw4w9WgXcQ');
+      expect(session.isActive, isFalse, reason: 'Play from the controls goes to the native player');
+    });
+
+    test('a second detached play while handed off reports success without a new hand-off', () async {
+      push(_state(OnlineMediaStatus.playing, event: 'play'));
+      swipeAway();
+      await _settle();
+      final plays = player.log.where((l) => l.startsWith('play')).length;
+      expect(await handoff.startDetachedPlay(), isTrue);
+      expect(player.log.where((l) => l.startsWith('play')).length, plays);
+    });
+
+    test('reopening hands back once: native pauses first, then the page seeks and plays', () async {
+      push(_state(OnlineMediaStatus.playing, event: 'play'));
+      swipeAway();
+      await _settle();
+      sent.clear();
+      player.log.clear();
+      lifecycle(AppLifecycleState.resumed);
+      await _settle();
+      expect(handoff.isHandedOff, isFalse);
+      expect(player.log.first, 'pause');
+      expect(sent.map((c) => c.kind), containsAllInOrder([BridgeCommandKind.seekTo, BridgeCommandKind.play]));
+    });
+
+    test('a paused hand-off given back: the page keeps the controls (the media service stays)', () async {
+      push(_state(OnlineMediaStatus.playing, event: 'play'));
+      push(_state(OnlineMediaStatus.paused, event: 'pause'));
+      swipeAway();
+      await _settle();
+      expect(session.isActive, isFalse);
+      lifecycle(AppLifecycleState.resumed);
+      await _settle();
+      expect(handoff.isHandedOff, isFalse);
+      expect(session.isActive, isTrue);
+    });
+
+    test('no stream: the notification stays with the page and nothing is handed off', () async {
+      resolver = (id) async => throw Exception('blocked');
+      push(_state(OnlineMediaStatus.playing, event: 'play'));
+      swipeAway();
+      await _settle();
+      expect(handoff.isHandedOff, isFalse);
+      expect(session.isActive, isTrue);
+    });
+
+    test('a refused link (403) is looked up again through the next YouTube clients', () async {
+      final variants = <int>[];
+      handoff.dispose();
+      handoff = OnlineBackgroundHandoff(
+        session: session,
+        player: player,
+        resolveStreams: (id) async {
+          variants.add(0);
+          return _streams();
+        },
+        resolveStreamsVariant: (id, v) async {
+          variants.add(v);
+          return _streams();
+        },
+        enabled: () => false,
+        detachedEnabled: () => true,
+        clock: () => now,
+      );
+      player.failNext = 2;
+      push(_state(OnlineMediaStatus.playing, event: 'play'));
+      swipeAway();
+      await _settle();
+      await _settle();
+      expect(variants, [0, 1, 2]);
+      expect(handoff.isHandedOff, isTrue);
+    });
+
+    test('a link the stream server refuses is skipped before anything plays', () async {
+      final variants = <int>[];
+      handoff.dispose();
+      handoff = OnlineBackgroundHandoff(
+        session: session,
+        player: player,
+        resolveStreams: (id) async {
+          variants.add(0);
+          return _streams();
+        },
+        resolveStreamsVariant: (id, v) async {
+          variants.add(v);
+          return _streams();
+        },
+        verifyStream: (url) async => variants.length > 1,
+        enabled: () => false,
+        detachedEnabled: () => true,
+        clock: () => now,
+      );
+      push(_state(OnlineMediaStatus.playing, event: 'play'));
+      swipeAway();
+      await _settle();
+      await _settle();
+      expect(variants, [0, 1]);
+      expect(player.log.where((l) => l.startsWith('play')), hasLength(1));
+      expect(handoff.isHandedOff, isTrue);
+    });
+
+    test('Background play off: nothing happens on a swipe-away', () async {
+      detachedOn = false;
+      push(_state(OnlineMediaStatus.playing, event: 'play'));
+      swipeAway();
+      await _settle();
+      expect(handoff.isHandedOff, isFalse);
+      expect(player.log, isEmpty);
+    });
   });
 
   group('pickHandoffStream', () {

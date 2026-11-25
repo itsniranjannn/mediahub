@@ -711,6 +711,18 @@
   function play() {
     var v = findVideo();
     if (!v) return callHandler('play');
+    // YouTube starts a page opened without a tap muted (its own autoplay
+    // rule). A play from MediaHub is the user's: with sound. An ad muted by
+    // the ad blocker is left as it is.
+    if (v.muted && !(ad.active && ad.active.video === v && ad.active.mutedByUs)) {
+      safe(function () {
+        v.muted = false;
+      });
+      safe(function () {
+        var p = playerOf(v) || doc.getElementById('movie_player');
+        if (p && typeof p.unMute === 'function') p.unMute();
+      });
+    }
     try {
       var r = v.play();
       if (r && typeof r.catch === 'function') r.catch(function () {});
