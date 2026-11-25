@@ -222,8 +222,24 @@ class PhoneMediaChannel(context: Context, messenger: BinaryMessenger) : MethodCh
         return ContentUris.withAppendedId(external, ContentUris.parseId(item)).toString()
     }
 
+    private fun existsInMediaStore(resolver: android.content.ContentResolver, uri: Uri): Boolean =
+        try {
+            resolver.query(uri, arrayOf(MediaStore.MediaColumns._ID), null, null, null)?.use {
+                it.moveToFirst()
+            } == true
+        } catch (_: Exception) {
+            false
+        }
+
     private fun deleteFromPhone(uris: List<Uri>, result: MethodChannel.Result) {
         val resolver = appContext.contentResolver
+        val existing = uris.filter { existsInMediaStore(resolver, it) }
+        if (existing.isEmpty()) {
+            // Already removed from MediaStore (e.g. deleted from Gallery or a duplicate row):
+            // report success so MediaHub can clean up the stale library/download entry.
+            result.success(true)
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val a = activity?.get()
             if (a == null) {
@@ -231,7 +247,7 @@ class PhoneMediaChannel(context: Context, messenger: BinaryMessenger) : MethodCh
                 return
             }
             try {
-                val pi = MediaStore.createDeleteRequest(resolver, uris)
+                val pi = MediaStore.createDeleteRequest(resolver, existing)
                 pendingDelete = result
                 a.startIntentSenderForResult(pi.intentSender, REQUEST_DELETE, null, 0, 0, 0)
             } catch (e: Exception) {
@@ -241,7 +257,7 @@ class PhoneMediaChannel(context: Context, messenger: BinaryMessenger) : MethodCh
             return
         }
         pendingDelete = result
-        pendingQueue = ArrayDeque(uris)
+        pendingQueue = ArrayDeque(existing)
         continueLegacyDelete()
     }
 
