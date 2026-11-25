@@ -17,6 +17,7 @@ import '../../personal/extractor_backend.dart';
 import '../../personal/personal_tools_notifier.dart';
 import '../../shared/widgets/brand_marks.dart';
 import '../../shared/widgets/choice_dialogs.dart';
+import '../../shared/widgets/planet_backdrop.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../downloads/download_providers.dart' show extractorRunningDownloadsProvider;
 import '../library/library_notifier.dart';
@@ -124,24 +125,32 @@ class SettingsScreen extends StatelessWidget {
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Semantics(
-          header: true,
-          child: Text('Settings', style: context.typography.screenTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+    return PlanetBackdrop(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          title: Semantics(
+            header: true,
+            child: Text(
+              'Settings',
+              style: context.typography.screenTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ),
-      ),
-      bottomNavigationBar: const SettingsFooter(),
-      body: _ReadableColumn(
-        child: ListView(
-          // The pinned footer takes the bottom inset; this only keeps the
-          // last row clear of it.
-          padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.lg16),
-          children: [
-            EntranceFade(child: card(sections.where(_firstCard.contains))),
-            const SizedBox(height: AppSpacing.md12),
-            EntranceFade(index: 1, child: card(sections.where((s) => !_firstCard.contains(s)))),
-          ],
+        bottomNavigationBar: const SettingsFooter(),
+        body: _ReadableColumn(
+          child: ListView(
+            // The pinned footer takes the bottom inset; this only keeps the
+            // last row clear of it.
+            padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.xs4, AppSpacing.lg16, AppSpacing.lg16),
+            children: [
+              EntranceFade(child: card(sections.where(_firstCard.contains))),
+              const SizedBox(height: AppSpacing.md12),
+              EntranceFade(index: 1, child: card(sections.where((s) => !_firstCard.contains(s)))),
+            ],
+          ),
         ),
       ),
     );
@@ -194,27 +203,31 @@ class SettingsSectionPage extends StatelessWidget {
     final bottomInset = MediaQuery.paddingOf(context).bottom;
     final cards = [for (final s in sections) ...s.cards()];
     final title = sections.length == 1 ? sections.single.title : 'Settings';
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(title, style: context.typography.sectionTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-      ),
-      body: _ReadableColumn(
-        // Short, fixed list of cards: a plain scroll view keeps every row built.
-        child: SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(
-            AppSpacing.lg16,
-            AppSpacing.xs4,
-            AppSpacing.lg16,
-            AppSpacing.xxl24 + bottomInset,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final (i, c) in cards.indexed) ...[
-                if (i > 0) const SizedBox(height: _cardGap),
-                EntranceFade(index: i, child: c),
+    return PlanetBackdrop(
+      variant: sections.first.index + 1,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          title: Text(title, style: context.typography.sectionTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        body: _ReadableColumn(
+          // Short, fixed list of cards: a plain scroll view keeps every row built.
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.lg16,
+              AppSpacing.xs4,
+              AppSpacing.lg16,
+              AppSpacing.xxl24 + bottomInset,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final (i, c) in cards.indexed) ...[
+                  if (i > 0) const SizedBox(height: _cardGap),
+                  EntranceFade(index: i, child: c),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -325,12 +338,14 @@ class SettingsFooter extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
+          // One even wash across the whole strip, a touch deeper at both ends,
+          // so neither half looks cut off.
           colors: [
-            Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.35), palette.surface),
-            palette.surface,
-            palette.surface,
+            Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.32), palette.surface),
+            Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.18), palette.surface),
+            Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.32), palette.surface),
           ],
-          stops: const [0, 0.55, 1],
+          stops: const [0, 0.5, 1],
         ),
       ),
       child: SafeArea(
@@ -340,7 +355,12 @@ class SettingsFooter extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 640),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.xl20, AppSpacing.sm8 + 2, AppSpacing.lg16, AppSpacing.sm8 + 2),
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.xl20,
+                AppSpacing.sm8 + 2,
+                AppSpacing.lg16,
+                AppSpacing.sm8 + 2,
+              ),
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   // Narrow or large text: the signature over the brand.
@@ -373,7 +393,11 @@ class SettingsFooter extends StatelessWidget {
                           gradient: LinearGradient(
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
-                            colors: [palette.divider.withValues(alpha: 0), palette.outline, palette.divider.withValues(alpha: 0)],
+                            colors: [
+                              palette.divider.withValues(alpha: 0),
+                              palette.outline,
+                              palette.divider.withValues(alpha: 0),
+                            ],
                           ),
                         ),
                       ),

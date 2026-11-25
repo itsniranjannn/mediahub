@@ -1075,8 +1075,24 @@ bool _isActiveState(String state) =>
 String? _kindOf(DownloadEntry task) {
   if (task.kind != null) return task.kind;
   final mime = task.mimeType;
-  if (mime == null) return null;
-  return mime.startsWith('video') ? 'video' : 'audio';
+  if (mime != null) return mime.startsWith('video') ? 'video' : 'audio';
+  // Still downloading: no kind or type yet. Guess from the file name or link
+  // so a big video is not shown with a music note until it finishes.
+  return kindFromName(task.finalPath ?? task.fileName) ?? kindFromName(Uri.tryParse(task.url)?.path ?? '');
+}
+
+const _videoExtensions = {'mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi', '3gp', 'ts', 'flv'};
+const _audioExtensions = {'mp3', 'm4a', 'aac', 'opus', 'ogg', 'oga', 'flac', 'wav', 'wma', 'weba'};
+
+/// 'video' or 'audio' by a file name's extension; null when it says neither.
+@visibleForTesting
+String? kindFromName(String name) {
+  final dot = name.lastIndexOf('.');
+  if (dot < 0 || dot == name.length - 1) return null;
+  final ext = name.substring(dot + 1).toLowerCase();
+  if (_videoExtensions.contains(ext)) return 'video';
+  if (_audioExtensions.contains(ext)) return 'audio';
+  return null;
 }
 
 /// How many saved downloads the Saved group shows before its "Show all"

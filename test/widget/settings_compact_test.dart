@@ -15,6 +15,7 @@ import 'package:mediahub/features/settings/settings_screen.dart';
 import 'package:mediahub/personal/personal_tools_notifier.dart';
 import 'package:mediahub/shared/widgets/brand_marks.dart';
 import 'package:mediahub/shared/widgets/choice_dialogs.dart';
+import 'package:mediahub/shared/widgets/planet_backdrop.dart';
 import 'package:mocktail/mocktail.dart';
 
 import '../unit/fake_extractor_backend.dart';
@@ -35,7 +36,7 @@ MusicAudioHandler _handler() {
 void main() {
   setUpAll(() => DiagnosticsService.enableDebounce = false);
 
-  Future<void> pump(WidgetTester tester, {double textScale = 1}) async {
+  Future<void> pump(WidgetTester tester, {double textScale = 1, Size size = const Size(360, 8000)}) async {
     final handler = _handler();
     addTearDown(handler.dispose);
     final container = ProviderContainer(
@@ -45,7 +46,7 @@ void main() {
       ],
     );
     addTearDown(container.dispose);
-    tester.view.physicalSize = const Size(360 * 3, 8000 * 3);
+    tester.view.physicalSize = size * 3;
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
     if (textScale != 1) {
@@ -75,6 +76,27 @@ void main() {
   testWidgets('no overflow at 360 dp and 1.3x text', (tester) async {
     await pump(tester, textScale: 1.3);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the planet backdrop: no overflow at 320 dp or landscape, with large text, on every page', (
+    tester,
+  ) async {
+    for (final size in const [Size(320, 640), Size(780, 360)]) {
+      await pump(tester, textScale: 1.6, size: size);
+      expect(find.byType(PlanetBackdrop), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: '$size');
+      for (final section in SettingsSection.values.where((s) => s.isAvailable)) {
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: ProviderScope.containerOf(tester.element(find.byType(Scaffold).first)),
+            child: MaterialApp(home: SettingsSectionPage(section: section)),
+          ),
+        );
+        await tester.pump();
+        expect(find.byType(PlanetBackdrop), findsOneWidget, reason: section.name);
+        expect(tester.takeException(), isNull, reason: '${section.name} $size');
+      }
+    }
   });
 
   testWidgets('the top level is one small row per group, and each opens its page', (tester) async {
@@ -221,7 +243,9 @@ void main() {
       final row = tester.getSize(find.ancestor(of: find.text(label), matching: find.byType(ListTile)).first);
       expect(node.rect.height, moreOrLessEquals(row.height, epsilon: 1), reason: '$label: the row, not more');
       // "Save downloads to" is disabled on this test phone (no MediaStore save).
-      final tappable = tester.widget<ListTile>(find.ancestor(of: find.text(label), matching: find.byType(ListTile)).first).onTap != null;
+      final tappable =
+          tester.widget<ListTile>(find.ancestor(of: find.text(label), matching: find.byType(ListTile)).first).onTap !=
+          null;
       expect(node.getSemanticsData().hasAction(SemanticsAction.tap), tappable, reason: label);
       await tester.pageBack();
       await tester.pumpAndSettle();
