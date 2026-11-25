@@ -1165,6 +1165,7 @@ class _SettingsCard extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
       child: SurfaceCard(
+        color: context.palette.surface.withValues(alpha: 0.84),
         padding: EdgeInsets.zero,
         child: Column(
           mainAxisSize: MainAxisSize.min,

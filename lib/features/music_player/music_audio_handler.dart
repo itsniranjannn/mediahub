@@ -9,6 +9,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'auto_browse.dart';
+import 'equalizer/audio_effects.dart';
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/platform/other_audio_watcher.dart';
 import '../../core/platform_info.dart';
@@ -1001,6 +1002,12 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
       DiagnosticsService.instance.logEvent('player_error_stream_missing');
       debugPrint('[MusicAudioHandler] no player error stream: $e');
     }
+    try {
+      _player.androidAudioSessionIdStream.listen(
+        (id) => AudioEffects.instance.attachSession(id),
+        onError: (Object _) {},
+      );
+    } catch (_) {}
 
     _player.playerStateStream.listen((state) {
       // Only log real changes: this stream re-emits often and would push the

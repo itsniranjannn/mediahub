@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 
@@ -136,57 +137,118 @@ class AudioEffects {
   /// Whether this phone gets the equalizer (Android only).
   static bool get supported => PlatformInfo.isAndroid;
 
-  AndroidEqualizer? _equalizer;
-  AndroidLoudnessEnhancer? _loudness;
-  AudioPipeline? _pipeline;
+  static const MethodChannel _channel = MethodChannel('mediahub/device_controls');
 
-  /// For the music player's constructor; null on the iPhone and in tests.
-  AudioPipeline? get pipeline {
-    if (!supported) return null;
-    if (_pipeline == null) {
-      _equalizer = AndroidEqualizer();
-      _loudness = AndroidLoudnessEnhancer();
-      _pipeline = AudioPipeline(androidAudioEffects: [_equalizer!, _loudness!]);
-    }
-    return _pipeline;
+  int? _sessionId;
+  EqualizerSettings? _lastSettings;
+  AndroidEqualizerParameters? _cachedParams;
+
+  /// Called by MusicAudioHandler when ExoPlayer reports its Android audio session ID.
+  void attachSession(int? sessionId) {
+    if (sessionId == null || sessionId <= 0 || sessionId == _sessionId) return;
+    _sessionId = sessionId;
+    _cachedParams = null;
+    final pending = _lastSettings ?? EqualizerSettings.load(SettingsStore.instance);
+    unawaited(apply(pending));
   }
 
-  AndroidEqualizer? get equalizer => _equalizer;
+  /// Kept null: just_audio 0.10.6 calls AndroidEqualizer._activate() before
+  /// load() initializes ExoPlayer's audio session. Native effects are attached
+  /// directly via [attachSession] instead.
+  AudioPipeline? get pipeline => null;
 
-  /// The bands, once the player has played something (null until then).
+  AndroidEqualizer? get equalizer => null;
+
+  /// The bands, once the player has an active audio session (null until then).
   Future<AndroidEqualizerParameters?> parameters({Duration timeout = const Duration(seconds: 2)}) async {
-    final eq = _equalizer;
-    if (eq == null) return null;
+    if (!supported) return null;
+    final sid = _sessionId;
+    if (sid == null || sid <= 0) return null;
+    if (_cachedParams != null) return _cachedParams;
     try {
-      return await eq.parameters.timeout(timeout);
+      final raw = await _channel
+          .invokeMapMethod<String, Object?>('getMusicEqParams', {'sessionId': sid})
+          .timeout(timeout);
+      if (raw == null) return null;
+      final minDb = (raw['minDecibels'] as num?)?.toDouble() ?? -15.0;
+      final maxDb = (raw['maxDecibels'] as num?)?.toDouble() ?? 15.0;
+      final rawBands = (raw['bands'] as List?) ?? const [];
+      final bands = <AndroidEqualizerBand>[
+        for (final b in rawBands)
+          if (b is Map)
+            _NativeEqualizerBand(
+              index: (b['index'] as num?)?.toInt() ?? 0,
+              lowerFrequency: (b['lowerFrequency'] as num?)?.toDouble() ?? 0,
+              upperFrequency: (b['upperFrequency'] as num?)?.toDouble() ?? 0,
+              centerFrequency: (b['centerFrequency'] as num?)?.toDouble() ?? 0,
+              gain: (b['gain'] as num?)?.toDouble() ?? 0,
+            ),
+      ];
+      if (bands.isEmpty) return null;
+      _cachedParams = AndroidEqualizerParameters(
+        minDecibels: minDb,
+        maxDecibels: maxDb,
+        bands: bands,
+      );
+      return _cachedParams;
     } catch (_) {
       return null;
     }
   }
 
-  /// Applies [s]. The gains reach the phone once the player is active
-  /// (just_audio keeps and restores them).
+  /// Applies [s] to the active Android audio session.
   Future<void> apply(EqualizerSettings s) async {
-    final eq = _equalizer;
-    final loud = _loudness;
-    if (eq == null || loud == null) return;
+    _lastSettings = s;
+    if (!supported) return;
+    final sid = _sessionId;
+    if (sid == null || sid <= 0) return;
     try {
-      await eq.setEnabled(s.enabled);
-      await loud.setEnabled(s.enabled && s.loudnessDb > 0);
-      await loud.setTargetGain(s.loudnessDb); // dB (just_audio turns it into millibels)
+      final params = s.enabled ? await parameters() : null;
+      final gains = params == null
+          ? null
+          : s.gainsFor(params.bands.length, min: params.minDecibels, max: params.maxDecibels);
+      await _channel.invokeMethod<bool>('applyMusicEq', {
+        'sessionId': sid,
+        'enabled': s.enabled,
+        'gains': ?gains,
+        'loudnessDb': s.loudnessDb,
+      });
     } catch (e) {
       DiagnosticsService.instance.logEvent('eq_apply_failed', {'type': e.runtimeType.toString()});
     }
-    // The bands are known only after the first song loaded: wait for them.
-    unawaited(eq.parameters.then((params) async {
-      final gains = s.gainsFor(params.bands.length, min: params.minDecibels, max: params.maxDecibels);
-      for (var i = 0; i < params.bands.length; i++) {
-        await params.bands[i].setGain(gains[i]);
-      }
-    }).catchError((Object e) {
-      DiagnosticsService.instance.logEvent('eq_bands_failed', {'type': e.runtimeType.toString()});
-    }));
   }
+}
+
+class _NativeEqualizerBand implements AndroidEqualizerBand {
+  _NativeEqualizerBand({
+    required this.index,
+    required this.lowerFrequency,
+    required this.upperFrequency,
+    required this.centerFrequency,
+    required double gain,
+  }) : _gain = gain; // ignore: prefer_initializing_formals
+
+  @override
+  final int index;
+  @override
+  final double lowerFrequency;
+  @override
+  final double upperFrequency;
+  @override
+  final double centerFrequency;
+
+  double _gain;
+
+  @override
+  double get gain => _gain;
+
+  @override
+  Future<void> setGain(double gain) async {
+    _gain = gain;
+  }
+
+  @override
+  Stream<double> get gainStream => Stream<double>.value(_gain);
 }
 
 class EqualizerNotifier extends Notifier<EqualizerSettings> {

@@ -402,6 +402,7 @@ class SurfaceCard extends StatelessWidget {
   final EdgeInsetsGeometry padding;
   final VoidCallback? onTap;
   final Gradient? gradient;
+  final Color? color;
 
   const SurfaceCard({
     super.key,
@@ -409,6 +410,7 @@ class SurfaceCard extends StatelessWidget {
     this.padding = const EdgeInsets.all(AppSpacing.lg16),
     this.onTap,
     this.gradient,
+    this.color,
   });
 
   @override
@@ -436,7 +438,7 @@ class SurfaceCard extends StatelessWidget {
   Widget _card(AppPalette palette, Gradient? gradient) {
     final radius = BorderRadius.circular(AppSpacing.cardRadius);
     final card = Material(
-      color: gradient == null ? palette.surface : Colors.transparent,
+      color: gradient == null ? (color ?? palette.surface) : Colors.transparent,
       borderRadius: radius,
       child: Ink(
         decoration: BoxDecoration(

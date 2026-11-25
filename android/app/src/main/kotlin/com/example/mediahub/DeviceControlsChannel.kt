@@ -183,6 +183,7 @@ class DeviceControlsChannel(
         setVolumeWatch(false)
         setNoisyWatch(false)
         releaseBoost()
+        releaseMusicEq()
     }
 
     private fun register(receiver: BroadcastReceiver, filter: IntentFilter) {
@@ -342,6 +343,112 @@ class DeviceControlsChannel(
     // global mix, and never the music player's session). Released when the video closes.
     private var enhancer: LoudnessEnhancer? = null
     private var enhancerSession = 0
+    private var musicEq: android.media.audiofx.Equalizer? = null
+    private var musicLoudness: LoudnessEnhancer? = null
+    private var musicEqSession = 0
+
+    private fun ensureMusicEq(sessionId: Int): android.media.audiofx.Equalizer? {
+        if (sessionId <= 0) return null
+        if (musicEq != null && musicEqSession == sessionId) return musicEq
+        releaseMusicEq()
+        return try {
+            val eq = android.media.audiofx.Equalizer(0, sessionId)
+            musicEq = eq
+            musicEqSession = sessionId
+            eq
+        } catch (_: RuntimeException) {
+            null
+        }
+    }
+
+    private fun getMusicEqParams(sessionId: Int): Map<String, Any>? {
+        val eq = ensureMusicEq(sessionId) ?: return null
+        return try {
+            val range = eq.bandLevelRange
+            val n = eq.numberOfBands.toInt()
+            val bands = ArrayList<Map<String, Any>>(n)
+            for (i in 0 until n) {
+                val idx = i.toShort()
+                val freqRange = eq.getBandFreqRange(idx)
+                bands.add(
+                    mapOf(
+                        "index" to i,
+                        "lowerFrequency" to (freqRange[0].toDouble() / 1000.0),
+                        "upperFrequency" to (freqRange[1].toDouble() / 1000.0),
+                        "centerFrequency" to (eq.getCenterFreq(idx).toDouble() / 1000.0),
+                        "gain" to (eq.getBandLevel(idx).toDouble() / 100.0),
+                    )
+                )
+            }
+            mapOf(
+                "minDecibels" to (range[0].toDouble() / 100.0),
+                "maxDecibels" to (range[1].toDouble() / 100.0),
+                "bands" to bands,
+            )
+        } catch (_: RuntimeException) {
+            null
+        }
+    }
+
+    private fun applyMusicEq(
+        sessionId: Int,
+        enabled: Boolean,
+        gains: List<Double>?,
+        loudnessDb: Double,
+    ): Boolean {
+        val eq = ensureMusicEq(sessionId) ?: return false
+        return try {
+            eq.enabled = enabled
+            if (enabled && gains != null) {
+                val range = eq.bandLevelRange
+                val minMb = range[0].toInt()
+                val maxMb = range[1].toInt()
+                val n = minOf(gains.size, eq.numberOfBands.toInt())
+                for (i in 0 until n) {
+                    val mb = (gains[i] * 100.0).roundToInt().coerceIn(minMb, maxMb)
+                    eq.setBandLevel(i.toShort(), mb.toShort())
+                }
+            }
+            val loudOn = enabled && loudnessDb > 0.0
+            if (loudOn) {
+                if (musicLoudness == null || musicEqSession != sessionId) {
+                    try {
+                        musicLoudness?.release()
+                    } catch (_: RuntimeException) {}
+                    musicLoudness = try {
+                        LoudnessEnhancer(sessionId)
+                    } catch (_: RuntimeException) {
+                        null
+                    }
+                }
+                musicLoudness?.setTargetGain((loudnessDb * 100.0).roundToInt().coerceIn(0, 1500))
+                musicLoudness?.enabled = true
+            } else {
+                musicLoudness?.enabled = false
+            }
+            true
+        } catch (_: RuntimeException) {
+            false
+        }
+    }
+
+    private fun releaseMusicEq() {
+        try {
+            musicEq?.enabled = false
+        } catch (_: RuntimeException) {}
+        try {
+            musicEq?.release()
+        } catch (_: RuntimeException) {}
+        try {
+            musicLoudness?.enabled = false
+        } catch (_: RuntimeException) {}
+        try {
+            musicLoudness?.release()
+        } catch (_: RuntimeException) {}
+        musicEq = null
+        musicLoudness = null
+        musicEqSession = 0
+    }
 
     /** Returns false when the boost cannot be applied (no session, no effect on this phone). */
     private fun setVideoBoost(playerId: Long, percent: Int): Boolean {
@@ -429,6 +536,17 @@ class DeviceControlsChannel(
                 "releaseVideoBoost" -> {
                     releaseBoost()
                     result.success(true)
+                }
+                "getMusicEqParams" -> {
+                    val sessionId = (call.argument<Number>("sessionId") ?: 0).toInt()
+                    result.success(getMusicEqParams(sessionId))
+                }
+                "applyMusicEq" -> {
+                    val sessionId = (call.argument<Number>("sessionId") ?: 0).toInt()
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    val gains = (call.argument<List<*>>("gains"))?.mapNotNull { (it as? Number)?.toDouble() }
+                    val loudnessDb = (call.argument<Number>("loudnessDb") ?: 0.0).toDouble()
+                    result.success(applyMusicEq(sessionId, enabled, gains, loudnessDb))
                 }
                 "getBrightness" -> {
                     val window = activity?.window?.attributes?.screenBrightness ?: -1f
