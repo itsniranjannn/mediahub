@@ -88,6 +88,7 @@ Everything stays on the phone — **no account, no analytics, no cloud**.
 
 ### ⬇️ Downloads
 - Paste a YouTube, Instagram, TikTok… or direct `https` link
+- **Share to MediaHub** from YouTube, Instagram, TikTok, Facebook or a browser: the link opens in Downloads, ready to pick a quality (Android)
 - **Video** qualities up to 2160p, labelled with real sizes
 - **Audio**: MP3 **320 / 256 / 192 / 128 kbps** or original M4A / Opus
 - Videos land in *Videos*, sound in *Music* — automatically
@@ -120,8 +121,27 @@ Everything stays on the phone — **no account, no analytics, no cloud**.
 
 <div align="center">
 
-| Light — Sindur | Dark — Sindur |
-|:---:|:---:|
+**Sindur light** — Home · Videos · Downloads
+
+<img src="docs/readme/screens-light.png" width="820" alt="Sindur light theme: Home with the greeting and Continue listening, the Videos library with Continue watching, and Downloads"/>
+
+**Sindur dark** — Home · Videos · Downloads
+
+<img src="docs/readme/screens-dark.png" width="820" alt="Sindur dark theme: Home, Videos and Downloads"/>
+
+**Settings and About** — the compact list with the pinned signature footer; About holds the open-source licences (light and dark)
+
+<img src="docs/readme/settings.png" width="820" alt="Settings top level and the About page with the Open-source licences row, in the light and dark themes"/>
+
+**Now playing** — the player, synced lyrics and the equalizer (the player is always dark)
+
+<img src="docs/readme/player.png" width="820" alt="Now playing with album art, the synced lyrics sheet and the equalizer sheet"/>
+
+<sub>Captured on the Android emulator (release build) with demo media.</sub>
+
+</div>
+
+---:|:---:|
 | <img src="docs/readme/screens-light.png" width="420" alt="Light theme: Home, Videos, Downloads"/> | <img src="docs/readme/screens-dark.png" width="420" alt="Dark theme: Settings, Videos, Downloads"/> |
 
 <sub>Home · Videos · Downloads · Settings — captured on the Android emulator.</sub>
@@ -259,7 +279,7 @@ iOS builds run on Codemagic (`codemagic.yaml`); see [`docs/IOS.md`](docs/IOS.md)
 - [x] Delete the phone's own songs and videos from MediaHub
 - [x] App lock (fingerprint / face / PIN)
 - [x] Lyrics (synced), equalizer, Android Auto browsing
-- [ ] Share links into MediaHub from other apps
+- [x] Share links into MediaHub from other apps (Android)
 - [ ] First run on a real iPhone
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full list.
