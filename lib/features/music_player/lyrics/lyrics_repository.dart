@@ -45,36 +45,116 @@ class LrclibClient {
 
   static const String host = 'lrclib.net';
 
-  /// The request for [item]; null when it has no usable title.
+  static bool _isKnownArtist(String? artist) {
+    if (artist == null) return false;
+    final lower = artist.trim().toLowerCase();
+    return lower.isNotEmpty &&
+        lower != 'local video' &&
+        lower != 'unknown artist' &&
+        lower != '<unknown>' &&
+        lower != 'unknown';
+  }
+
+  /// Strips YouTube/filename noise (`Official Video`, `Full VIDEO song`, `| ...`,
+  /// bracketed tags, quotes) so messy filenames still match LRCLIB search.
+  static String cleanTitle(String raw) {
+    var s = raw.trim();
+    if (s.isEmpty) return '';
+    // Keep the song part before pipe separators ("Song | Movie | Artist").
+    final pipe = s.indexOf('|');
+    if (pipe > 0) s = s.substring(0, pipe);
+    // Drop bracketed/parenthesized suffixes like (Official Video), [Lyrical], etc.
+    s = s.replaceAll(RegExp(r'[\(\[\{][^\)\]\}]*[\)\]\}]'), ' ');
+    // Drop common unbracketed YouTube suffixes.
+    s = s.replaceAll(
+      RegExp(
+        r'\b(official\s+(music\s+|lyric(al)?\s+|audio\s+)?(video|audio|mv)|full\s+(video\s+)?song|(video|audio)\s+song|lyric(al)?(\s+video)?|hd\s+video|4k)\b',
+        caseSensitive: false,
+      ),
+      ' ',
+    );
+    // Trim quotes, dashes, and extra spaces.
+    s = s.replaceAll('"', ' ').replaceAll("'", ' ');
+    s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+    s = s.replaceAll(RegExp(r'^[-–—:\s]+|[-–—:\s]+$'), '').trim();
+    return s;
+  }
+
+  /// The exact `/api/get` request for [item]; null when it has no usable title.
   static Uri? requestFor(MediaItem item) {
     final title = item.title.trim();
     if (title.isEmpty || title == 'Unknown Title') return null;
     final query = <String, String>{'track_name': title};
     final artist = item.artist?.trim();
-    if (artist != null && artist.isNotEmpty && artist != 'Local Video') query['artist_name'] = artist;
+    if (_isKnownArtist(artist)) query['artist_name'] = artist!;
     final album = item.album?.trim();
     if (album != null && album.isNotEmpty) query['album_name'] = album;
     if (item.durationMs > 0) query['duration'] = '${(item.durationMs / 1000).round()}';
     return Uri.https(host, '/api/get', query);
   }
 
-  /// The synced lyrics when LRCLIB has them, else the plain ones, else null.
-  Future<String?> fetch(MediaItem item) async {
-    final uri = requestFor(item);
-    if (uri == null) return null;
-    final res = await _http.request(uri, headers: {
-      'User-Agent': 'MediaHub (private family app)',
-      'Accept': 'application/json',
-    });
-    if (res.finalUri.host != host) return null;
-    if (res.statusCode != 200) return null;
-    final decoded = jsonDecode(res.bodyText);
-    if (decoded is! Map) return null;
+  static String? _pickLyrics(Map<dynamic, dynamic> decoded) {
     final synced = decoded['syncedLyrics'];
     if (synced is String && synced.trim().isNotEmpty) return synced;
     final plain = decoded['plainLyrics'];
     if (plain is String && plain.trim().isNotEmpty) return plain;
     return null;
+  }
+
+  /// The synced lyrics when LRCLIB has them, else the plain ones, else null.
+  /// Tries exact `/api/get` first, then falls back to `/api/search` with a
+  /// cleaned title so YouTube-style filenames also find lyrics.
+  Future<String?> fetch(MediaItem item) async {
+    final uri = requestFor(item);
+    if (uri == null) return null;
+    const headers = {
+      'User-Agent': 'MediaHub (private family app)',
+      'Accept': 'application/json',
+    };
+    final res = await _http.request(uri, headers: headers);
+    if (res.finalUri.host != host) return null;
+    if (res.statusCode == 200) {
+      final decoded = jsonDecode(res.bodyText);
+      if (decoded is Map) {
+        final found = _pickLyrics(decoded);
+        if (found != null) return found;
+      }
+    }
+
+    // Fallback: search with cleaned title (handles YouTube-style filenames).
+    final cleaned = cleanTitle(item.title);
+    if (cleaned.isEmpty) return null;
+    final searchUri = Uri.https(host, '/api/search', {'q': cleaned});
+    final searchRes = await _http.request(searchUri, headers: headers);
+    if (searchRes.finalUri.host != host || searchRes.statusCode != 200) return null;
+    final list = jsonDecode(searchRes.bodyText);
+    if (list is! List || list.isEmpty) return null;
+
+    final targetSec = item.durationMs > 0 ? item.durationMs / 1000.0 : null;
+    String? bestSynced;
+    String? bestPlain;
+    var bestSyncedDiff = double.infinity;
+    var bestPlainDiff = double.infinity;
+
+    for (final entry in list) {
+      if (entry is! Map) continue;
+      final dur = (entry['duration'] as num?)?.toDouble();
+      final diff = (targetSec != null && dur != null) ? (dur - targetSec).abs() : 0.0;
+      // Ignore matches whose length is far off when duration is known.
+      if (targetSec != null && dur != null && diff > 25) continue;
+
+      final synced = entry['syncedLyrics'];
+      if (synced is String && synced.trim().isNotEmpty && diff < bestSyncedDiff) {
+        bestSynced = synced;
+        bestSyncedDiff = diff;
+      }
+      final plain = entry['plainLyrics'];
+      if (plain is String && plain.trim().isNotEmpty && diff < bestPlainDiff) {
+        bestPlain = plain;
+        bestPlainDiff = diff;
+      }
+    }
+    return bestSynced ?? bestPlain;
   }
 }
 

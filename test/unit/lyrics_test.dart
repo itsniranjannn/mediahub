@@ -311,7 +311,60 @@ void main() {
       final plain = LrclibClient(http: _AnsweringClient('{"plainLyrics":"p","syncedLyrics":null}'));
       expect(await plain.fetch(_item('/x.mp3')), 'p');
     });
+
+    test('cleanTitle strips YouTube/video suffixes and ignores Unknown artist', () {
+      expect(
+        LrclibClient.cleanTitle('"Safarnama" Video Song | Tamasha | Ranbir Kapoor'),
+        'Safarnama',
+      );
+      expect(
+        LrclibClient.cleanTitle("'AGAR TUM SAATH HO' Full VIDEO song (Official)"),
+        'AGAR TUM SAATH HO',
+      );
+      final req = LrclibClient.requestFor(MediaItem(
+        id: 'id',
+        uri: '/x.mp3',
+        mediaType: MediaType.audio,
+        title: 'DHUN',
+        artist: 'Unknown artist',
+        durationMs: 180000,
+        sizeBytes: 1,
+        dateAdded: DateTime(2026),
+      ))!;
+      expect(req.queryParameters.containsKey('artist_name'), isFalse);
+    });
+
+    test('falls back to /api/search when /api/get returns 404', () async {
+      final client = LrclibClient(http: _SearchFallbackClient());
+      final item = _item('/x.mp3', title: '"Safarnama" Video Song | Tamasha');
+      expect(await client.fetch(item), '[00:10.00]safarnama');
+    });
   });
+}
+
+class _SearchFallbackClient extends SafeHttpClient {
+  @override
+  Future<SafeHttpResponse> request(Uri initialUri,
+      {String method = 'GET', Map<String, String>? headers, List<int>? body, int? maxBodySize = 1024 * 1024}) async {
+    if (initialUri.path == '/api/get') {
+      return SafeHttpResponse(
+        statusCode: 404,
+        reasonPhrase: 'Not Found',
+        headers: _Headers(),
+        bodyBytes: Uint8List(0),
+        finalUri: initialUri,
+      );
+    }
+    return SafeHttpResponse(
+      statusCode: 200,
+      reasonPhrase: 'OK',
+      headers: _Headers(),
+      bodyBytes: Uint8List.fromList(utf8.encode(
+        '[{"duration":201,"plainLyrics":"p","syncedLyrics":"[00:10.00]safarnama"}]',
+      )),
+      finalUri: initialUri,
+    );
+  }
 }
 
 class _AnsweringClient extends SafeHttpClient {

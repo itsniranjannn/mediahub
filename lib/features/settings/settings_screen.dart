@@ -21,7 +21,6 @@ import '../../shared/widgets/planet_backdrop.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../downloads/download_providers.dart' show extractorRunningDownloadsProvider;
 import '../library/library_notifier.dart';
-import '../music_player/resume_after_other_apps.dart';
 import '../online/online_screen.dart' show confirmClearYouTubeData;
 import '../online/online_settings.dart';
 import '../online/online_web_view.dart' show onlineDataClearerProvider;
@@ -33,7 +32,6 @@ import '../music_player/equalizer/equalizer_sheet.dart';
 import '../music_player/lyrics/lyrics_repository.dart';
 import '../../core/platform/phone_media.dart';
 import 'backup_restore.dart';
-import 'settings_notifier.dart';
 import 'theme_mode_setting.dart';
 import 'user_name_setting.dart';
 
@@ -566,42 +564,16 @@ class _PlaybackCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final resumeOnReconnect = ref.watch(resumeOnHeadphonesReconnectProvider);
-    final resumeNotifier = ref.read(resumeOnHeadphonesReconnectProvider.notifier);
-    // Android only: on an iPhone the system itself says when music may come back.
-    final showOtherApps = PlatformInfo.isAndroid;
-    final resumeAfterOtherApps = showOtherApps && ref.watch(resumeAfterOtherAppsProvider);
-
     return _SettingsCard(
       children: [
-        _CardHeading(
+        const _CardHeading(
           icon: Icons.headphones_rounded,
-          title: 'Audio & headset',
-          subtitle: showOtherApps
-              ? 'How playback reacts to your headphones and other apps.'
-              : 'How playback reacts to your headphones.',
+          title: 'Playback & audio',
+          subtitle: 'Equalizer and online lyrics.',
         ),
-        const _CardDivider.underHeading(),
-        _SwitchRow(
-          icon: Icons.restart_alt_rounded,
-          title: 'Resume when headphones reconnect',
-          subtitle: 'Picks up where you left off if they reconnect within 10 minutes of being disconnected.',
-          value: resumeOnReconnect,
-          onChanged: (_) => resumeNotifier.toggle(),
-        ),
-        if (showOtherApps) ...[
-          const _CardDivider.betweenRows(),
-          _SwitchRow(
-            icon: Icons.music_note_rounded,
-            title: 'Resume after other apps',
-            subtitle: 'Plays your music again when another app stops playing, within 30 minutes.',
-            value: resumeAfterOtherApps,
-            onChanged: (v) => ref.read(resumeAfterOtherAppsProvider.notifier).set(v),
-          ),
-        ],
         // Android only: just_audio has no equalizer on the iPhone.
         if (AudioEffects.supported) ...[
-          const _CardDivider.betweenRows(),
+          const _CardDivider.underHeading(),
           _NavRow(
             icon: Icons.equalizer_rounded,
             title: 'Equalizer',
@@ -611,7 +583,7 @@ class _PlaybackCard extends ConsumerWidget {
             onTap: () => showEqualizerSheet(context),
           ),
         ],
-        const _CardDivider.betweenRows(),
+        if (AudioEffects.supported) const _CardDivider.betweenRows() else const _CardDivider.underHeading(),
         _SwitchRow(
           icon: Icons.lyrics_rounded,
           title: 'Find lyrics online',
