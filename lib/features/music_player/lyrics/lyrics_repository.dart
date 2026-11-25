@@ -131,27 +131,43 @@ class LrclibClient {
     if (list is! List || list.isEmpty) return null;
 
     final targetSec = item.durationMs > 0 ? item.durationMs / 1000.0 : null;
+    final cleanedLower = cleaned.toLowerCase();
     String? bestSynced;
     String? bestPlain;
-    var bestSyncedDiff = double.infinity;
-    var bestPlainDiff = double.infinity;
+    var bestSyncedScore = -1.0;
+    var bestPlainScore = -1.0;
+
+    double scoreEntry(Map<dynamic, dynamic> entry, String text) {
+      final dur = (entry['duration'] as num?)?.toDouble();
+      final diff = (targetSec != null && dur != null) ? (dur - targetSec).abs() : 0.0;
+      if (targetSec != null && dur != null && diff > 25) return -1.0;
+
+      final track = ((entry['trackName'] as String?) ?? '').trim().toLowerCase();
+      final titleMatch = track == cleanedLower
+          ? 2000.0
+          : (track.contains(cleanedLower) || cleanedLower.contains(track) ? 1000.0 : 0.0);
+      final durationScore = targetSec != null && dur != null ? (25.0 - diff) * 20.0 : 0.0;
+      final lengthScore = text.length.clamp(0, 4000).toDouble() * 0.25;
+      return titleMatch + durationScore + lengthScore;
+    }
 
     for (final entry in list) {
       if (entry is! Map) continue;
-      final dur = (entry['duration'] as num?)?.toDouble();
-      final diff = (targetSec != null && dur != null) ? (dur - targetSec).abs() : 0.0;
-      // Ignore matches whose length is far off when duration is known.
-      if (targetSec != null && dur != null && diff > 25) continue;
-
       final synced = entry['syncedLyrics'];
-      if (synced is String && synced.trim().isNotEmpty && diff < bestSyncedDiff) {
-        bestSynced = synced;
-        bestSyncedDiff = diff;
+      if (synced is String && synced.trim().isNotEmpty) {
+        final s = scoreEntry(entry, synced);
+        if (s > bestSyncedScore) {
+          bestSynced = synced;
+          bestSyncedScore = s;
+        }
       }
       final plain = entry['plainLyrics'];
-      if (plain is String && plain.trim().isNotEmpty && diff < bestPlainDiff) {
-        bestPlain = plain;
-        bestPlainDiff = diff;
+      if (plain is String && plain.trim().isNotEmpty) {
+        final s = scoreEntry(entry, plain);
+        if (s > bestPlainScore) {
+          bestPlain = plain;
+          bestPlainScore = s;
+        }
       }
     }
     return bestSynced ?? bestPlain;

@@ -53,7 +53,7 @@ Everything stays on the phone — **no account, no analytics, no cloud**.
 - Sleep timer with fade-out, playback speed
 - Lock-screen, notification, Bluetooth & car controls
 - **Android Auto**: browse Songs, Albums, Playlists, Favourites
-- **Lyrics** from the file or a `.lrc`, synced scrolling; LRCLIB lookup (opt-in)
+- **Lyrics** from the file or a `.lrc`, synced scrolling; LRCLIB lookup (opt-in, with title cleanup & search fallback)
 - **Equalizer** presets, custom bands and loudness boost (Android)
 - Pauses for other apps and **resumes by itself**
 - **Delete from phone** for the phone's own songs (Android's consent dialog)
@@ -108,7 +108,7 @@ Everything stays on the phone — **no account, no analytics, no cloud**.
 | Area | Highlights |
 |---|---|
 | Home | Animated greeting hero, *Continue listening* card, bento quick-actions with shine sweep, rails for Recently played · Most played · Recently added · Favourites |
-| Settings | Short grouped list (Appearance · Playback & audio · Downloads · Online · Privacy & security · Backup · About), pinned signature footer, theme picker (System · Dark · Light · **Bijuli Classic**), your name, audio & headset, equalizer, **App lock** (fingerprint / face / PIN, whole app or Downloads + Online), Online, downloads, backup & restore |
+| Settings | Short grouped list (Appearance · Playback & audio · Downloads · Online · Privacy & security · Backup · About), animated planet backdrop with translucent cards, pinned signature footer, theme picker (System · Dark · Light · **Bijuli Classic**), your name, equalizer & online lyrics, **App lock** (fingerprint / face / PIN, whole app or Downloads + Online), Online, downloads, backup & restore |
 | Accessibility | WCAG-checked contrast in every theme, large-text safe (tested at 1.3×), reduced-motion respected, screen-reader labels |
 | Nepali | Devanagari drawn natively in every name and body style (Poppins) |
 | Reliability | Decoder hiccups retried quietly, stuck downloads end cleanly, free-space check before saving, caches capped and cleaned (lyrics, covers, partial files) |

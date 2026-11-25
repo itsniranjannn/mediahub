@@ -337,7 +337,7 @@ void main() {
     test('falls back to /api/search when /api/get returns 404', () async {
       final client = LrclibClient(http: _SearchFallbackClient());
       final item = _item('/x.mp3', title: '"Safarnama" Video Song | Tamasha');
-      expect(await client.fetch(item), '[00:10.00]safarnama');
+      expect(await client.fetch(item), '[00:10.00]safarnama full lyrics line');
     });
   });
 }
@@ -360,7 +360,8 @@ class _SearchFallbackClient extends SafeHttpClient {
       reasonPhrase: 'OK',
       headers: _Headers(),
       bodyBytes: Uint8List.fromList(utf8.encode(
-        '[{"duration":201,"plainLyrics":"p","syncedLyrics":"[00:10.00]safarnama"}]',
+        '[{"trackName":"Other","duration":201,"syncedLyrics":"[00:10.00]short"},'
+        '{"trackName":"Safarnama","duration":201,"plainLyrics":"p","syncedLyrics":"[00:10.00]safarnama full lyrics line"}]',
       )),
       finalUri: initialUri,
     );
