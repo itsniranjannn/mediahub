@@ -264,15 +264,24 @@ class WebLinkDownloadFlow {
       lookup: () async {
         // Fast path for YouTube: use native Dart youtube_explode_dart manifest
         // fetching over HTTPS (~1s), bypassing Python/yt-dlp startup overhead.
+        final fastWatch = Stopwatch()..start();
         try {
           final fastMeta = await FastYoutubeExtractorResolver.resolve(uri);
           if (fastMeta != null && fastMeta.formats.isNotEmpty) {
+            debugPrint('[FastYT] ok in ${fastWatch.elapsedMilliseconds}ms formats=${fastMeta.formats.length}');
             DiagnosticsService.instance.logEvent('fast_youtube_lookup_ok', {
               'host': uri.host,
+              'ms': fastWatch.elapsedMilliseconds,
             });
             return fastMeta;
           }
-        } catch (_) {
+          debugPrint('[FastYT] empty/null in ${fastWatch.elapsedMilliseconds}ms');
+        } catch (e) {
+          debugPrint('[FastYT] failed in ${fastWatch.elapsedMilliseconds}ms: $e');
+          DiagnosticsService.instance.logEvent('fast_youtube_lookup_failed', {
+            'host': uri.host,
+            'ms': fastWatch.elapsedMilliseconds,
+          });
           // If fast lookup throws or fails, transparently fall through to yt-dlp.
         }
 

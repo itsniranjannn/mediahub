@@ -54,6 +54,10 @@ class ExtractorChannel(
     @Volatile
     private var bundledVersion: String? = null
 
+    // Cache the resolved info for quick re-opens (e.g. user cancelled quality sheet and re-tapped)
+    private val infoCache = ConcurrentHashMap<String, Pair<Map<String, Any?>, Long>>()
+    private val INFO_CACHE_MS = 5 * 60 * 1000L // 5 minutes
+
     private fun infoProcessId(requestId: String) = "info-$requestId"
 
     companion object {
@@ -149,8 +153,8 @@ class ExtractorChannel(
         // client first and only fall back when it only exposes low qualities.
         // A client a newer yt-dlp no longer knows is skipped with a warning (the default is used).
         private val YOUTUBE_CLIENT_VARIANTS = listOf(
-            "youtube:player_client=android_vr",
             null,
+            "youtube:player_client=android_vr",
             "youtube:player_client=web_safari",
             "youtube:player_client=mweb",
             "youtube:player_client=tv_simply"
@@ -587,6 +591,14 @@ class ExtractorChannel(
             return
         }
 
+        // Return immediately if recently fetched in this session (e.g. reopened or cancelled sheet)
+        infoCache[url]?.let { (cached, time) ->
+            if (System.currentTimeMillis() - time in 0 until INFO_CACHE_MS) {
+                result.success(cached)
+                return
+            }
+        }
+
         executor.execute {
             installShippedYtDlpOnce()
             val readLock = engineLock.readLock()
@@ -611,8 +623,10 @@ class ExtractorChannel(
                     // Out of time for another client: use what we have (or report the error).
                     if (index > 0 && left < INFO_MIN_RUN_MS) break
                     try {
+                        val t0 = System.currentTimeMillis()
                         val json = fetchInfoJson(url, variant, maxOf(left, INFO_MIN_RUN_MS), requestId, family)
                         val h = maxVideoHeight(json)
+                        android.util.Log.i("ExtractorChannel", "getInfo variant=$variant family=$family height=$h ms=${System.currentTimeMillis() - t0}")
                         if (h > bestHeight) {
                             bestHeight = h
                             bestJson = json
@@ -621,6 +635,7 @@ class ExtractorChannel(
                         // Good enough: stop probing other clients.
                         if (h >= 1080) break
                     } catch (e: Exception) {
+                        android.util.Log.i("ExtractorChannel", "getInfo variant=$variant failed: ${e.message}")
                         lastError = e
                         if ((e.message ?: "").startsWith("INFO_TIMEOUT")) break
                         // "Offline" with a forced family: the network changed under the answer
@@ -700,6 +715,7 @@ class ExtractorChannel(
                     "extractorArgs" to bestArgs,
                     "formats" to formatsList
                 )
+                infoCache[url] = Pair(resultMap, System.currentTimeMillis())
 
                 mainHandler.post { result.success(resultMap) }
             } catch (e: Exception) {
@@ -894,6 +910,8 @@ class ExtractorChannel(
                     var lastPercent = -1
                     var lastPostTime = 0L
                     try {
+                        val t0 = System.currentTimeMillis()
+                        android.util.Log.i("ExtractorChannel", "download start task=$taskId args=${attempt.extractorArgs} family=$family")
                         val response = YoutubeDL.getInstance().execute(request, taskId) { progress, etaInSeconds, line ->
                             val now = System.currentTimeMillis()
                             val p = progress.toInt()
@@ -918,8 +936,10 @@ class ExtractorChannel(
                             throw YoutubeDLException("LIVE_NOT_SUPPORTED: live stream")
                         }
                         done = true
+                        android.util.Log.i("ExtractorChannel", "download done task=$taskId args=${attempt.extractorArgs} ms=${System.currentTimeMillis() - t0}")
                         break
                     } catch (e: Exception) {
+                        android.util.Log.i("ExtractorChannel", "download fail task=$taskId args=${attempt.extractorArgs} err=${e.message}")
                         lastError = e
                         if (isCancelled(taskId, e)) throw e
                         // "Offline" with a forced family: the network changed under the answer.
