@@ -141,13 +141,6 @@ Everything stays on the phone — **no account, no analytics, no cloud**.
 
 </div>
 
----:|:---:|
-| <img src="docs/readme/screens-light.png" width="420" alt="Light theme: Home, Videos, Downloads"/> | <img src="docs/readme/screens-dark.png" width="420" alt="Dark theme: Settings, Videos, Downloads"/> |
-
-<sub>Home · Videos · Downloads · Settings — captured on the Android emulator.</sub>
-
-</div>
-
 ---
 
 ## 🎨 Design system: Sindur
