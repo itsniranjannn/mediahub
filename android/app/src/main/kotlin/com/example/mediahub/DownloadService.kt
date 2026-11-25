@@ -26,6 +26,10 @@ class DownloadService : Service() {
         const val ACTION_UPDATE = "com.example.mediahub.action.UPDATE_DOWNLOAD_SERVICE"
         const val ACTION_STOP = "com.example.mediahub.action.STOP_DOWNLOAD_SERVICE"
         const val ACTION_PAUSE_ALL = "com.example.mediahub.action.PAUSE_ALL"
+        const val ACTION_RESUME_ALL = "com.example.mediahub.action.RESUME_ALL"
+
+        /** "N downloads paused" with Resume all, after the service has stopped. */
+        const val PAUSED_NOTIFICATION_ID = 1002
 
         const val EXTRA_COUNT = "extra_count"
         const val EXTRA_PERCENT = "extra_percent"
@@ -33,6 +37,68 @@ class DownloadService : Service() {
 
         // Callback handler invoked when notification action buttons are pressed, timeout occurs, or wake lock changes
         var eventListener: ((String) -> Unit)? = null
+
+        /**
+         * After "Pause all" (or Android's time limit) the service and its notification go;
+         * this quiet notification stays so the downloads can be resumed from the shade too.
+         * Its "Resume all" goes to [DownloadActionReceiver], which tells Dart.
+         */
+        fun showPausedNotice(context: Context, count: Int) {
+            val app = context.applicationContext
+            createChannel(app)
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+            val resume = PendingIntent.getBroadcast(
+                app,
+                2,
+                Intent(app, DownloadActionReceiver::class.java).apply { action = ACTION_RESUME_ALL },
+                flags
+            )
+            val open = PendingIntent.getActivity(
+                app,
+                3,
+                Intent(app, MainActivity::class.java).apply {
+                    action = MainActivity.ACTION_OPEN_DOWNLOADS
+                    this.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                },
+                flags
+            )
+            val text = if (count == 1) "1 download paused" else "$count downloads paused"
+            val notification = NotificationCompat.Builder(app, CHANNEL_ID)
+                .setContentTitle("MediaHub downloads")
+                .setContentText(text)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentIntent(open)
+                .setOnlyAlertOnce(true)
+                .setAutoCancel(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .addAction(0, "Resume all", resume)
+                .build()
+            try {
+                (app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                    .notify(PAUSED_NOTIFICATION_ID, notification)
+            } catch (e: SecurityException) {
+                // No notification permission: the Downloads screen still resumes them.
+            }
+        }
+
+        fun cancelPausedNotice(context: Context) {
+            (context.applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .cancel(PAUSED_NOTIFICATION_ID)
+        }
+
+        private fun createChannel(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "MediaHub active download progress"
+                    setShowBadge(false)
+                    setSound(null, null)
+                    lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+                }
+                (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                    .createNotificationChannel(channel)
+            }
+        }
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -40,7 +106,7 @@ class DownloadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        createChannel(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -61,6 +127,7 @@ class DownloadService : Service() {
                 updateNotificationThrottled(count, percent, fileName)
             }
             ACTION_START -> {
+                cancelPausedNotice(this)
                 val count = intent.getIntExtra(EXTRA_COUNT, 1)
                 val percent = intent.getIntExtra(EXTRA_PERCENT, -1)
                 val fileName = intent.getStringExtra(EXTRA_FILE_NAME)
@@ -79,22 +146,6 @@ class DownloadService : Service() {
             }
         }
         return START_NOT_STICKY
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "Downloads"
-            val descriptionText = "MediaHub active download progress"
-            val importance = NotificationManager.IMPORTANCE_LOW
-            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
-                description = descriptionText
-                setShowBadge(false)
-                setSound(null, null)
-                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
-            }
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
-        }
     }
 
     private fun updateNotificationThrottled(count: Int, percent: Int, fileName: String?) {

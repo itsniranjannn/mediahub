@@ -66,6 +66,14 @@ class DownloadServiceChannel(
                     result.error("SERVICE_UPDATE_FAILED", e.localizedMessage, null)
                 }
             }
+            "showPaused" -> {
+                DownloadService.showPausedNotice(context, call.argument<Int>("count") ?: 1)
+                result.success(true)
+            }
+            "hidePaused" -> {
+                DownloadService.cancelPausedNotice(context)
+                result.success(true)
+            }
             "takePendingActions" -> {
                 val pending = if (pendingOpenDownloads) listOf("openDownloads") else emptyList()
                 pendingOpenDownloads = false

@@ -54,6 +54,15 @@ class FakeDownloadServiceController implements DownloadServiceController {
     throttledUpdatePercents.add(percent);
   }
 
+  int pausedNoticeCount = -1;
+  int hidePausedCount = 0;
+
+  @override
+  Future<void> showPausedNotice(int count) async => pausedNoticeCount = count;
+
+  @override
+  Future<void> hidePausedNotice() async => hidePausedCount++;
+
   @override
   Future<void> stopService() async {
     isServiceStarted = false;

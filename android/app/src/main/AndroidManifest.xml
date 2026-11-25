@@ -107,6 +107,11 @@
             </intent-filter>
         </service>
 
+        <!-- "Resume all" on the paused-downloads notification (DownloadService.showPausedNotice). -->
+        <receiver
+            android:name=".DownloadActionReceiver"
+            android:exported="false" />
+
         <receiver
             android:name="com.ryanheise.audioservice.MediaButtonReceiver"
             android:exported="true"
