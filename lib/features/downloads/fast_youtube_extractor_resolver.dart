@@ -14,14 +14,14 @@ import '../../personal/extractor_backend.dart';
 class FastYoutubeExtractorResolver {
   FastYoutubeExtractorResolver._();
 
-  static const Duration _timeout = Duration(seconds: 12);
+  static const Duration _timeout = Duration(seconds: 6);
 
   /// For unit/widget tests: allows mocking or replacing the resolver function.
   static Future<ExtractorMetadata?> Function(Uri uri)? overrideResolver;
 
   /// How long the details (title, length) may lag behind a finished
   /// manifest before the qualities show without them.
-  static const Duration detailsGrace = Duration(seconds: 2);
+  static const Duration detailsGrace = Duration(milliseconds: 800);
 
   /// Waits for [manifest] (its error is thrown) and then at most [grace]
   /// more for [details]; details that fail or lag come back as null. Both
@@ -59,7 +59,11 @@ class FastYoutubeExtractorResolver {
       final (manifest, video) = await manifestWithDetails(
         yt.videos.streamsClient.getManifest(
           videoId,
-          ytClients: [YoutubeApiClient.ios, YoutubeApiClient.androidSdkless],
+          ytClients: [
+            YoutubeApiClient.androidVr,
+            YoutubeApiClient.android,
+            YoutubeApiClient.androidSdkless,
+          ],
         ).timeout(_timeout),
         yt.videos.get(videoId).timeout(_timeout),
       );
@@ -123,7 +127,7 @@ class FastYoutubeExtractorResolver {
         durationSec: video?.duration?.inSeconds ?? 0,
         thumbnailUrl: video?.thumbnails.highResUrl ?? 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
         formats: formats,
-        extractorArgs: null,
+        extractorArgs: 'youtube:player_client=android_vr',
       );
     } finally {
       yt.close();

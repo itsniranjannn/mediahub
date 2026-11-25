@@ -149,8 +149,8 @@ class ExtractorChannel(
         // client first and only fall back when it only exposes low qualities.
         // A client a newer yt-dlp no longer knows is skipped with a warning (the default is used).
         private val YOUTUBE_CLIENT_VARIANTS = listOf(
-            null,
             "youtube:player_client=android_vr",
+            null,
             "youtube:player_client=web_safari",
             "youtube:player_client=mweb",
             "youtube:player_client=tv_simply"
@@ -869,7 +869,7 @@ class ExtractorChannel(
                         family?.let { addOption(it) }
                         addOption("--retries", "5")
                         addOption("--fragment-retries", "5")
-                        addOption("--concurrent-fragments", "4")
+                        addOption("--concurrent-fragments", "8")
                         addOption("-o", "${outputDir.absolutePath}/$taskId.%(ext)s")
                         if (!attempt.selector.isNullOrEmpty()) {
                             addOption("-f", attempt.selector)
