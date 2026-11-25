@@ -325,12 +325,14 @@ class SettingsFooter extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
+          // One even wash across the whole strip, a touch deeper at both ends,
+          // so neither half looks cut off.
           colors: [
-            Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.35), palette.surface),
-            palette.surface,
-            palette.surface,
+            Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.32), palette.surface),
+            Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.18), palette.surface),
+            Color.alphaBlend(palette.primaryContainer.withValues(alpha: 0.32), palette.surface),
           ],
-          stops: const [0, 0.55, 1],
+          stops: const [0, 0.5, 1],
         ),
       ),
       child: SafeArea(
