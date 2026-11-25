@@ -76,7 +76,8 @@ Everything stays on the phone — **no account, no analytics, no cloud**.
 
 ### 🌐 Online (YouTube)
 - The full mobile YouTube site inside the app
-- **Background play** with the screen off
+- **Background play** with the screen off — and it **keeps playing when you clear the app** (hands over to the native player instantly)
+- Play / pause from the notification any number of times after a swipe-away
 - **Picture-in-picture** that keeps playing
 - **Block ads** (on by default) — video ads pruned, sponsored boxes hidden
 - Google sign-in on Google's own page (the app never sees the password)
@@ -91,7 +92,9 @@ Everything stays on the phone — **no account, no analytics, no cloud**.
 - **Audio**: MP3 **320 / 256 / 192 / 128 kbps** or original M4A / Opus
 - Videos land in *Videos*, sound in *Music* — automatically
 - **Save to phone**: into Music/MediaHub and Movies/MediaHub (Gallery, Files), per download or for all
-- yt-dlp **built in** and self-updating; IPv4/IPv6 racing
+- yt-dlp **built in**, self-updating with checksum verification; IPv4/IPv6 racing
+- **Pause & resume** that continues from the same byte — even after the app is closed; *Resume all* from the notification
+- **Choose where downloads go**: inside MediaHub (private) or phone storage
 - Clean list: 5 newest + *Show all*
 
 </td>
@@ -104,10 +107,10 @@ Everything stays on the phone — **no account, no analytics, no cloud**.
 | Area | Highlights |
 |---|---|
 | Home | Animated greeting hero, *Continue listening* card, bento quick-actions with shine sweep, rails for Recently played · Most played · Recently added · Favourites |
-| Settings | Compact cards, theme picker (System · Dark · Light · **Bijuli Classic**), your name, audio & headset, equalizer, **App lock** (fingerprint / face / PIN, whole app or Downloads + Online), Online, downloads, backup & restore |
+| Settings | Short grouped list (Appearance · Playback & audio · Downloads · Online · Privacy & security · Backup · About), pinned signature footer, theme picker (System · Dark · Light · **Bijuli Classic**), your name, audio & headset, equalizer, **App lock** (fingerprint / face / PIN, whole app or Downloads + Online), Online, downloads, backup & restore |
 | Accessibility | WCAG-checked contrast in every theme, large-text safe (tested at 1.3×), reduced-motion respected, screen-reader labels |
 | Nepali | Devanagari drawn natively in every name and body style (Poppins) |
-| Reliability | Decoder hiccups retried quietly, stuck downloads end cleanly, free-space check before saving |
+| Reliability | Decoder hiccups retried quietly, stuck downloads end cleanly, free-space check before saving, caches capped and cleaned (lyrics, covers, partial files) |
 
 </details>
 
@@ -144,7 +147,7 @@ Everything stays on the phone — **no account, no analytics, no cloud**.
 
 </div>
 
-- **Type:** *Fraunces* for headings · *Poppins* for names and reading text (Latin + Devanagari) · *DM Mono* for times and sizes
+- **Type:** *Fraunces* for headings · *Poppins* for names and reading text (Latin + Devanagari) · *DM Mono* for times and sizes · *Great Vibes* for the author signature
 - **Signature pieces:** the dark **Ink Dock** (mini player + nav, same in both themes), crimson **sticker** buttons with a soft glow, glowing hero bands, amber section marks
 - **Motion:** press-scale 0.97, shine sweeps, entrance fades — all switched off with *reduce motion*
 - **Bijuli Classic:** the original lime-on-violet look, kept as an optional theme
@@ -186,7 +189,7 @@ lib/
 android/          # Kotlin: yt-dlp channel, device controls, PiP
 ios/              # Swift + Codemagic workflow
 docs/             # DESIGN, HANDOFF, ROADMAP, IOS, DECISIONS
-test/             # ~1,700 unit + widget tests, JS bridge tests
+test/             # ~1,900 unit + widget tests, JS bridge tests
 ```
 
 </details>
@@ -202,7 +205,10 @@ test/             # ~1,700 unit + widget tests, JS bridge tests
 | 🏠 **No private-network access** | Every download address is checked and pinned before connecting |
 | 🧪 **Sandboxed YouTube** | Only YouTube and Google sign-in hosts load; the JS bridge needs a per-page secret and is off on sign-in pages |
 | 💾 **Data stays local** | No account, no analytics, no cloud backup; diagnostics strip links and paths |
-| ✍️ **Signed releases** | Release builds are R8-shrunk, not debuggable, and signed with a private key |
+| 🔐 **App lock** | Fingerprint / face / PIN; hides the app in Recents and blocks screenshots while on; can't be skipped by PiP or by changing the clock |
+| 🛡️ **Verified updates** | yt-dlp updates are checked against the official SHA-256 sums before install |
+| ✍️ **Signed releases** | Release builds are R8-shrunk, not debuggable, and refuse to build without the private signing key |
+| ©️ **Proprietary** | All rights reserved — see [`LICENSE`](LICENSE); every source file carries the copyright notice |
 
 ---
 
@@ -268,7 +274,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full list.
 <br/>
 <a href="https://github.com/itsniranjannn"><img src="https://img.shields.io/badge/GitHub-itsniranjannn-181717?style=for-the-badge&logo=github"/></a>
 
-<sub>Copyright © 2026 Niranjan. All rights reserved.</sub>
+<sub>Copyright © 2026 Niranjan Katwal. All rights reserved. See <a href="LICENSE">LICENSE</a>.</sub>
 
 <img src="https://capsule-render.vercel.app/api?type=waving&height=100&color=0:CC324C,50:5A0418,100:000000&section=footer" width="100%" alt=""/>
 
