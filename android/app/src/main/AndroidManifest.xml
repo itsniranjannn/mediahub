@@ -78,6 +78,28 @@
             </intent-filter>
         </activity>
 
+        <!-- "Share to MediaHub": a link shared from another app (YouTube,
+             Instagram, TikTok, a browser...). This invisible Activity passes
+             only EXTRA_TEXT on to MainActivity's own task (see
+             ShareReceiverActivity) and Dart accepts nothing but an https
+             link in it, so a sharing app cannot open any other screen.
+             Its own task affinity: with MediaHub's, a share started as a new
+             task would only bring MediaHub's task forward and never run it. -->
+        <activity
+            android:name=".ShareReceiverActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="com.example.mediahub.share"
+            android:label="MediaHub"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+        </activity>
+
         <!-- Share sheet: read-only access to the app's own downloads folder, only for a URI
              granted to the app the user picked (not exported). Phone media are shared by
              their MediaStore URI instead. -->

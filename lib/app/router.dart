@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Niranjan Katwal. All rights reserved.
 // MediaHub is proprietary software. See LICENSE in the project root.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +10,7 @@ import '../core/logging/diagnostics_service.dart';
 import '../core/services/download_service_controller.dart';
 import '../features/downloads/download_providers.dart';
 import '../features/downloads/downloads_screen.dart';
+import '../features/downloads/shared_link.dart';
 import '../features/home/home_screen.dart';
 import '../features/music_player/music_audio_handler.dart';
 import '../features/music_player/music_screen.dart';
@@ -124,6 +127,29 @@ final routerProvider = Provider<GoRouter>((ref) {
     final sub = ref.read(downloadServiceControllerProvider).actionEvents.listen((event) {
       if (event == DownloadServiceActions.openDownloads) router.go('/downloads');
     });
+    ref.onDispose(sub.cancel);
+  }
+
+  // "Share to MediaHub": a link shared from another app goes to the Downloads
+  // inbox and the Downloads tab opens; the tab takes it (and starts the
+  // quality lookup) only once the app is unlocked. Text without an https
+  // link, or with a blocked one, only gets a short note.
+  if (PlatformInfo.supportsDownloads) {
+    final sub = listenForSharedLinks(
+      ref,
+      openDownloads: () {
+        DiagnosticsService.instance.logEvent('shared_link_accepted');
+        _whenShown(() => router.go('/downloads'));
+      },
+      showMessage: (message) {
+        DiagnosticsService.instance.logEvent('shared_link_rejected');
+        _whenShown(() {
+          final context = _rootNavigatorKey.currentContext;
+          if (context == null || !context.mounted) return;
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(message)));
+        });
+      },
+    );
     ref.onDispose(sub.cancel);
   }
 
@@ -297,4 +323,17 @@ class _NothingToPlayScreenState extends State<NothingToPlayScreen> {
       ),
     );
   }
+}
+
+/// Runs [action] once the app is on screen. On a cold start (MediaHub opened
+/// by a share) the link arrives before the first frame, and the router's own
+/// start on /home would replace a location set that early.
+void _whenShown(void Function() action, [int tries = 0]) {
+  if (_rootNavigatorKey.currentContext != null) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => action());
+    WidgetsBinding.instance.scheduleFrame();
+    return;
+  }
+  if (tries >= 100) return; // 10 s: the app never came up; a link still waits in the inbox.
+  Timer(const Duration(milliseconds: 100), () => _whenShown(action, tries + 1));
 }

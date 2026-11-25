@@ -39,6 +39,10 @@ class MainActivity : AudioServiceFragmentActivity() {
         /** The download notification's tap: open the Downloads tab (explicit, app-internal). */
         const val ACTION_OPEN_DOWNLOADS = "com.example.mediahub.action.OPEN_DOWNLOADS"
 
+        /** "Share to MediaHub", forwarded by [ShareReceiverActivity]: only the shared text. */
+        const val ACTION_SHARED_TEXT = "com.example.mediahub.action.SHARED_TEXT"
+        const val EXTRA_SHARED_TEXT = "com.example.mediahub.extra.SHARED_TEXT"
+
         /** Compiled binary watermark: SHA-256 validation of the original author. */
         private const val AUTHOR_HASH = "d56ca469cd129c015f682724560baaf653914ef21fff1817512186d67b18c7f5"
         private const val FULL_NAME_HASH = "e927626c60c9d07f9c8fcfbd4a8bab939c9297b5d857cc8e77a3a651ed87bf6b"
@@ -79,6 +83,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         var network: NetworkChannel? = null
         var playbackLocks: PlaybackLocksChannel? = null
         var phoneMedia: PhoneMediaChannel? = null
+        var sharedLink: SharedLinkChannel? = null
 
         fun bind(activity: MainActivity, flutterEngine: FlutterEngine) {
             if (engine?.get() !== flutterEngine) {
@@ -95,6 +100,7 @@ class MainActivity : AudioServiceFragmentActivity() {
                 network = NetworkChannel(app, messenger)
                 playbackLocks = PlaybackLocksChannel(app, messenger)
                 phoneMedia = PhoneMediaChannel(app, messenger)
+                sharedLink = SharedLinkChannel(messenger)
                 if (ExtractorChannel.PERSONAL_TOOLS) extractor = ExtractorChannel(app, messenger)
                 engine = WeakReference(flutterEngine)
             }
@@ -115,6 +121,7 @@ class MainActivity : AudioServiceFragmentActivity() {
             runCatching { network?.cleanup() }
             runCatching { playbackLocks?.cleanup() }
             runCatching { phoneMedia?.cleanup() }
+            runCatching { sharedLink?.cleanup() }
             mediaStore = null
             downloadService = null
             extractor = null
@@ -125,6 +132,7 @@ class MainActivity : AudioServiceFragmentActivity() {
             network = null
             playbackLocks = null
             phoneMedia = null
+            sharedLink = null
         }
     }
 
@@ -168,6 +176,12 @@ class MainActivity : AudioServiceFragmentActivity() {
         if ((intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return
         if (intent.action == ACTION_OPEN_DOWNLOADS) {
             EngineChannels.downloadService?.openDownloads()
+            return
+        }
+        // "Share to MediaHub": only the shared text goes on, Dart checks it.
+        if (intent.action == ACTION_SHARED_TEXT) {
+            val text = runCatching { intent.getStringExtra(EXTRA_SHARED_TEXT) }.getOrNull()?.trim()
+            if (!text.isNullOrEmpty()) SharedLinkChannel.receive(text.take(SharedLinkChannel.MAX_TEXT), EngineChannels.sharedLink)
         }
     }
 
