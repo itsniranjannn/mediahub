@@ -141,8 +141,6 @@ class SettingsScreen extends StatelessWidget {
             EntranceFade(child: card(sections.where(_firstCard.contains))),
             const SizedBox(height: AppSpacing.md12),
             EntranceFade(index: 1, child: card(sections.where((s) => !_firstCard.contains(s)))),
-            const SizedBox(height: AppSpacing.md12),
-            const EntranceFade(index: 2, child: SettingsLicencesLink()),
           ],
         ),
       ),
@@ -286,8 +284,8 @@ class _SectionRow extends ConsumerWidget {
 /// bottomNavigationBar, so it never scrolls away): the author's signature
 /// on the left, the launch-screen logo with the MediaHub wordmark and the
 /// version on the right, a soft vertical rule between them.
-/// [SettingsLicencesLink] (the OFL fonts and the packages require that
-/// attribution) sits at the end of the list instead.
+/// "Open-source licences" (the OFL fonts and the packages require that
+/// attribution) is a row on the About page instead.
 class SettingsFooter extends StatelessWidget {
   const SettingsFooter({super.key});
 
@@ -394,29 +392,6 @@ class SettingsFooter extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// "Open-source licences", the last thing in the Settings list.
-class SettingsLicencesLink extends StatelessWidget {
-  const SettingsLicencesLink({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final type = AppTypography.of(palette);
-    return Center(
-      child: TextButton(
-        key: const ValueKey('settings_licences'),
-        style: TextButton.styleFrom(
-          foregroundColor: palette.textSecondary,
-          textStyle: type.caption.copyWith(decoration: TextDecoration.underline),
-          visualDensity: VisualDensity.compact,
-        ),
-        onPressed: () => SettingsFooter.openLicences(context),
-        child: const Text('Open-source licences'),
       ),
     );
   }
@@ -984,6 +959,14 @@ class _AboutCard extends StatelessWidget {
         const _AppIdentity(),
         const _CardDivider.underHeading(),
         _InfoRow(icon: Icons.code_rounded, title: 'Crafted with precision by', body: CoreWatermark.fullName),
+        const _CardDivider.betweenRows(),
+        _NavRow(
+          key: const ValueKey('settings_licences'),
+          icon: Icons.description_rounded,
+          title: 'Open-source licences',
+          subtitle: 'Fonts and packages MediaHub is built with.',
+          onTap: () => SettingsFooter.openLicences(context),
+        ),
         if (kDebugMode) ...[
           const _CardDivider.betweenRows(),
           _NavRow(

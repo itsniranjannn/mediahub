@@ -94,7 +94,7 @@ void main() {
     }
   });
 
-  testWidgets('the footer carries the logo, the wordmark, the author and the licences link', (tester) async {
+  testWidgets('the footer carries the logo, the wordmark and the author', (tester) async {
     await pump(tester);
     expect(find.byKey(const ValueKey('settings_footer')), findsOneWidget);
     // Pinned: the Scaffold's bottom bar, not a row of the list.
@@ -106,8 +106,9 @@ void main() {
     // Every row stays reachable above it.
     await tester.drag(find.byType(ListView), const Offset(0, -2000));
     await tester.pumpAndSettle();
+    final lastRow = find.byKey(ValueKey('settings_section_${SettingsSection.values.last.name}'));
     expect(
-      tester.getBottomLeft(find.byKey(const ValueKey('settings_licences'))).dy,
+      tester.getBottomLeft(lastRow).dy,
       lessThanOrEqualTo(tester.getTopLeft(find.byKey(const ValueKey('settings_footer'))).dy),
     );
     expect(find.text(CoreWatermark.fullName), findsOneWidget);
@@ -116,8 +117,23 @@ void main() {
     expect(find.bySemanticsLabel('Crafted by ${CoreWatermark.fullName}'), findsOneWidget);
     expect(find.byType(MediaHubWordmark), findsOneWidget);
     expect(find.byType(MediaHubLogo), findsOneWidget);
-    expect(find.text('Open-source licenses'), findsNothing, reason: 'no big licences row any more');
-    await tester.tap(find.byKey(const ValueKey('settings_licences')));
+    // The licences live on the About page, not at the top level.
+    expect(find.byKey(const ValueKey('settings_licences')), findsNothing);
+    expect(find.text('Open-source licences'), findsNothing);
+  });
+
+  testWidgets('About lists the open-source licences as a row that opens the licence page', (tester) async {
+    await pump(tester);
+    await tester.drag(find.byType(ListView), const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings_section_about')));
+    await tester.pumpAndSettle();
+    final row = find.byKey(const ValueKey('settings_licences'));
+    expect(row, findsOneWidget);
+    expect(find.descendant(of: row, matching: find.text('Open-source licences')), findsOneWidget);
+    expect(find.descendant(of: row, matching: find.byIcon(Icons.chevron_right_rounded)), findsOneWidget);
+    expect(find.descendant(of: row, matching: find.byIcon(Icons.description_rounded)), findsOneWidget);
+    await tester.tap(row);
     await tester.pumpAndSettle();
     expect(find.byType(LicensePage), findsOneWidget);
   });

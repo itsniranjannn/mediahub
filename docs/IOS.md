@@ -87,6 +87,7 @@ songs and videos that are already on the iPhone.
 |---|---|---|
 | Like, shuffle and repeat on the lock screen | The plugin does not offer them on iPhone | A changed copy of audio_service (Swift), medium |
 | Share a song, video or link; getting a file out of the app | No iPhone side for MediaHub's share channel | Swift share sheet or the share_plus plugin, small |
+| "Share to MediaHub" (a link shared from YouTube, Instagram, Safari... into Downloads) | **Not done.** Android has it (ShareReceiverActivity + `mediahub/shared_link`); the iPhone needs a Share Extension target, an App Group and Xcode signing, which need a Mac. No target was added, so nothing half-built is in the Xcode project. | A Share Extension (Swift) that hands the text to the app over an App Group or a URL scheme, then the same Dart `parseSharedText` + Downloads inbox; medium |
 | Songs and videos already on the iPhone (Files, AirDrop, "Open in", Apple Music, Photos) | Nothing reads them | Files import: medium. Apple Music and Photos: medium to large |
 | Volume and brightness swipes, the volume panel, the volume-key display | Android-only code | Swift, small (brightness, key display) to medium (system volume) |
 | Volume raiser above 100% | The iPhone player stops at 100% | A changed copy of the video plugin, large |

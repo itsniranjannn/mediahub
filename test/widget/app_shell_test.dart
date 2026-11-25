@@ -188,7 +188,7 @@ void main() {
     // The top level lists the groups; each opens its own page.
     expect(find.text('Playback & audio'), findsOneWidget);
     expect(find.text('Online'), findsWidgets);
-    expect(find.text('Open-source licences'), findsOneWidget); // the footer link
+    expect(find.text('Open-source licences'), findsNothing); // on the About page now
     await tester.tap(find.text('Playback & audio'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 800));
@@ -200,6 +200,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 800));
     expect(find.text('Diagnostics log'), findsOneWidget);
+    expect(find.text('Open-source licences'), findsOneWidget);
 
     // unmount so database streams are cancelled before the test ends
     await tester.pumpWidget(const SizedBox());

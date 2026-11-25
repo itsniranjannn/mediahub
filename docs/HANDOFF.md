@@ -478,8 +478,9 @@ app in place and keeps its data.
 1. Accepted (see DECISIONS 18): redirects through yt-dlp's generic extractor, yt-dlp self-update isn't
    signature-checked (Use the built-in yt-dlp restores the bundled copy), the media service is exported
    (needed for Bluetooth and lock screen), jackson version inside youtubedl-android.
-2. Deferred, owner's decision: taking links shared from other apps (share intents, SEC-7). It would let
-   any app hand MediaHub a link; today you paste links yourself.
+2. Done 2026-11-25 (owner asked): "Share to MediaHub" on Android (SEC-7). Only the shared text is read;
+   the first https link passes UrlPolicy and opens in Downloads after the App lock. iOS: not done (a Share
+   Extension needs a Mac, see `docs/IOS.md`).
 3. Done 2026-11-25: Delete from phone for the phone's own songs and videos. Open: multi-select.
 4. iOS: everything that is the same, different or missing on iPhone, what was fixed without a Mac,
    the first-build checklist and the device test list are in `docs/IOS.md`. Picture-in-picture for the
