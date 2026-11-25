@@ -30,8 +30,10 @@ import '../app_lock/app_lock.dart';
 import '../music_player/equalizer/audio_effects.dart';
 import '../music_player/equalizer/equalizer_sheet.dart';
 import '../music_player/lyrics/lyrics_repository.dart';
+import '../music_player/resume_after_other_apps.dart';
 import '../../core/platform/phone_media.dart';
 import 'backup_restore.dart';
+import 'settings_notifier.dart';
 import 'theme_mode_setting.dart';
 import 'user_name_setting.dart';
 
@@ -568,8 +570,10 @@ class _PlaybackCard extends ConsumerWidget {
       children: [
         const _CardHeading(
           icon: Icons.headphones_rounded,
-          title: 'Playback & audio',
-          subtitle: 'Equalizer and online lyrics.',
+          title: 'Audio & headset',
+          subtitle: PlatformInfo.isAndroid
+              ? 'How playback reacts to your headphones and other apps.'
+              : 'How playback reacts to your headphones.',
         ),
         // Android only: just_audio has no equalizer on the iPhone.
         if (AudioEffects.supported) ...[
@@ -583,7 +587,28 @@ class _PlaybackCard extends ConsumerWidget {
             onTap: () => showEqualizerSheet(context),
           ),
         ],
-        if (AudioEffects.supported) const _CardDivider.betweenRows() else const _CardDivider.underHeading(),
+        if (AudioEffects.supported || PlatformInfo.isIOS)
+          const _CardDivider.betweenRows()
+        else
+          const _CardDivider.underHeading(),
+        if (PlatformInfo.isAndroid) ...[
+          _SwitchRow(
+            icon: Icons.play_circle_outline_rounded,
+            title: 'Resume after other apps',
+            subtitle: 'Plays your music again when another app stops playing, within 30 minutes.',
+            value: ref.watch(resumeAfterOtherAppsProvider),
+            onChanged: (_) => ref.read(resumeAfterOtherAppsProvider.notifier).toggle(),
+          ),
+          const _CardDivider.betweenRows(),
+        ],
+        if (PlatformInfo.isIOS)
+          _SwitchRow(
+            icon: Icons.headphones_rounded,
+            title: 'Resume when headphones reconnect',
+            subtitle: 'Starts your music again when your headphones reconnect.',
+            value: ref.watch(resumeOnHeadphonesReconnectProvider),
+            onChanged: (_) => ref.read(resumeOnHeadphonesReconnectProvider.notifier).toggle(),
+          ),
         _SwitchRow(
           icon: Icons.lyrics_rounded,
           title: 'Find lyrics online',
