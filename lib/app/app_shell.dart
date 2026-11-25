@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import '../core/platform/device_controls.dart';
 import '../core/platform_info.dart';
 import '../domain/models/download_state.dart';
+import '../features/app_lock/app_lock.dart';
 import '../features/downloads/downloads_notifier.dart';
 import '../features/music_player/mini_player.dart';
 import '../features/music_player/playback_notifier.dart';
@@ -70,7 +71,12 @@ class AppShell extends StatelessWidget {
             return Scaffold(
               // Landscape: the side system insets (display cutout, navigation
               // bar) show the page canvas, and the page stays clear of them.
-              body: SafeArea(top: false, bottom: false, child: body!),
+              body: SafeArea(
+                top: false,
+                bottom: false,
+                // App lock for the Downloads and Online tabs only.
+                child: AppLockTabCover(branchIndex: navigationShell.currentIndex, child: body!),
+              ),
               // The Ink Dock (DESIGN.md 7.7): the mini player and the nav on one
               // ink slab in both themes. InkDock wraps them in the dark theme and
               // keeps the Android navigation bar's icons light over it. The body

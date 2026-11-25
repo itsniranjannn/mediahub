@@ -18,7 +18,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.lifecycle.Lifecycle
-import com.ryanheise.audioservice.AudioServiceActivity
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -28,7 +28,12 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.lang.ref.WeakReference
 
-class MainActivity : AudioServiceActivity() {
+/**
+ * A FragmentActivity (audio_service's AudioServiceFragmentActivity: the same cached engine
+ * as AudioServiceActivity, so music, the media session and Android Auto keep one engine),
+ * because local_auth's fingerprint / PIN prompt (App lock) is a fragment.
+ */
+class MainActivity : AudioServiceFragmentActivity() {
 
     companion object {
         /** The download notification's tap: open the Downloads tab (explicit, app-internal). */
@@ -73,6 +78,7 @@ class MainActivity : AudioServiceActivity() {
         var backupFiles: BackupFilesChannel? = null
         var network: NetworkChannel? = null
         var playbackLocks: PlaybackLocksChannel? = null
+        var phoneMedia: PhoneMediaChannel? = null
 
         fun bind(activity: MainActivity, flutterEngine: FlutterEngine) {
             if (engine?.get() !== flutterEngine) {
@@ -88,12 +94,14 @@ class MainActivity : AudioServiceActivity() {
                 backupFiles = BackupFilesChannel(messenger)
                 network = NetworkChannel(app, messenger)
                 playbackLocks = PlaybackLocksChannel(app, messenger)
+                phoneMedia = PhoneMediaChannel(app, messenger)
                 if (ExtractorChannel.PERSONAL_TOOLS) extractor = ExtractorChannel(app, messenger)
                 engine = WeakReference(flutterEngine)
             }
             deviceControls?.attach(activity)
             share?.attach(activity)
             backupFiles?.attach(activity)
+            phoneMedia?.attach(activity)
         }
 
         private fun release() {
@@ -106,6 +114,7 @@ class MainActivity : AudioServiceActivity() {
             runCatching { backupFiles?.cleanup() }
             runCatching { network?.cleanup() }
             runCatching { playbackLocks?.cleanup() }
+            runCatching { phoneMedia?.cleanup() }
             mediaStore = null
             downloadService = null
             extractor = null
@@ -115,6 +124,7 @@ class MainActivity : AudioServiceActivity() {
             backupFiles = null
             network = null
             playbackLocks = null
+            phoneMedia = null
         }
     }
 
@@ -161,11 +171,13 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
-    // The backup file pickers (Settings, Backup & restore) answer here.
+    // The backup file pickers (Settings, Backup & restore) and the delete consent dialog answer here.
     @Deprecated("Deprecated in Java")
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (EngineChannels.backupFiles?.onActivityResult(requestCode, resultCode, data) == true) return
+        // "Delete from phone": the system's delete consent dialog answers here.
+        if (EngineChannels.phoneMedia?.onActivityResult(requestCode, resultCode) == true) return
         super.onActivityResult(requestCode, resultCode, data)
     }
 
@@ -204,6 +216,7 @@ class MainActivity : AudioServiceActivity() {
         EngineChannels.deviceControls?.detach(this)
         EngineChannels.share?.detach(this)
         EngineChannels.backupFiles?.detach(this)
+        EngineChannels.phoneMedia?.detach(this)
         super.onDestroy()
     }
 }

@@ -28,6 +28,18 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Settings → Downloads → "Save downloads to: Phone storage": MediaHub's Documents
+	     folder (its downloads) shows in the Files app, under On My iPhone → MediaHub. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<!-- "Save to phone" for a video adds a copy to Photos (add-only access). -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>MediaHub adds the videos you save to your phone to Photos.</string>
+	<!-- App lock (Settings) uses Face ID. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>MediaHub uses Face ID to unlock the app when App lock is on.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

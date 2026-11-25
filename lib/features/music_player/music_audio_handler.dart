@@ -8,6 +8,8 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
+import 'auto_browse.dart';
+import 'equalizer/audio_effects.dart';
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/platform/other_audio_watcher.dart';
 import '../../core/platform_info.dart';
@@ -920,7 +922,9 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     OtherAudioWatcher? otherAudio,
     bool Function()? resumeAfterOtherApps,
     Duration? otherAppWatchDelay,
-  })  : _player = player ?? AudioPlayer(handleInterruptions: false),
+  })  : _player = player ??
+            // The equalizer and loudness boost (Android; null on the iPhone).
+            AudioPlayer(handleInterruptions: false, audioPipeline: AudioEffects.instance.pipeline),
         _interruptionEvents = interruptionEvents, // ignore: prefer_initializing_formals
         _otherAudio = otherAudio, // ignore: prefer_initializing_formals
         _resumeAfterOtherApps = resumeAfterOtherApps ?? _always,
@@ -2356,8 +2360,23 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   @override
   Future<void> prepareFromMediaId(String mediaId, [Map<String, dynamic>? extras]) => _ensureRestored();
 
+  /// Android Auto / MediaBrowser clients browse the library through this
+  /// (set in main.dart); null: only the "recent" root is answered.
+  AutoBrowseTree? browse;
+
   @override
   Future<void> playFromMediaId(String mediaId, [Map<String, dynamic>? extras]) async {
+    // A song picked in a browsed list (Android Auto): that list plays from it.
+    final picked = AutoBrowseTree.split(mediaId);
+    final tree = browse;
+    if (picked != null && tree != null) {
+      final songs = await tree.songsOf(picked.$1);
+      final index = songs?.indexWhere((s) => s.id == picked.$2) ?? -1;
+      if (songs != null && index >= 0) {
+        DiagnosticsService.instance.logEvent('play', {'caller': 'browse', 'list': picked.$1.split(':').first});
+        return loadQueue(songs, startIndex: index, autoPlay: true, shuffle: _shuffleEnabled);
+      }
+    }
     if (_external == null) await _ensureRestored();
     final q = _virtualQueue;
     final index = q.indexWhere((m) => m.id == mediaId);
@@ -2371,7 +2390,19 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// closed: the current (or last saved) song, with its cover.
   @override
   Future<List<MediaItem>> getChildren(String parentMediaId, [Map<String, dynamic>? options]) async {
-    if (parentMediaId != AudioService.recentRootId) return const [];
+    if (parentMediaId != AudioService.recentRootId) {
+      final tree = browse;
+      if (tree == null) return const [];
+      try {
+        return await tree.children(
+          parentMediaId,
+          (song, browseId) => _sessionItem(song, _art.peek(song)).copyWith(id: browseId),
+        );
+      } catch (e) {
+        DiagnosticsService.instance.logEvent('browse_failed', {'type': e.runtimeType.toString()});
+        return const [];
+      }
+    }
     // The last thing played was YouTube: no local song to offer.
     if (_externalHeld) return const [];
     domain.MediaItem? item = _virtualCurrentItem;

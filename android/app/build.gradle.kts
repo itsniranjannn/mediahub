@@ -118,6 +118,8 @@ flutter {
 }
 
 dependencies {
+    // Theme.AppCompat for the local_auth fingerprint dialog on Android 8-11 (App lock).
+    implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
 }

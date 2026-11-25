@@ -207,6 +207,18 @@ class LibraryRepositoryImpl implements LibraryRepository {
     // 3. Atomically update DB in one transaction with availability tracking
     try {
       await _db.transaction(() async {
+        // A download saved to the phone ("Save to phone") is the MediaStore
+        // file now, and its download row (same id, so favourites and history
+        // stay) already points at it: the scan's copy of it is never added,
+        // and one added by an earlier scan goes. Shown once.
+        final claimed = await _downloadClaimedUris();
+        if (claimed.isNotEmpty) {
+          audioToInsert.removeWhere((c) => claimed.contains(c.uri.value));
+          videoToInsert.removeWhere((c) => claimed.contains(c.uri.value));
+          await (_db.delete(_db.mediaItemsTable)
+                ..where((t) => t.uri.isIn(claimed) & (t.source.isNull() | t.source.equals('device'))))
+              .go();
+        }
         // Ids known before this scan, to spot rows that are new in this scan (step D).
         final idsBefore = (await (_db.selectOnly(_db.mediaItemsTable)..addColumns([_db.mediaItemsTable.id]))
                 .map((r) => r.read(_db.mediaItemsTable.id)!)
@@ -283,6 +295,17 @@ class LibraryRepositoryImpl implements LibraryRepository {
     } catch (e) {
       debugPrint('[Scan] search key backfill failed: $e');
     }
+  }
+
+  /// The MediaStore addresses downloads point at (moved by "Save to phone").
+  Future<Set<String>> _downloadClaimedUris() async {
+    final t = _db.mediaItemsTable;
+    final rows = await (_db.selectOnly(t)
+          ..addColumns([t.uri])
+          ..where(t.source.equals('download') & t.uri.like('content://%')))
+        .map((r) => r.read(t.uri)!)
+        .get();
+    return rows.toSet();
   }
 
   Future<void> _missingPass(MediaType type, List<MediaItemsTableCompanion> scanned) async {

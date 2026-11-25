@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
+import '../../core/platform/phone_media.dart';
 import '../../core/downloads/ios_playable_formats.dart';
 import '../../core/downloads/known_platform_checker.dart';
 import '../../core/platform_info.dart';
@@ -905,6 +906,8 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     // file is deleted.
     final downloadDir = ref.read(downloadDirectoryProvider.future)..ignore();
     final runner = task.engine == 'extractor' ? ref.read(extractorDownloadRunnerProvider) : null;
+    final phoneMedia = ref.read(phoneMediaProvider);
+    final messenger = ScaffoldMessenger.maybeOf(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -930,6 +933,16 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     );
 
     if (confirmed == true) {
+      // Moved to the phone ("Save to phone"): the phone's file is the only
+      // copy, deleted through MediaStore (Android 11+ asks once more).
+      final onPhone = task.finalPath;
+      if (onPhone != null && onPhone.startsWith('content://media/')) {
+        final gone = await phoneMedia.deleteFromPhone([onPhone]).catchError((Object _) => false);
+        if (!gone) {
+          messenger?.showSnackBar(const SnackBar(content: Text('Not deleted.')));
+          return;
+        }
+      }
       // Delete files on disk if they exist (media + cover image), and only
       // inside the downloads folder: a row pointing anywhere else (a corrupt
       // or crafted database) never deletes that file.
@@ -978,7 +991,9 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
   Future<void> _playCompletedDownload(DownloadEntry task) async {
     if (task.finalPath == null) return;
     final file = File(task.finalPath!);
-    if (!file.existsSync()) {
+    // A download moved to the phone ("Save to phone") plays from MediaStore.
+    final onPhone = task.finalPath!.startsWith('content://');
+    if (!onPhone && !file.existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('File is missing from device storage.')),
       );
@@ -1000,7 +1015,7 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
       mediaType: _kindOf(task) == 'video' ? MediaType.video : MediaType.audio,
       title: task.displayName,
       durationMs: 0,
-      sizeBytes: file.lengthSync(),
+      sizeBytes: onPhone ? (task.totalBytes ?? 0) : file.lengthSync(),
       dateAdded: task.createdAt,
       source: 'download',
       artworkPath: task.thumbnailPath,

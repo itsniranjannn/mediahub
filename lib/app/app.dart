@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_config.dart';
 import '../core/core_watermark.dart';
+import '../features/app_lock/app_lock.dart';
 import '../features/settings/theme_mode_setting.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
@@ -65,7 +66,11 @@ class _MediaHubAppState extends ConsumerState<MediaHubApp> {
       darkTheme: inkTheme,
       themeMode: ref.watch(themeModeSettingProvider),
       routerConfig: router,
-      builder: (context, child) => InkTheme(data: inkTheme, child: child ?? const SizedBox.shrink()),
+      // App lock (Settings) covers every route when it is for the whole app.
+      builder: (context, child) => InkTheme(
+        data: inkTheme,
+        child: AppLockGate(child: child ?? const SizedBox.shrink()),
+      ),
     );
   }
 }

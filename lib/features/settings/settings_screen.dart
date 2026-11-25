@@ -22,6 +22,12 @@ import '../online/online_screen.dart' show confirmClearYouTubeData;
 import '../online/online_settings.dart';
 import '../online/online_web_view.dart' show onlineDataClearerProvider;
 import '../downloads/mobile_data_guard.dart';
+import '../downloads/save_to_phone.dart';
+import '../app_lock/app_lock.dart';
+import '../music_player/equalizer/audio_effects.dart';
+import '../music_player/equalizer/equalizer_sheet.dart';
+import '../music_player/lyrics/lyrics_repository.dart';
+import '../../core/platform/phone_media.dart';
 import 'backup_restore.dart';
 import 'settings_notifier.dart';
 import 'theme_mode_setting.dart';
@@ -130,6 +136,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: _cardGap),
             const EntranceFade(index: 2, child: _PlaybackCard()),
             const SizedBox(height: _cardGap),
+            if (PlatformInfo.isAndroid || PlatformInfo.isIOS) ...const [
+              EntranceFade(index: 2, child: _AppLockCard()),
+              SizedBox(height: _cardGap),
+            ],
             const EntranceFade(index: 3, child: _OnlineCard()),
             if (showPersonalTools) ...const [
               SizedBox(height: _cardGap),
@@ -371,6 +381,26 @@ class _PlaybackCard extends ConsumerWidget {
             onChanged: (v) => ref.read(resumeAfterOtherAppsProvider.notifier).set(v),
           ),
         ],
+        // Android only: just_audio has no equalizer on the iPhone.
+        if (AudioEffects.supported) ...[
+          const _CardDivider.betweenRows(),
+          _NavRow(
+            icon: Icons.equalizer_rounded,
+            title: 'Equalizer',
+            subtitle: ref.watch(equalizerProvider.select((e) => e.enabled))
+                ? 'On · ${ref.watch(equalizerProvider.select((e) => e.preset))}'
+                : 'Off. Presets, your own bands and a loudness boost.',
+            onTap: () => showEqualizerSheet(context),
+          ),
+        ],
+        const _CardDivider.betweenRows(),
+        _SwitchRow(
+          icon: Icons.lyrics_rounded,
+          title: 'Find lyrics online',
+          subtitle: 'When a song has no lyrics of its own, asks LRCLIB (lrclib.net) with its title, artist and length.',
+          value: ref.watch(onlineLyricsProvider),
+          onChanged: (v) => ref.read(onlineLyricsProvider.notifier).set(v),
+        ),
       ],
     );
   }
@@ -389,7 +419,7 @@ class _DownloadsDataCard extends ConsumerWidget {
         const _CardHeading(
           icon: Icons.download_rounded,
           title: 'Downloads',
-          subtitle: 'How downloads use your data.',
+          subtitle: 'Where downloads go and how they use your data.',
         ),
         const _CardDivider.underHeading(),
         _SwitchRow(
@@ -399,6 +429,8 @@ class _DownloadsDataCard extends ConsumerWidget {
           value: ask,
           onChanged: (v) => ref.read(askBeforeBigDownloadsProvider.notifier).set(v),
         ),
+        const _CardDivider.betweenRows(),
+        const _SaveLocationRow(),
       ],
     );
   }
@@ -776,6 +808,171 @@ class _AboutCard extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Building blocks
 // ---------------------------------------------------------------------------
+
+/// What the phone allows for "Save to phone" (Android 10+, the iPhone).
+final _phoneMediaCapsProvider = FutureProvider<PhoneMediaCapabilities>(
+  (ref) => ref.watch(phoneMediaProvider).capabilities(),
+);
+
+/// Settings → Downloads → "Save downloads to".
+class _SaveLocationRow extends ConsumerWidget {
+  const _SaveLocationRow();
+
+  static String _label(DownloadSaveLocation l) => switch (l) {
+        DownloadSaveLocation.app => 'Inside MediaHub (private)',
+        DownloadSaveLocation.phone => 'Phone storage',
+      };
+
+  static String _explain(DownloadSaveLocation l) => switch (l) {
+        DownloadSaveLocation.app => 'Only MediaHub sees them.',
+        DownloadSaveLocation.phone => PlatformInfo.isIOS
+            ? 'Songs in the Files app, videos also in Photos.'
+            : 'Visible in Gallery, Files and other apps (Music/MediaHub, Movies/MediaHub).',
+      };
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final location = ref.watch(downloadSaveLocationProvider);
+    final supported = ref.watch(_phoneMediaCapsProvider).value?.canSaveToPhone ?? false;
+    return _NavRow(
+      key: const ValueKey('save_location_row'),
+      icon: Icons.folder_rounded,
+      title: 'Save downloads to',
+      subtitle: supported
+          ? '${_label(location)}. ${_explain(location)}'
+          : 'Inside MediaHub. Phone storage needs Android 10 or newer.',
+      onTap: supported ? () => _choose(context, ref, location) : () {},
+    );
+  }
+
+  Future<void> _choose(BuildContext context, WidgetRef ref, DownloadSaveLocation current) async {
+    final picked = await showDialog<DownloadSaveLocation>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Save downloads to'),
+        children: [
+          for (final l in DownloadSaveLocation.values)
+            ListTile(
+              leading: Icon(
+                l == current ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
+                color: l == current ? ctx.palette.primary : ctx.palette.textSecondary,
+              ),
+              title: Text(_label(l)),
+              subtitle: Text(_explain(l)),
+              onTap: () => Navigator.of(ctx).pop(l),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(AppSpacing.xxl24, AppSpacing.sm8, AppSpacing.xxl24, 0),
+            child: Text(
+              'Applies to new downloads. For one you already have, use "Save to phone" in its menu.',
+              style: _subtitleStyle(ctx.typography),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (picked != null) ref.read(downloadSaveLocationProvider.notifier).set(picked);
+  }
+}
+
+/// Settings → App lock: fingerprint / face / the phone's PIN.
+class _AppLockCard extends ConsumerWidget {
+  const _AppLockCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lock = ref.watch(appLockProvider);
+    final notifier = ref.read(appLockProvider.notifier);
+    final s = lock.settings;
+    return _SettingsCard(
+      children: [
+        const _CardHeading(
+          icon: Icons.lock_rounded,
+          title: 'App lock',
+          subtitle: 'Fingerprint, face or your phone PIN to open MediaHub. Music and its controls keep working.',
+        ),
+        const _CardDivider.underHeading(),
+        _SwitchRow(
+          icon: Icons.fingerprint_rounded,
+          title: 'Lock MediaHub',
+          subtitle: 'Asks when the app opens and after it was in the background.',
+          value: s.enabled,
+          onChanged: (v) async {
+            final messenger = ScaffoldMessenger.maybeOf(context);
+            final ok = await notifier.setEnabled(v);
+            if (!ok && v) {
+              messenger?.showSnackBar(const SnackBar(
+                content: Text('Set a screen lock (PIN, pattern or fingerprint) on the phone first.'),
+              ));
+            }
+          },
+        ),
+        if (s.enabled) ...[
+          const _CardDivider.betweenRows(),
+          _NavRow(
+            key: const ValueKey('app_lock_scope_row'),
+            icon: Icons.shield_rounded,
+            title: 'What it locks',
+            subtitle: AppLockSettings.scopeLabel(s.scope),
+            onTap: () async {
+              final picked = await _pick<AppLockScope>(
+                context,
+                'What it locks',
+                AppLockScope.values,
+                s.scope,
+                AppLockSettings.scopeLabel,
+              );
+              if (picked != null) notifier.setScope(picked);
+            },
+          ),
+          const _CardDivider.betweenRows(),
+          _NavRow(
+            key: const ValueKey('app_lock_after_row'),
+            icon: Icons.timer_rounded,
+            title: 'Lock again',
+            subtitle: '${AppLockSettings.minutesLabel(s.lockAfterMinutes)} in the background',
+            onTap: () async {
+              final picked = await _pick<int>(
+                context,
+                'Lock again',
+                AppLockSettings.minuteChoices,
+                s.lockAfterMinutes,
+                AppLockSettings.minutesLabel,
+              );
+              if (picked != null) notifier.setLockAfterMinutes(picked);
+            },
+          ),
+        ],
+      ],
+    );
+  }
+
+  static Future<T?> _pick<T>(
+    BuildContext context,
+    String title,
+    List<T> options,
+    T current,
+    String Function(T) label,
+  ) {
+    return showDialog<T>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text(title),
+        children: [
+          for (final o in options)
+            ListTile(
+              leading: Icon(
+                o == current ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
+                color: o == current ? ctx.palette.primary : ctx.palette.textSecondary,
+              ),
+              title: Text(label(o)),
+              onTap: () => Navigator.of(ctx).pop(o),
+            ),
+        ],
+      ),
+    );
+  }
+}
 
 /// A [SurfaceCard] holding rows; clipped so row ripples follow the rounded corners.
 class _SettingsCard extends StatelessWidget {

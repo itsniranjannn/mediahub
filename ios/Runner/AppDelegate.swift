@@ -3,6 +3,7 @@
 import AVFoundation
 import Flutter
 import Network
+import Photos
 import UIKit
 import UniformTypeIdentifiers
 
@@ -11,6 +12,7 @@ import UniformTypeIdentifiers
   // MediaHub's own channels, kept alive for the engine's lifetime.
   private var backupFiles: BackupFilesChannel?
   private var network: NetworkChannel?
+  private var phoneMedia: PhoneMediaChannel?
 
   override func application(
     _ application: UIApplication,
@@ -32,8 +34,10 @@ import UniformTypeIdentifiers
       let messenger = registrar.messenger()
       backupFiles?.cleanup()
       network?.cleanup()
+      phoneMedia?.cleanup()
       backupFiles = BackupFilesChannel(messenger: messenger)
       network = NetworkChannel(messenger: messenger)
+      phoneMedia = PhoneMediaChannel(messenger: messenger)
     }
   }
 }
@@ -232,5 +236,107 @@ final class NetworkChannel {
     let path: NWPath? = queue.sync { latest }
     guard let path = path, path.status == .satisfied else { return nil }
     return path.isExpensive || path.isConstrained || path.usesInterfaceType(.cellular)
+  }
+}
+
+/// "mediahub/phone_media", the iPhone side of PhoneMediaChannel.kt ("Save to phone").
+/// - capabilities -> {canSaveToPhone: true, systemAsksBeforeDelete: false}
+/// - saveToPhone {path, kind} -> a path. Only files inside Documents/downloads (MediaHub's
+///   own downloads) are accepted. Audio: nothing moves; Documents is shared with the
+///   Files app (UIFileSharingEnabled), so the path itself comes back. Video: a copy is
+///   added to Photos (PHPhotoLibrary, add-only access, NSPhotoLibraryAddUsageDescription)
+///   and the path comes back (MediaHub keeps its own copy to play it).
+///   Errors: BAD_ARGS, NOT_ALLOWED (no Photos access), UNSUPPORTED (a format Photos does
+///   not take, such as WebM or MKV), SAVE_FAILED.
+/// - deleteFromPhone -> false: the iPhone app never sees the phone's own media, so it can
+///   only delete its own downloads (done in Dart).
+/// - readLyricsSidecar -> nil.
+final class PhoneMediaChannel {
+  private let channel: FlutterMethodChannel
+
+  init(messenger: FlutterBinaryMessenger) {
+    channel = FlutterMethodChannel(name: "mediahub/phone_media", binaryMessenger: messenger)
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self = self else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      self.handle(call, result: result)
+    }
+  }
+
+  func cleanup() {
+    channel.setMethodCallHandler(nil)
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "capabilities":
+      result(["sdk": 0, "canSaveToPhone": true, "systemAsksBeforeDelete": false])
+    case "saveToPhone":
+      let args = call.arguments as? [String: Any] ?? [:]
+      guard let path = args["path"] as? String, let kind = args["kind"] as? String,
+        kind == "audio" || kind == "video"
+      else {
+        result(FlutterError(code: "BAD_ARGS", message: "path and kind are needed", details: nil))
+        return
+      }
+      guard let file = PhoneMediaChannel.ownDownload(path) else {
+        result(FlutterError(code: "BAD_ARGS", message: "Not a MediaHub download", details: nil))
+        return
+      }
+      if kind == "audio" {
+        // Already in the Files app (On My iPhone -> MediaHub -> downloads).
+        result(file.path)
+        return
+      }
+      saveVideoToPhotos(file, result: result)
+    case "deleteFromPhone":
+      result(false)
+    case "readLyricsSidecar":
+      result(nil)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  /// The file when it lies inside Documents/downloads, else nil (no "..", no symlinks out).
+  private static func ownDownload(_ path: String) -> URL? {
+    guard
+      let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    else { return nil }
+    let root = docs.appendingPathComponent("downloads", isDirectory: true)
+      .resolvingSymlinksInPath().standardizedFileURL.path
+    let file = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+    guard file.path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: file.path) else {
+      return nil
+    }
+    return file
+  }
+
+  private func saveVideoToPhotos(_ file: URL, result: @escaping FlutterResult) {
+    guard UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(file.path) else {
+      result(FlutterError(code: "UNSUPPORTED", message: "Photos cannot take this video format", details: nil))
+      return
+    }
+    PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+      guard status == .authorized || status == .limited else {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "NOT_ALLOWED", message: "No access to Photos", details: nil))
+        }
+        return
+      }
+      PHPhotoLibrary.shared().performChanges({
+        _ = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: file)
+      }) { ok, error in
+        DispatchQueue.main.async {
+          if ok {
+            result(file.path)
+          } else {
+            result(FlutterError(code: "SAVE_FAILED", message: error?.localizedDescription, details: nil))
+          }
+        }
+      }
+    }
   }
 }

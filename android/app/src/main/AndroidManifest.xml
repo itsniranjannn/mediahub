@@ -16,6 +16,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- App lock (Settings): fingerprint / face / the phone's own PIN through local_auth.
+         A normal permission, no prompt. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
 
     <!-- Remove unused Nearby devices permission merged in from third-party plugins -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" tools:node="remove"/>
@@ -112,6 +115,12 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
+
+        <!-- Android Auto: MediaHub's songs, albums, playlists and favourites can be browsed
+             from the car (audio_service's MediaBrowserService above). -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

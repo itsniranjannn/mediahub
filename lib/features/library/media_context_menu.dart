@@ -13,6 +13,7 @@ import '../../app/theme/app_palette.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_typography.dart';
 import '../../core/platform/device_controls.dart';
+import '../../core/platform/phone_media.dart';
 import '../../core/platform/share_channel.dart';
 import '../../core/platform_info.dart';
 import '../../core/utils/formatters.dart';
@@ -25,6 +26,7 @@ import '../../shared/widgets/favorite_feedback_button.dart' show isFavoriteProvi
 import '../downloads/download_link_inbox.dart';
 import '../downloads/download_providers.dart';
 import '../downloads/download_quality.dart';
+import '../downloads/save_to_phone.dart';
 import '../music_player/playback_notifier.dart';
 import '../online/youtube_urls.dart';
 import '../playlists/playlist_cover.dart';
@@ -61,6 +63,7 @@ enum MediaAction {
   copyLink,
   share,
   details,
+  saveToPhone,
   delete,
 }
 
@@ -113,9 +116,19 @@ abstract interface class MediaFileDeleter {
   /// Whether [item] can be deleted by the app.
   bool canDelete(MediaItem item);
 
+  /// Whether the phone itself asks before [item] goes (Android 11+ for a
+  /// MediaStore file), so MediaHub does not ask a second time.
+  Future<bool> systemAsks(MediaItem item);
+
   /// Removes [item]'s file and everything the app keeps about it. Throws when
-  /// the file is there but cannot be removed (nothing else is touched then).
+  /// the file is there but cannot be removed (nothing else is touched then),
+  /// [DeleteDeclined] when the user said no in the phone's own dialog.
   Future<void> delete(MediaItem item);
+}
+
+/// The user answered "Deny" in the phone's delete dialog.
+class DeleteDeclined implements Exception {
+  const DeleteDeclined();
 }
 
 final mediaFileDeleterProvider = Provider<MediaFileDeleter>((ref) => _DownloadedFileDeleter(ref));
@@ -124,13 +137,22 @@ final mediaFileDeleterProvider = Provider<MediaFileDeleter>((ref) => _Downloaded
 /// that climbs out of it with `..`).
 bool isPathInside(String dir, String path) => p.isWithin(p.normalize(dir), p.normalize(path));
 
-/// Deletes downloads: their file lives in the app's own storage, so the app
-/// may remove it. Then its saved cover and its rows in Downloads go, and
-/// [LibraryRepository.deleteMediaCompletely] takes it out of every playlist
-/// (each renumbered), its video progress and its library row.
+/// Whether [uri] is a file in the phone's media library (MediaStore).
+bool isPhoneMediaUri(String uri) => uri.startsWith('content://media/');
+
+/// Deletes downloads and the phone's own songs and videos.
 ///
-/// Only files inside the downloads folder are ever deleted: a row pointing
-/// anywhere else (a corrupt or crafted database) loses its rows, not a file.
+/// - A download in the app's own storage: the app removes the file itself.
+///   Only files inside the downloads folder are ever deleted: a row pointing
+///   anywhere else (a corrupt or crafted database) loses its rows, not a file.
+/// - A file in the phone's media library (a song or video that came with the
+///   phone, or a download moved there by "Save to phone"; Android only):
+///   through MediaStore, with the phone's own consent dialog on Android 11+
+///   (`createDeleteRequest`) and Android 10 (`RecoverableSecurityException`).
+///
+/// Then its saved cover and its rows in Downloads go, and
+/// [LibraryRepository.deleteMediaCompletely] takes it out of Favourites,
+/// every playlist (each renumbered), its video progress and its library row.
 class _DownloadedFileDeleter implements MediaFileDeleter {
   final Ref _ref;
 
@@ -139,35 +161,55 @@ class _DownloadedFileDeleter implements MediaFileDeleter {
   static bool _isLocalPath(String? path) => path != null && path.isNotEmpty && !path.contains('://');
 
   @override
-  bool canDelete(MediaItem item) => item.source == 'download' && _isLocalPath(item.uri);
+  bool canDelete(MediaItem item) {
+    if (item.isOnline) return false;
+    if (item.source == 'download' && _isLocalPath(item.uri)) return true;
+    // The iPhone app never sees the phone's own media.
+    return PlatformInfo.isAndroid && isPhoneMediaUri(item.uri);
+  }
+
+  @override
+  Future<bool> systemAsks(MediaItem item) async {
+    if (!isPhoneMediaUri(item.uri)) return false;
+    return (await _ref.read(phoneMediaProvider).capabilities()).systemAsksBeforeDelete;
+  }
 
   @override
   Future<void> delete(MediaItem item) async {
-    if (!canDelete(item)) throw StateError('${item.id} is not a download');
+    if (!canDelete(item)) throw StateError('${item.id} cannot be deleted');
     final db = _ref.read(appDatabaseProvider);
     final repo = _ref.read(libraryRepositoryProvider);
-    final dir = (await _ref.read(downloadDirectoryProvider.future)).path;
 
     final downloads = await (db.select(db.downloadsTable)..where((t) => t.mediaId.equals(item.id))).get();
 
     // The media file first: if it cannot go, the library keeps its row and
     // the song still plays.
-    if (isPathInside(dir, item.uri)) {
-      final media = File(item.uri);
-      if (await media.exists()) await media.delete();
+    if (isPhoneMediaUri(item.uri)) {
+      final gone = await _ref.read(phoneMediaProvider).deleteFromPhone([item.uri]);
+      if (!gone) throw const DeleteDeclined();
     }
-    for (final path in {item.artworkPath, for (final d in downloads) ...[d.finalPath, d.thumbnailPath]}) {
-      if (!_isLocalPath(path) || path == item.uri || !isPathInside(dir, path!)) continue;
-      try {
-        final file = File(path);
-        if (await file.exists()) await file.delete();
-      } catch (_) {
-        // A leftover cover is harmless; the startup sweep may still get it.
+    String? dir;
+    if (item.source == 'download') {
+      dir = (await _ref.read(downloadDirectoryProvider.future)).path;
+      if (_isLocalPath(item.uri) && isPathInside(dir, item.uri)) {
+        final media = File(item.uri);
+        if (await media.exists()) await media.delete();
+      }
+      for (final path in {item.artworkPath, for (final d in downloads) ...[d.finalPath, d.thumbnailPath]}) {
+        if (!_isLocalPath(path) || path == item.uri || !isPathInside(dir, path!)) continue;
+        try {
+          final file = File(path);
+          if (await file.exists()) await file.delete();
+        } catch (_) {
+          // A leftover cover is harmless; the startup sweep may still get it.
+        }
       }
     }
 
     await repo.deleteMediaCompletely(item.id);
-    await (db.delete(db.downloadsTable)..where((t) => t.mediaId.equals(item.id))).go();
+    if (downloads.isNotEmpty) {
+      await (db.delete(db.downloadsTable)..where((t) => t.mediaId.equals(item.id))).go();
+    }
   }
 }
 
@@ -256,7 +298,9 @@ class MediaContextMenu {
     bool downloadsSupported = true,
     bool shareSupported = true,
     bool inPlaylist = false,
+    bool saveToPhoneSupported = false,
   }) {
+    final saveToPhone = saveToPhoneSupported && SaveToPhoneService.canOffer(item);
     if (item.isOnline) {
       final link = _isWebLink(item.uri);
       final savable = _isSavableOnline(item);
@@ -277,6 +321,7 @@ class MediaContextMenu {
         if (pipSupported) MediaAction.pictureInPicture,
         if (shareSupported) MediaAction.share,
         MediaAction.details,
+        if (saveToPhone) MediaAction.saveToPhone,
         if (canDelete) MediaAction.delete,
       ];
     }
@@ -290,6 +335,7 @@ class MediaContextMenu {
       if (_artistOf(item) != null) MediaAction.goToArtist,
       if (shareSupported) MediaAction.share,
       MediaAction.details,
+      if (saveToPhone) MediaAction.saveToPhone,
       if (canDelete) MediaAction.delete,
     ];
   }
@@ -324,6 +370,7 @@ class MediaContextMenu {
       MediaAction.copyLink => (Icons.link_rounded, 'Copy link'),
       MediaAction.share => (Icons.share_rounded, 'Share'),
       MediaAction.details => (Icons.info_outline_rounded, 'Details'),
+      MediaAction.saveToPhone => (Icons.save_alt_rounded, 'Save to phone'),
       MediaAction.delete => (Icons.delete_outline_rounded, 'Delete from phone'),
     };
   }
@@ -460,6 +507,8 @@ class _MediaMenu {
 
   Future<void> open(BuildContext anchor, Set<MediaAction> without) async {
     final pip = item.mediaType == MediaType.video && !item.isOnline && await _platform.isPipSupported();
+    final canSave = SaveToPhoneService.canOffer(item) &&
+        (await container.read(phoneMediaProvider).capabilities()).canSaveToPhone;
     if (!context.mounted) return;
     final actions = MediaContextMenu.actionsFor(
       item,
@@ -468,6 +517,7 @@ class _MediaMenu {
       downloadsSupported: PlatformInfo.supportsDownloads,
       shareSupported: _platform.shareSupported,
       inPlaylist: playlistEntry != null,
+      saveToPhoneSupported: canSave,
     ).where((a) => !without.contains(a)).toList();
 
     final MediaAction? chosen;
@@ -598,9 +648,28 @@ class _MediaMenu {
             ? await downloadQualityFor(container.read(appDatabaseProvider), item.id)
             : null;
         if (context.mounted) await _MediaDetails.show(_appContext, item, quality: quality);
+      case MediaAction.saveToPhone:
+        await _saveToPhone();
       case MediaAction.delete:
         await _delete();
     }
+  }
+
+  Future<void> _saveToPhone() async {
+    if (!_fileIsThere()) return;
+    final isVideo = item.mediaType == MediaType.video;
+    final result = await container.read(saveToPhoneServiceProvider).save(item.id);
+    _snack(switch (result) {
+      SaveToPhoneResult.saved => PlatformInfo.isIOS
+          ? 'Added to Photos'
+          : (isVideo ? 'Saved to Movies/MediaHub' : 'Saved to Music/MediaHub'),
+      SaveToPhoneResult.alreadyThere =>
+        PlatformInfo.isIOS ? 'Already in the Files app, under MediaHub' : 'Already in your phone storage',
+      SaveToPhoneResult.notPossible => "This file can't be saved to the phone.",
+      SaveToPhoneResult.failed => PlatformInfo.isIOS
+          ? "Couldn't save it. Allow MediaHub to add to Photos in Settings."
+          : "Couldn't save it to the phone. Is the storage full?",
+    });
   }
 
   /// A download whose file has gone cannot play; device items are checked by
@@ -744,7 +813,11 @@ class _MediaMenu {
     }
     if (!context.mounted) return;
     final shown = MediaContextMenu.shownTitle(item);
-    final confirmed = await showDialog<bool>(
+    final deleter = container.read(mediaFileDeleterProvider);
+    // Android 11+ asks itself for the phone's own files: one question, not two.
+    final systemAsks = await deleter.systemAsks(item);
+    if (!context.mounted) return;
+    final confirmed = systemAsks ? true : await showDialog<bool>(
       context: _appContext,
       builder: (ctx) {
         final palette = ctx.palette;
@@ -769,7 +842,10 @@ class _MediaMenu {
     if (confirmed != true) return;
 
     try {
-      await container.read(mediaFileDeleterProvider).delete(item);
+      await deleter.delete(item);
+    } on DeleteDeclined {
+      _snack('Not deleted.');
+      return;
     } catch (_) {
       _snack('Could not delete "$shown".');
       return;

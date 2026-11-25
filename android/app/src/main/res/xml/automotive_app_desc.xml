@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+     MediaHub is proprietary software. See LICENSE in the project root. -->
+<!-- Android Auto: MediaHub is a media app (browse and play through its MediaBrowserService). -->
+<automotiveApp>
+    <uses name="media" />
+</automotiveApp>

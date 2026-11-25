@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Niranjan Katwal. All rights reserved.
 // MediaHub is proprietary software. See LICENSE in the project root.
+import 'download_finished_hook.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -1254,6 +1255,7 @@ class DownloadEngine {
       rethrow;
     }
 
+    DownloadFinishedHook.notify(mediaId);
     DiagnosticsService.instance.logEvent('download_completed', {
       'host': task.host,
       'mime': detectedMime,
