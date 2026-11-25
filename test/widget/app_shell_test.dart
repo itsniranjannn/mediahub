@@ -185,10 +185,21 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 800));
 
+    // The top level lists the groups; each opens its own page.
+    expect(find.text('Playback & audio'), findsOneWidget);
+    expect(find.text('Online'), findsWidgets);
+    expect(find.text('Open-source licences'), findsOneWidget); // the footer link
+    await tester.tap(find.text('Playback & audio'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
     expect(find.text('Audio & headset'), findsOneWidget);
-    expect(find.text('Online'), findsWidgets); // Settings → Online card
+    await tester.pageBack();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.tap(find.text('About'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
     expect(find.text('Diagnostics log'), findsOneWidget);
-    expect(find.text('Open-source licenses'), findsOneWidget);
 
     // unmount so database streams are cancelled before the test ends
     await tester.pumpWidget(const SizedBox());

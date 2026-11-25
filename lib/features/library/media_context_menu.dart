@@ -22,6 +22,7 @@ import '../../data/repositories/library_repository_impl.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/playlist_and_groups.dart';
 import '../../domain/repositories/library_repository.dart';
+import '../../shared/widgets/choice_dialogs.dart';
 import '../../shared/widgets/favorite_feedback_button.dart' show isFavoriteProvider;
 import '../downloads/download_link_inbox.dart';
 import '../downloads/download_providers.dart';
@@ -817,29 +818,14 @@ class _MediaMenu {
     // Android 11+ asks itself for the phone's own files: one question, not two.
     final systemAsks = await deleter.systemAsks(item);
     if (!context.mounted) return;
-    final confirmed = systemAsks ? true : await showDialog<bool>(
-      context: _appContext,
-      builder: (ctx) {
-        final palette = ctx.palette;
-        return AlertDialog(
-          icon: Icon(Icons.delete_outline_rounded, color: palette.error),
-          title: const Text('Delete from phone?'),
-          content: Text(
-            '"${breakableTitle(shown)}" will be removed from this phone. This can\'t be undone.',
-            semanticsLabel: '"$shown" will be removed from this phone. This can\'t be undone.',
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-            TextButton(
-              style: TextButton.styleFrom(foregroundColor: palette.error),
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Delete'),
-            ),
-          ],
+    final confirmed = systemAsks ||
+        await confirmDestructive(
+          _appContext,
+          title: 'Delete from phone?',
+          message: '"${breakableTitle(shown)}" will be removed from this phone. This can\'t be undone.',
+          messageSemantics: '"$shown" will be removed from this phone. This can\'t be undone.',
         );
-      },
-    );
-    if (confirmed != true) return;
+    if (!confirmed) return;
 
     try {
       await deleter.delete(item);

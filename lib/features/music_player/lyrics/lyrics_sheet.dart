@@ -40,22 +40,43 @@ class LyricsSheet extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.xxl24, AppSpacing.lg16, AppSpacing.xxl24, AppSpacing.sm8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, 0, AppSpacing.sm8, AppSpacing.md12),
+          child: Row(
             children: [
-              Semantics(header: true, child: Text('Lyrics', style: type.sectionTitle)),
-              if (item != null)
-                Text(
-                  [item.title, if (item.artist != null) item.artist!].join(' · '),
-                  style: type.metadata.copyWith(color: palette.textSecondary),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: palette.primaryContainer,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusArtSmall),
                 ),
+                child: Icon(Icons.lyrics_rounded, size: 20, color: palette.primary),
+              ),
+              const SizedBox(width: AppSpacing.md12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Semantics(header: true, child: Text('Lyrics', style: type.sectionTitle)),
+                    if (item != null)
+                      Text(
+                        [item.title, if (item.artist != null) item.artist!].join(' · '),
+                        style: type.metadata.copyWith(color: palette.textSecondary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Close',
+                icon: const Icon(Icons.close_rounded),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
             ],
           ),
         ),
-        const Divider(height: 1),
+        Divider(height: 1, color: palette.divider),
         Expanded(child: item == null ? const _NoLyrics(online: false) : _LyricsBody(item: item)),
       ],
     );
@@ -154,6 +175,9 @@ class _SyncedLyricsViewState extends ConsumerState<SyncedLyricsView> {
       LyricsSource.embedded => 'From the song file',
       LyricsSource.online => 'From LRCLIB',
     };
+    // Landscape and tablets: lines stay in a readable 640 dp column.
+    final width = MediaQuery.sizeOf(context).width;
+    final horizontal = width > 688 ? (width - 640) / 2 : AppSpacing.xxl24;
     return NotificationListener<UserScrollNotification>(
       onNotification: (_) {
         _userScrolledAt = DateTime.now();
@@ -162,14 +186,21 @@ class _SyncedLyricsViewState extends ConsumerState<SyncedLyricsView> {
       child: ListView.builder(
         key: const ValueKey('lyrics_list'),
         controller: _scroll,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl24, vertical: AppSpacing.lg16),
+        padding: EdgeInsets.symmetric(horizontal: horizontal, vertical: AppSpacing.lg16),
         itemCount: lyrics.lines.length + 1,
         itemExtent: synced ? SyncedLyricsView.lineExtent : null,
         itemBuilder: (context, i) {
           if (i == lyrics.lines.length) {
             return Align(
               alignment: Alignment.centerLeft,
-              child: Text(source, style: type.metadata.copyWith(color: palette.textMuted)),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm8, vertical: 2),
+                decoration: BoxDecoration(
+                  border: Border.all(color: palette.divider),
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusBadge),
+                ),
+                child: Text(source, style: type.metadata.copyWith(color: palette.textMuted)),
+              ),
             );
           }
           final line = lyrics.lines[i];
@@ -179,7 +210,7 @@ class _SyncedLyricsViewState extends ConsumerState<SyncedLyricsView> {
             maxLines: synced ? 2 : null,
             overflow: synced ? TextOverflow.ellipsis : null,
             style: type.body.copyWith(
-              fontSize: 18,
+              fontSize: active ? 20 : 18,
               height: 1.3,
               fontWeight: active ? FontWeight.w600 : FontWeight.w400,
               color: !synced

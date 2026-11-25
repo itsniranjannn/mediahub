@@ -39,6 +39,12 @@ Visual specimen (still showing the Bijuli look) with both themes side by side (o
 - Home bento: `VoltTile` shine (diagonal, 14% onVoltFill, 1.4 s every 6 s, none with reduced motion), press 0.97,
   `PressGlyph` (-0.03 turn, 1.12 scale) on press; small tiles glow in their icon colour on ink only.
 - Settings rows: 32 dp icon slot, 13/18 subtitles, 48 dp minimum.
+- Settings (2026-11-25): the top level is two cards of small group rows (Appearance, Playback & audio, Downloads,
+  Online | Privacy & security, Backup, About), each opening its own page; then the footer strip: launch-screen logo
+  (`assets/brand/mediahub_mark.png`) and the Fraunces wordmark ("Hub" in primary) on one side, the author from
+  `CoreWatermark.fullName` in spaced DM Mono capitals on the other, and a small "Open-source licences" link.
+  Home's byline uses the same pair. Pickers use `showChoiceDialog`, destructive confirms `confirmDestructive`
+  (`lib/shared/widgets/choice_dialogs.dart`).
 - Quality sheet: segmented Video | Audio at the top.
 - Notification placeholder: #4A0A1A to #2A0F26 field, #CC324C to #E89A2C note.
 

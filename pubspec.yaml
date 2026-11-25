@@ -82,6 +82,9 @@ flutter:
   assets:
     # JavaScript injected into the Online (YouTube) tab's WebView.
     - assets/web/
+    # The launch-screen mark (assets/icon/app_icon.png at 144 px) for the
+    # Settings footer.
+    - assets/brand/
 
   # Bijuli type (docs/DESIGN.md sections 5 and 6; files and licences in
   # assets/fonts/, see tools/fonts/README.md). All static, SIL OFL 1.1.

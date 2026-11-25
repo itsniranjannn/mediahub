@@ -26,6 +26,7 @@ import '../../domain/models/download_state.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/repositories/platform_resolver.dart';
 import '../../data/repositories/library_repository_impl.dart';
+import '../../shared/widgets/choice_dialogs.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../library/media_context_menu.dart' show isPathInside;
 import '../music_player/playback_notifier.dart';
@@ -908,31 +909,14 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     final runner = task.engine == 'extractor' ? ref.read(extractorDownloadRunnerProvider) : null;
     final phoneMedia = ref.read(phoneMediaProvider);
     final messenger = ScaffoldMessenger.maybeOf(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        icon: Icon(Icons.delete_outline_rounded, color: ctx.palette.error),
-        title: const Text('Delete download?'),
-        content: Text(
-          'Delete "${breakableTitle(task.fileName)}"? Your other files are safe.',
-          semanticsLabel: 'Delete "${task.fileName}"? Your other files are safe.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          // A destructive confirm is a text button in error (DESIGN.md 7.10).
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: ctx.palette.error),
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final confirmed = await confirmDestructive(
+      context,
+      title: 'Delete download?',
+      message: 'Delete "${breakableTitle(task.fileName)}"? Your other files are safe.',
+      messageSemantics: 'Delete "${task.fileName}"? Your other files are safe.',
     );
 
-    if (confirmed == true) {
+    if (confirmed) {
       // Moved to the phone ("Save to phone"): the phone's file is the only
       // copy, deleted through MediaStore (Android 11+ asks once more).
       final onPhone = task.finalPath;

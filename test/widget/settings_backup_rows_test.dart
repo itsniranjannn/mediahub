@@ -78,7 +78,7 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(home: SettingsScreen()),
+      child: const MaterialApp(home: SettingsSectionPage.combined([SettingsSection.backup, SettingsSection.downloads])),
     ));
     await tester.pumpAndSettle();
     return (container, picker, db);
