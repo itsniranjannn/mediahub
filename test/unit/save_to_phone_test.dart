@@ -45,6 +45,14 @@ class FakePhoneMedia implements PhoneMedia {
     return deleteAnswer;
   }
 
+  final List<String> discarded = [];
+
+  @override
+  Future<bool> discardSavedCopy(String uri) async {
+    discarded.add(uri);
+    return true;
+  }
+
   @override
   Future<({String? lrc, String? path})> lyricsSidecar(String uri) async => (path: null, lrc: null);
 
@@ -148,6 +156,18 @@ void main() {
     // Twice: already there, nothing copied again.
     expect(await service.save('dl_1'), SaveToPhoneResult.alreadyThere);
     expect(phone.saved, hasLength(1));
+  });
+
+  test('a database failure after the copy rolls the phone copy back and fails', () async {
+    await db.customStatement(
+      "CREATE TRIGGER no_update BEFORE UPDATE ON downloads_table BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+    expect(await service.save('dl_1'), SaveToPhoneResult.failed);
+    expect(phone.saved, hasLength(1));
+    expect(phone.discarded, ['content://media/external/audio/media/42']);
+    expect(song.existsSync(), isTrue, reason: "the app's own copy stays");
+    final row = await (db.select(db.mediaItemsTable)..where((t) => t.id.equals('dl_1'))).getSingle();
+    expect(row.uri, song.path, reason: 'the transaction rolled back the library row too');
   });
 
   test('a failed copy changes nothing', () async {

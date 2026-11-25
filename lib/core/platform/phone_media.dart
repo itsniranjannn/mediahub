@@ -54,6 +54,11 @@ abstract class PhoneMedia {
   /// false when the user said no or it could not.
   Future<bool> deleteFromPhone(List<String> uris);
 
+  /// Removes the copy [saveToPhone] just made ([uri]: what it returned),
+  /// without asking: MediaHub owns that MediaStore row. Used to roll back a
+  /// save the database could not record. True when it is gone.
+  Future<bool> discardSavedCopy(String uri);
+
   /// For a phone song: its readable file path (for the embedded lyrics) and
   /// the text of a `.lrc` file next to it. Null values when not readable.
   Future<({String? path, String? lrc})> lyricsSidecar(String uri);
@@ -105,6 +110,16 @@ class MethodChannelPhoneMedia implements PhoneMedia {
     if (uris.isEmpty) return true;
     final ok = await _channel.invokeMethod<bool>('deleteFromPhone', {'uris': uris});
     return ok ?? false;
+  }
+
+  @override
+  Future<bool> discardSavedCopy(String uri) async {
+    if (!uri.startsWith('content://')) return false;
+    try {
+      return await _channel.invokeMethod<bool>('discardSavedCopy', {'uri': uri}) ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   @override

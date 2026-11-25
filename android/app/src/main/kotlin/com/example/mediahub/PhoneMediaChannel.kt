@@ -110,6 +110,23 @@ class PhoneMediaChannel(context: Context, messenger: BinaryMessenger) : MethodCh
                     }
                 }
             }
+            // Rollback of a save whose database update failed: the row MediaHub itself just
+            // inserted. Its owner may delete it without the consent dialog.
+            "discardSavedCopy" -> {
+                val uri = call.argument<String>("uri")?.let { mediaUri(it) }
+                if (uri == null) {
+                    result.error("BAD_ARGS", "Only the phone's media library", null)
+                    return
+                }
+                io.execute {
+                    val ok = try {
+                        appContext.contentResolver.delete(uri, null, null) > 0
+                    } catch (e: Exception) {
+                        false
+                    }
+                    main.post { result.success(ok) }
+                }
+            }
             "deleteFromPhone" -> {
                 val raw = call.argument<List<String>>("uris") ?: emptyList()
                 val uris = raw.mapNotNull { mediaUri(it) }

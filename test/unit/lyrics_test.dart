@@ -243,6 +243,31 @@ void main() {
       expect(none.calls, 1);
     });
 
+    test('the online cache keeps only the newest files', () async {
+      cache.createSync(recursive: true);
+      for (var i = 0; i < 6; i++) {
+        File(p.join(cache.path, 'f$i.lrc'))
+          ..writeAsStringSync('x')
+          ..setLastModifiedSync(DateTime(2026, 1, 1 + i));
+      }
+      File(p.join(cache.path, 'keep.txt')).writeAsStringSync('not lyrics');
+      final r = repo(_FakeLrclib(null));
+      expect(await r.pruneCache(keep: 4), 2);
+      final left = cache.listSync().map((e) => p.basename(e.path)).toSet();
+      expect(left, {'f2.lrc', 'f3.lrc', 'f4.lrc', 'f5.lrc', 'keep.txt'});
+      expect(LyricsRepository.maxCachedLyrics, 500);
+    });
+
+    test('forget deletes the cached online lyrics of a song', () async {
+      final song = File(p.join(dir.path, 'plain.mp3'))..writeAsBytesSync([1, 2, 3]);
+      final r = repo(_FakeLrclib('[00:02.00]online'));
+      await r.find(_item(song.path));
+      expect(cache.listSync().whereType<File>(), hasLength(1));
+      await r.forget(_item(song.path));
+      expect(cache.listSync().whereType<File>(), isEmpty);
+      await r.forget(_item(song.path)); // nothing there: no throw
+    });
+
     test('Online items are never looked up', () async {
       final lrclib = _FakeLrclib('x');
       final item = MediaItem(

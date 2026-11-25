@@ -105,6 +105,23 @@ class ExtractorChannel(
         private const val LIBRARY_YTDLP_VERSION = "2025.11.12"
         private val YTDLP_VERSION_REGEX = Regex("^\\d{4}\\.\\d{1,2}\\.\\d{1,2}(\\.\\d+)?$")
 
+        /** yt-dlp's latest stable release (GitHub API) and where its files may come from. */
+        private const val YTDLP_RELEASE_API = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+        private const val YTDLP_DOWNLOAD_PREFIX = "https://github.com/yt-dlp/yt-dlp/releases/download/"
+        private val SUMS_LINE = Regex("^([0-9a-fA-F]{64})\\s+\\*?(\\S+)$")
+
+        /**
+         * The SHA-256 for [fileName] in a `sha256sum` style list ("<64 hex>  <name>", an optional
+         * "*" before the name for binary mode), or null unless it is listed exactly once.
+         */
+        fun expectedSha256(sums: String, fileName: String): String? {
+            val hits = sums.lineSequence().mapNotNull { line ->
+                val m = SUMS_LINE.find(line.trim()) ?: return@mapNotNull null
+                if (m.groupValues[2] == fileName) m.groupValues[1].lowercase() else null
+            }.toList()
+            return hits.singleOrNull()
+        }
+
         /** yt-dlp versions ("2026.10.26", "2026.10.26.1") compared part by part. */
         fun compareYtDlpVersions(a: String, b: String): Int {
             val pa = a.split('.').map { it.toIntOrNull() ?: 0 }
@@ -362,12 +379,11 @@ class ExtractorChannel(
             try {
                 ensureInitialized()
                 installShippedYtDlpLocked()
-                val status = YoutubeDL.getInstance().updateYoutubeDL(
-                    context.applicationContext,
-                    YoutubeDL.UpdateChannel._STABLE
-                )
+                // Not the library's updateYoutubeDL: it installs whatever it downloaded
+                // without any check. verifiedYtDlpUpdateLocked checks the file against the
+                // release's own SHA2-256SUMS first (docs/DECISIONS.md #20).
+                val statusName = verifiedYtDlpUpdateLocked()
                 bundledVersion = null
-                val statusName = status?.name ?: "DONE"
                 mainHandler.post { result.success(statusName) }
             } catch (e: Exception) {
                 mainHandler.post {
@@ -999,6 +1015,113 @@ class ExtractorChannel(
         } finally {
             writeLock.unlock()
         }
+    }
+
+    /**
+     * Updates yt-dlp to the latest stable GitHub release, but only after the downloaded
+     * `yt-dlp` file matches the SHA-256 the same release publishes in `SHA2-256SUMS`.
+     * Returns "DONE" or "ALREADY_UP_TO_DATE" (the library's status names, which Dart knows);
+     * throws on any failure, a checksum mismatch included, and then nothing is installed
+     * (the current copy stays). Call with the engine's write lock held.
+     */
+    private fun verifiedYtDlpUpdateLocked(): String {
+        val app = context.applicationContext
+        val release = JSONObject(httpsText(YTDLP_RELEASE_API, 512 * 1024))
+        val tag = release.optString("tag_name")
+        if (!YTDLP_VERSION_REGEX.matches(tag)) throw IllegalStateException("Unexpected yt-dlp release")
+        val prefs = app.getSharedPreferences("youtubedl-android", Context.MODE_PRIVATE)
+        val current = prefs.getString("dlpVersion", null)?.takeIf { YTDLP_VERSION_REGEX.matches(it) }
+            ?: LIBRARY_YTDLP_VERSION
+        if (compareYtDlpVersions(tag, current) <= 0) return "ALREADY_UP_TO_DATE"
+        var binUrl: String? = null
+        var sumsUrl: String? = null
+        val assets = release.optJSONArray("assets")
+        for (i in 0 until (assets?.length() ?: 0)) {
+            val asset = assets!!.getJSONObject(i)
+            val url = asset.optString("browser_download_url")
+            if (!url.startsWith(YTDLP_DOWNLOAD_PREFIX)) continue
+            when (asset.optString("name")) {
+                "yt-dlp" -> binUrl = url
+                "SHA2-256SUMS" -> sumsUrl = url
+            }
+        }
+        if (binUrl == null || sumsUrl == null) throw IllegalStateException("The release has no checksum list")
+        val expected = expectedSha256(httpsText(sumsUrl, 64 * 1024), "yt-dlp")
+            ?: throw IllegalStateException("The checksum list has no entry for yt-dlp")
+        val dir = File(File(app.noBackupFilesDir, "youtubedl-android"), "yt-dlp")
+        dir.mkdirs()
+        val tmp = File(dir, "yt-dlp.update.tmp")
+        try {
+            val actual = httpsDownload(binUrl, tmp, 64L * 1024 * 1024)
+            if (!actual.equals(expected, ignoreCase = true)) {
+                throw SecurityException("The downloaded yt-dlp does not match its published checksum")
+            }
+            if (!tmp.renameTo(File(dir, "yt-dlp"))) throw IllegalStateException("Could not install the update")
+        } finally {
+            if (tmp.exists()) tmp.delete()
+        }
+        prefs.edit()
+            .putString("dlpVersion", tag)
+            .putString("dlpVersionName", "yt-dlp $tag (verified SHA-256)")
+            .apply()
+        return "DONE"
+    }
+
+    private fun httpsConnection(url: String): javax.net.ssl.HttpsURLConnection {
+        val conn = java.net.URL(url).openConnection() as? javax.net.ssl.HttpsURLConnection
+            ?: throw SecurityException("Not HTTPS")
+        conn.connectTimeout = 20_000
+        conn.readTimeout = 30_000
+        conn.instanceFollowRedirects = true
+        conn.setRequestProperty("User-Agent", "MediaHub")
+        if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP ${conn.responseCode}")
+        // A redirect may only end on HTTPS.
+        if (conn.url.protocol != "https") throw SecurityException("Redirected off HTTPS")
+        return conn
+    }
+
+    private fun httpsText(url: String, maxBytes: Int): String {
+        val conn = httpsConnection(url)
+        try {
+            conn.inputStream.use { input ->
+                val out = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(8192)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    if (out.size() > maxBytes) throw IllegalStateException("Answer too large")
+                }
+                return out.toString("UTF-8")
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Streams [url] into [target] and returns its SHA-256 (lower-case hex). */
+    private fun httpsDownload(url: String, target: File, maxBytes: Long): String {
+        val conn = httpsConnection(url)
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        try {
+            conn.inputStream.use { input ->
+                target.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > maxBytes) throw IllegalStateException("Download too large")
+                        digest.update(buf, 0, n)
+                        out.write(buf, 0, n)
+                    }
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     /** With the engine write lock held. True when the shipped copy was put in place. */

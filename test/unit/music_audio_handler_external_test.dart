@@ -519,6 +519,25 @@ void main() {
         await h.dispose();
       });
 
+      test('the page taking over releases the stand-in for good', () async {
+        final h = MusicAudioHandler(
+          player: player,
+          loadExternalHeld: () => true,
+          loadExternalResume: () => ExternalResumeItem(id: 'online:x', pageUrl: _watch, title: 'T', artist: 'C').encode(),
+        );
+        await h.play();
+        expect(h.restoredPlayPending, isTrue);
+        h.setExternalSource(yt, page());
+        expect(h.restoredExternal, isNull);
+        expect(h.restoredPlayPending, isFalse);
+        expect(h.takeRestoredExternal(), isNull, reason: 'nothing left to hand over');
+        // The page clearing its source later does not bring the stand-in back.
+        h.clearExternalSource(yt);
+        expect(h.restoredExternal, isNull);
+        expect(h.restoredAwaitingPage, isFalse);
+        await h.dispose();
+      });
+
       test('pause on the restored item takes the waiting play back', () async {
         final h = MusicAudioHandler(
           player: player,

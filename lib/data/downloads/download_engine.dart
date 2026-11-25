@@ -89,6 +89,9 @@ class DownloadEngine {
   /// only ever considers names of exactly this shape.
   static final RegExp _partialFileName = RegExp(r'^(\d+)\.part$');
 
+  /// A download's cover as ThumbnailFetcher saves it: `<id>.thumb`.
+  static final RegExp _thumbFileName = RegExp(r'^(\d+)\.thumb$');
+
   static const int maxDownloadSizeBytes = 2 * 1024 * 1024 * 1024; // 2 GB
 
   /// Free space a download needs on top of its own size before it starts.
@@ -236,10 +239,32 @@ class DownloadEngine {
             .map((path) => p.basename(path).toLowerCase())
             .toSet();
 
+        // Covers still in use: any download row's or library row's picture.
+        final artRows = await (_db.selectOnly(_db.mediaItemsTable)..addColumns([_db.mediaItemsTable.artworkPath]))
+            .map((r) => r.read(_db.mediaItemsTable.artworkPath))
+            .get();
+        final usedThumbs = {
+          for (final d in allDownloads)
+            if (d.thumbnailPath != null) p.basename(d.thumbnailPath!).toLowerCase(),
+          for (final a in artRows)
+            if (a != null && !a.contains('://')) p.basename(a).toLowerCase(),
+        };
+        final rowIds = allDownloads.map((d) => d.id).toSet();
+
         final entities = downloadDir.listSync();
         for (final entity in entities) {
           if (entity is! File) continue;
           final name = p.basename(entity.path);
+          // Orphan cover: no download row has its id and nothing shows it.
+          final thumb = _thumbFileName.firstMatch(name);
+          if (thumb != null) {
+            if (rowIds.contains(thumb.group(1)) || usedThumbs.contains(name.toLowerCase())) continue;
+            if (finishedNames.contains(name.toLowerCase())) continue;
+            try {
+              entity.deleteSync();
+            } catch (_) {}
+            continue;
+          }
           final match = _partialFileName.firstMatch(name);
           if (match == null) continue;
           if (validPartIds.contains(match.group(1))) continue;

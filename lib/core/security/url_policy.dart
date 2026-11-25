@@ -149,6 +149,18 @@ class UrlPolicy {
       }
     }
 
+    // Loopback names and the shorthand IPv4 spellings getaddrinfo accepts
+    // ("2130706433", "0x7f.1", "127.1", "0177.0.0.1"): InternetAddress.tryParse
+    // takes none of them, but the resolver would turn each into an address.
+    // The resolved address is checked again (SafeHttpClient), this stops it
+    // before any lookup.
+    if (ip == null && (isLoopbackName(host) || looksLikeNumericIpv4(host))) {
+      return UrlPolicyResult.failure(
+        UrlPolicyErrorCode.blockedIpLiteral,
+        'Direct connections to private or reserved IP addresses are blocked.',
+      );
+    }
+
     // Normalise URI: lowercase scheme and host, default 443 port stripped
     final normalized = Uri(
       scheme: 'https',
@@ -160,5 +172,25 @@ class UrlPolicy {
     );
 
     return UrlPolicyResult.success(normalized);
+  }
+
+  /// `localhost` and any name under `.localhost` (RFC 6761: always loopback).
+  static bool isLoopbackName(String host) {
+    var h = host.toLowerCase();
+    if (h.endsWith('.')) h = h.substring(0, h.length - 1);
+    return h == 'localhost' || h.endsWith('.localhost');
+  }
+
+  static final RegExp _numericLabel = RegExp(r'^(0x[0-9a-f]*|[0-9]+)$', caseSensitive: false);
+
+  /// A host made only of decimal, octal or hex numbers (1 to 4 parts): an IPv4
+  /// address in a shorthand spelling. No real domain looks like this (no
+  /// top-level domain is numeric).
+  static bool looksLikeNumericIpv4(String host) {
+    var h = host;
+    if (h.endsWith('.')) h = h.substring(0, h.length - 1);
+    final parts = h.split('.');
+    if (parts.isEmpty || parts.length > 4) return false;
+    return parts.every((part) => part.isNotEmpty && _numericLabel.hasMatch(part));
   }
 }

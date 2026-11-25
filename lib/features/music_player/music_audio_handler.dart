@@ -216,8 +216,11 @@ class _RestoredExternal implements ExternalPlaybackDelegate {
   Future<void> externalSkipToNext() async => _handler._restoredWants(play: true);
   @override
   Future<void> externalSkipToPrevious() async => _handler._restoredWants(play: true);
+  /// Local music or the real page took the session: nothing to hand back
+  /// (the queue that starts playing is the player's own); the stand-in is
+  /// forgotten so nothing refers to it any more.
   @override
-  void onExternalSourceReleased() {}
+  void onExternalSourceReleased() => _handler._restoredReleased(this);
 }
 
 /// Receives the notification / lock screen / headset commands while it is the
@@ -309,6 +312,9 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   final Duration sleepFade;
 
   final NowPlayingArt _art;
+
+  /// Drops [id]'s cached media-session cover (the song was deleted).
+  Future<void> forgetArt(String id) => _art.forget(id);
   final DateTime Function() _clock;
 
   final Set<String> _durationReported = {};
@@ -665,7 +671,11 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
   /// Loads the whole [_playOrderQueue] into the player at [index].
   Future<void> _loadSource({required int index, Duration position = Duration.zero}) async {
     final audioSources = _playOrderQueue.map(_sourceFor).toList();
-    // TODO: Replace ConcatenatingAudioSource with direct AudioPlayer methods when available in just_audio
+    // just_audio 0.10 has AudioPlayer.setAudioSources / insertAudioSources,
+    // but the queue edits below (insert, add, remove, move, the seamless
+    // shuffle) work on this playlist object, and so does the test player.
+    // ConcatenatingAudioSource is deprecated, not removed, in 0.10.x; move all
+    // of them together when a just_audio release drops it.
     // ignore: deprecated_member_use
     _playlistSource = ConcatenatingAudioSource(children: audioSources);
     await _player.setAudioSource(_playlistSource!, initialIndex: index, initialPosition: position);
@@ -797,6 +807,13 @@ class MusicAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler 
     _restoredPlayPending = play;
     _applyExternal(r.item.toSnapshot(artistLine: play ? tapToResumeLine : null));
     if (play && !_restoredRequests.isClosed) _restoredRequests.add(null);
+  }
+
+  void _restoredReleased(_RestoredExternal r) {
+    if (!identical(_restored, r)) return;
+    _restored = null;
+    _restoredPlayPending = false;
+    _restoredTaken = false;
   }
 
   void _restoreSavedExternal() {

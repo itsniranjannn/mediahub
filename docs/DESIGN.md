@@ -27,8 +27,8 @@ components (Fraunces, Poppins, DM Mono; crimson glows on ink, soft shadows on pa
 - Pages: Home, Videos and Downloads redesigned (sections 7.18-7.20). The checker that produced the values is
   re-implemented from `palette_contrast_test` / `card_contrast_test`: 490 pairs, 0 below their floor.
 
-Visual specimen (still showing the Bijuli look) with both themes side by side (open in a browser; fonts load from GitHub):
-`docs/design-specimen.html`.
+The old HTML specimen (`docs/design-specimen.html`, still the Bijuli look) was removed on 2026-11-25; the
+current screens in both themes come from `tools/design_previews/preview_test.dart`.
 
 ---
 

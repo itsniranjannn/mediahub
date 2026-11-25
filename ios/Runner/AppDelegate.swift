@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
   private var backupFiles: BackupFilesChannel?
   private var network: NetworkChannel?
   private var phoneMedia: PhoneMediaChannel?
+  private var privacy: PrivacyScreenChannel?
 
   override func application(
     _ application: UIApplication,
@@ -35,6 +36,8 @@ import UniformTypeIdentifiers
       backupFiles?.cleanup()
       network?.cleanup()
       phoneMedia?.cleanup()
+      privacy?.cleanup()
+      privacy = PrivacyScreenChannel(messenger: messenger)
       backupFiles = BackupFilesChannel(messenger: messenger)
       network = NetworkChannel(messenger: messenger)
       phoneMedia = PhoneMediaChannel(messenger: messenger)
@@ -338,5 +341,75 @@ final class PhoneMediaChannel {
         }
       }
     }
+  }
+}
+
+/// "mediahub/privacy_screen": setSecure {on}. Dart's AppLockNotifier turns it on while App lock
+/// is on. When a scene resigns active (sceneWillResignActive: the app switcher, a call, Home)
+/// its window gets a plain cover, so the app switcher's snapshot never shows the app; the
+/// cover goes when the scene is active again. The iPhone side of DeviceControlsChannel.kt's
+/// setSecure (FLAG_SECURE). Uses the scene notifications, so SceneDelegate stays Flutter's.
+final class PrivacyScreenChannel {
+  private let channel: FlutterMethodChannel
+  private var secure = false
+  private var covers: [ObjectIdentifier: UIView] = [:]
+  private var observers: [NSObjectProtocol] = []
+
+  init(messenger: FlutterBinaryMessenger) {
+    channel = FlutterMethodChannel(name: "mediahub/privacy_screen", binaryMessenger: messenger)
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "setSecure" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let args = call.arguments as? [String: Any]
+      self?.secure = (args?["on"] as? Bool) ?? false
+      result(true)
+    }
+    let center = NotificationCenter.default
+    observers.append(
+      center.addObserver(forName: UIScene.willDeactivateNotification, object: nil, queue: .main) {
+        [weak self] note in
+        guard let scene = note.object as? UIWindowScene else { return }
+        self?.cover(scene)
+      })
+    observers.append(
+      center.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main) {
+        [weak self] note in
+        guard let scene = note.object as? UIWindowScene else { return }
+        self?.uncover(scene)
+      })
+  }
+
+  private func cover(_ scene: UIWindowScene) {
+    let key = ObjectIdentifier(scene)
+    guard secure, covers[key] == nil,
+      let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first
+    else { return }
+    let view = UIView(frame: window.bounds)
+    view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    view.backgroundColor = .systemBackground
+    let lock = UIImageView(image: UIImage(systemName: "lock.fill"))
+    lock.tintColor = .secondaryLabel
+    lock.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(lock)
+    NSLayoutConstraint.activate([
+      lock.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      lock.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+    ])
+    window.addSubview(view)
+    covers[key] = view
+  }
+
+  private func uncover(_ scene: UIWindowScene) {
+    covers.removeValue(forKey: ObjectIdentifier(scene))?.removeFromSuperview()
+  }
+
+  func cleanup() {
+    channel.setMethodCallHandler(nil)
+    observers.forEach { NotificationCenter.default.removeObserver($0) }
+    observers.removeAll()
+    covers.values.forEach { $0.removeFromSuperview() }
+    covers.removeAll()
   }
 }

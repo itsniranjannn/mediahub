@@ -27,6 +27,7 @@ import 'package:mediahub/features/downloads/download_providers.dart';
 import 'package:mediahub/features/library/detail_screens.dart';
 import 'package:mediahub/features/library/media_context_menu.dart';
 import 'package:mediahub/features/library/media_song_row.dart';
+import 'package:mediahub/features/music_player/lyrics/lyrics_repository.dart';
 import 'package:mediahub/features/music_player/playback_notifier.dart';
 import 'package:mediahub/shared/widgets/favorite_feedback_button.dart';
 import 'package:mocktail/mocktail.dart';
@@ -977,6 +978,39 @@ void main() {
             ..orderBy([(t) => d.OrderingTerm(expression: t.position)]))
           .get();
       expect([for (final e in entries) (e.mediaId, e.position)], [('other', 0), ('other', 1)]);
+    });
+
+    test('also removes the .lrc saved next to it and its cached online lyrics', () async {
+      final file = File('${dir.path}/song2.mp3')..writeAsStringSync('audio');
+      final lrc = File('${dir.path}/song2.lrc')..writeAsStringSync('[00:01.00]x');
+      final cacheDir = Directory('${dir.path}/lyrics_cache');
+      final lyrics = LyricsRepository(phoneMedia: FakePhoneMedia(), cacheDir: () async => cacheDir);
+      final item = MediaItem(
+        id: 'dl_3',
+        uri: file.path,
+        mediaType: MediaType.audio,
+        title: 'dl_3',
+        durationMs: 1000,
+        sizeBytes: 10,
+        dateAdded: DateTime(2026),
+        source: 'download',
+      );
+      await insertSong('dl_3', file.path);
+      // A cached online answer for this song.
+      cacheDir.createSync();
+      final c = ProviderContainer(overrides: [
+        appDatabaseProvider.overrideWithValue(db),
+        libraryRepositoryProvider.overrideWithValue(LibraryRepositoryImpl(db)),
+        downloadDirectoryProvider.overrideWith((ref) async => dir),
+        lyricsRepositoryProvider.overrideWithValue(lyrics),
+      ]);
+      addTearDown(c.dispose);
+      await lyrics.find(item); // nothing online (switch off): writes nothing
+      final cached = File('${cacheDir.path}/${lyricsCacheFileName(item)}')..writeAsStringSync('[00:01.00]y');
+      await c.read(mediaFileDeleterProvider).delete(item);
+      expect(file.existsSync(), isFalse);
+      expect(lrc.existsSync(), isFalse);
+      expect(cached.existsSync(), isFalse);
     });
 
     test('a download whose path is outside the downloads folder keeps that file', () async {

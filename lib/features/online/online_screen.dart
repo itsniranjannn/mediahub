@@ -27,13 +27,14 @@ import '../library/media_context_menu.dart';
 import 'online_background_handoff.dart';
 import 'online_bridge_protocol.dart';
 import 'online_media_session.dart';
+import 'online_fixture_html.dart';
 import 'online_open_request.dart';
 import 'online_settings.dart';
 import 'online_web_view.dart';
 import 'youtube_urls.dart';
 
 /// Debug / test builds only: `--dart-define=MEDIAHUB_ONLINE_FIXTURE=true`
-/// loads `assets/web/online_fixture.html` as if it were a YouTube watch page,
+/// loads [onlineFixtureHtml] (online_fixture_html.dart) as if it were a YouTube watch page,
 /// so the bridge, the notification and picture-in-picture can be tried on an
 /// emulator that cannot reach YouTube. Always off in release builds.
 const bool kOnlineFixture = bool.fromEnvironment('MEDIAHUB_ONLINE_FIXTURE') && !kReleaseMode;
@@ -57,7 +58,7 @@ class OnlineAssets {
 final onlineAssetsProvider = FutureProvider<OnlineAssets>((ref) async {
   final bridge = await rootBundle.loadString('assets/web/youtube_bridge.js');
   final fixture = kOnlineFixture
-      ? (await rootBundle.loadString('assets/web/online_fixture.html')).replaceAll('__FIXTURE_MEDIA__', kOnlineFixtureMedia)
+      ? onlineFixtureHtml.replaceAll('__FIXTURE_MEDIA__', kOnlineFixtureMedia)
       : null;
   return OnlineAssets(bridgeSource: bridge, fixtureHtml: fixture);
 });

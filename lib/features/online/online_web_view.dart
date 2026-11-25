@@ -235,6 +235,21 @@ Widget buildInAppOnlineWebView(BuildContext context, OnlineWebViewConfig config,
 /// anything but an https YouTube page.
 const Set<String> _bridgeOrigins = {'https://youtube.com', 'https://*.youtube.com'};
 
+/// Whether a bridge message may be acted on: the page showing is a YouTube
+/// page over HTTPS (the same origins as [_bridgeOrigins]).
+///
+/// flutter_inappwebview 6.1.5 (the newest release) has no
+/// `javaScriptHandlersOriginAllowList`, and on Android its JavaScript
+/// interface is reachable from every frame of the page, an ad's iframe
+/// included. The bridge script itself only runs in YouTube's main frame, and
+/// this check drops any message sent while the main frame is anything else.
+@visibleForTesting
+bool isOnlineBridgeOrigin(Uri? url) {
+  if (url == null || url.scheme != 'https') return false;
+  final host = url.host.toLowerCase();
+  return host == 'youtube.com' || host.endsWith('.youtube.com');
+}
+
 class _InAppOnlineWebView extends StatefulWidget {
   const _InAppOnlineWebView({required this.config, required this.events});
 
@@ -538,7 +553,8 @@ class _InAppOnlineWebViewState extends State<_InAppOnlineWebView> {
       onWebViewCreated: (controller) {
         controller.addJavaScriptHandler(
           handlerName: onlineBridgeHandlerName,
-          callback: (args) {
+          callback: (args) async {
+            if (!isOnlineBridgeOrigin(await controller.getUrl())) return null;
             events.onBridgeMessage(args);
             return null;
           },
@@ -718,7 +734,8 @@ Future<OnlineHeadlessPage> launchInAppHeadlessPage({
     onWebViewCreated: (controller) {
       controller.addJavaScriptHandler(
         handlerName: onlineBridgeHandlerName,
-        callback: (args) {
+        callback: (args) async {
+          if (!isOnlineBridgeOrigin(await controller.getUrl())) return null;
           onBridgeMessage(args);
           return null;
         },

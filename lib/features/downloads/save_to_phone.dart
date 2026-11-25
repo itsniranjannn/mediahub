@@ -150,14 +150,26 @@ class SaveToPhoneService {
     }
 
     final folder = isVideo ? 'Movies/MediaHub/' : 'Music/MediaHub/';
-    await _db.transaction(() async {
-      await (_db.update(_db.mediaItemsTable)..where((t) => t.id.equals(mediaId))).write(
-        MediaItemsTableCompanion(uri: Value(where), relativePath: Value(folder)),
-      );
-      await (_db.update(_db.downloadsTable)..where((t) => t.mediaId.equals(mediaId))).write(
-        DownloadsTableCompanion(finalPath: Value(where), updatedAt: Value(DateTime.now())),
-      );
-    });
+    try {
+      await _db.transaction(() async {
+        await (_db.update(_db.mediaItemsTable)..where((t) => t.id.equals(mediaId))).write(
+          MediaItemsTableCompanion(uri: Value(where), relativePath: Value(folder)),
+        );
+        await (_db.update(_db.downloadsTable)..where((t) => t.mediaId.equals(mediaId))).write(
+          DownloadsTableCompanion(finalPath: Value(where), updatedAt: Value(DateTime.now())),
+        );
+      });
+    } catch (e) {
+      // Nothing points at the phone's copy: remove it, or the library scan
+      // would show the song twice. The app's own file is untouched.
+      final removed = await _phone.discardSavedCopy(where).catchError((_) => false);
+      DiagnosticsService.instance.logEvent('save_to_phone_failed', {
+        'type': e.runtimeType.toString(),
+        'stage': 'database',
+        'rolled_back': removed,
+      });
+      return SaveToPhoneResult.failed;
+    }
     // The phone's copy is the file now: the app's own goes (a leftover is
     // swept as an orphan, never played twice: no row points at it).
     try {

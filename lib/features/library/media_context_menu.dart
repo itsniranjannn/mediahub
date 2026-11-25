@@ -28,6 +28,7 @@ import '../downloads/download_link_inbox.dart';
 import '../downloads/download_providers.dart';
 import '../downloads/download_quality.dart';
 import '../downloads/save_to_phone.dart';
+import '../music_player/lyrics/lyrics_repository.dart';
 import '../music_player/playback_notifier.dart';
 import '../online/youtube_urls.dart';
 import '../playlists/playlist_cover.dart';
@@ -196,7 +197,13 @@ class _DownloadedFileDeleter implements MediaFileDeleter {
         final media = File(item.uri);
         if (await media.exists()) await media.delete();
       }
-      for (final path in {item.artworkPath, for (final d in downloads) ...[d.finalPath, d.thumbnailPath]}) {
+      // A download's .lrc next to its file (saved with it) goes with it too.
+      final sidecar = _isLocalPath(item.uri) ? '${p.withoutExtension(item.uri)}.lrc' : null;
+      for (final path in {
+        item.artworkPath,
+        sidecar,
+        for (final d in downloads) ...[d.finalPath, d.thumbnailPath],
+      }) {
         if (!_isLocalPath(path) || path == item.uri || !isPathInside(dir, path!)) continue;
         try {
           final file = File(path);
@@ -211,6 +218,20 @@ class _DownloadedFileDeleter implements MediaFileDeleter {
     if (downloads.isNotEmpty) {
       await (db.delete(db.downloadsTable)..where((t) => t.mediaId.equals(item.id))).go();
     }
+    await _forgetCaches(item);
+  }
+
+  /// The song's media-session cover (NowPlayingArt) and its cached online
+  /// lyrics: only caches, so a failure never fails the delete.
+  Future<void> _forgetCaches(MediaItem item) async {
+    try {
+      await _ref.read(audioHandlerProvider).forgetArt(item.id);
+    } catch (_) {
+      // No audio handler (tests) or the file is busy: the cache prune gets it later.
+    }
+    try {
+      await _ref.read(lyricsRepositoryProvider).forget(item);
+    } catch (_) {}
   }
 }
 

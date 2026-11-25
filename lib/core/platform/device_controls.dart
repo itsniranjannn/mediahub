@@ -282,6 +282,29 @@ class DeviceControls {
     } catch (_) {}
   }
 
+  // --- App lock: out of screenshots and the Recents / app switcher picture ----
+
+  static const MethodChannel _privacyChannel = MethodChannel('mediahub/privacy_screen');
+
+  /// The last value [setSecure] sent (tests read it).
+  @visibleForTesting
+  static bool? debugSecure;
+
+  /// While [on]: Android sets FLAG_SECURE (API 33+ also turns off the Recents
+  /// screenshot), so screenshots and the Recents thumbnail are blank; the
+  /// iPhone covers the window whenever the app resigns active. Driven by
+  /// AppLockNotifier (on while App lock is on).
+  static Future<void> setSecure(bool on) async {
+    debugSecure = on;
+    try {
+      if (PlatformInfo.isAndroid) {
+        await _channel.invokeMethod<bool>('setSecure', {'on': on});
+      } else if (PlatformInfo.isIOS) {
+        await _privacyChannel.invokeMethod<bool>('setSecure', {'on': on});
+      }
+    } catch (_) {}
+  }
+
   // --- video volume boost ------------------------------------------------------
 
   /// Highest boost the video player offers (percent of full volume).

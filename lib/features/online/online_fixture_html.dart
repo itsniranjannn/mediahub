@@ -1,4 +1,12 @@
-<!doctype html>
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
+
+/// The offline stand-in for a YouTube watch page (`MEDIAHUB_ONLINE_FIXTURE`
+/// builds only; see `kOnlineFixture` in online_screen.dart). A Dart constant
+/// rather than an asset: release builds never read it, so the compiler drops
+/// it and the APK no longer carries it. `__FIXTURE_MEDIA__` is replaced with
+/// the local media server's address.
+const String onlineFixtureHtml = r'''<!doctype html>
 <!-- Offline stand-in for a YouTube watch page, used only when the app is built
      with --dart-define=MEDIAHUB_ONLINE_FIXTURE=true (debug builds). It is loaded
      with the base URL https://m.youtube.com/watch?v=fixture0001 so the media
@@ -128,3 +136,4 @@
 </script>
 </body>
 </html>
+''';

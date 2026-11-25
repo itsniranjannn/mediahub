@@ -16,7 +16,8 @@ enum AppLockScope {
   /// Every screen (the default).
   wholeApp,
 
-  /// Only the Downloads and Online tabs (children can still play music).
+  /// Only the Downloads and Online tabs (children can still play music,
+  /// downloaded songs and videos included, in Music and Videos).
   downloadsAndOnline;
 
   static AppLockScope parse(String? raw) =>
@@ -67,9 +68,15 @@ class AppLockSettings {
         _ => 'After $minutes minutes',
       };
 
+  /// What stays open with [scope] (Settings shows it under the row).
+  static String scopeHint(AppLockScope scope) => switch (scope) {
+        AppLockScope.wholeApp => 'Every screen. Music keeps playing.',
+        AppLockScope.downloadsAndOnline => 'Downloaded songs and videos still play in Music and Videos.',
+      };
+
   static String scopeLabel(AppLockScope scope) => switch (scope) {
         AppLockScope.wholeApp => 'The whole app',
-        AppLockScope.downloadsAndOnline => 'Downloads and Online only',
+        AppLockScope.downloadsAndOnline => 'Downloads and Online tabs only',
       };
 }
 
@@ -113,7 +120,12 @@ final deviceAuthenticatorProvider = Provider<DeviceAuthenticator>((ref) => Local
 
 @immutable
 class AppLockState {
-  const AppLockState({required this.settings, required this.locked, this.authenticating = false});
+  const AppLockState({
+    required this.settings,
+    required this.locked,
+    this.authenticating = false,
+    this.turnedOffNoScreenLock = 0,
+  });
 
   final AppLockSettings settings;
 
@@ -123,6 +135,10 @@ class AppLockState {
   /// The phone's prompt is open (lifecycle changes it causes are ignored).
   final bool authenticating;
 
+  /// Bumped each time [AppLockNotifier.unlock] turned the lock off because
+  /// the phone no longer has a screen lock (AppLockGate shows a snackbar).
+  final int turnedOffNoScreenLock;
+
   /// Whether the lock hides the tab at [branchIndex] (Downloads = 4,
   /// Online = 3) when the scope is the two tabs.
   bool coversTab(int branchIndex) =>
@@ -130,10 +146,12 @@ class AppLockState {
 
   bool get coversWholeApp => locked && settings.scope == AppLockScope.wholeApp;
 
-  AppLockState copyWith({AppLockSettings? settings, bool? locked, bool? authenticating}) => AppLockState(
+  AppLockState copyWith({AppLockSettings? settings, bool? locked, bool? authenticating, int? turnedOffNoScreenLock}) =>
+      AppLockState(
         settings: settings ?? this.settings,
         locked: locked ?? this.locked,
         authenticating: authenticating ?? this.authenticating,
+        turnedOffNoScreenLock: turnedOffNoScreenLock ?? this.turnedOffNoScreenLock,
       );
 }
 
@@ -145,23 +163,49 @@ class AppLockState {
 /// and keep working while it is locked (the notification shows only the
 /// song or video name the phone's lock screen shows anyway).
 class AppLockNotifier extends Notifier<AppLockState> with WidgetsBindingObserver {
-  /// Overridable clock (tests).
-  @visibleForTesting
-  static DateTime Function() clock = DateTime.now;
+  static final Stopwatch _monotonic = Stopwatch()..start();
 
-  DateTime? _backgroundSince;
+  /// Monotonic time (a [Stopwatch], never the wall clock: changing the phone's
+  /// date or time zone cannot skip the lock). Overridable in tests.
+  @visibleForTesting
+  static Duration Function() clock = _monotonicNow;
+
+  static Duration _monotonicNow() => _monotonic.elapsed;
+
+  @visibleForTesting
+  static void resetClock() => clock = _monotonicNow;
+
+  Duration? _backgroundSince;
 
   @override
   AppLockState build() {
     final settings = AppLockSettings.load(SettingsStore.instance);
     WidgetsBinding.instance.addObserver(this);
-    ref.onDispose(() => WidgetsBinding.instance.removeObserver(this));
+    DeviceControls.inPip.addListener(_onPipChanged);
+    ref.onDispose(() {
+      WidgetsBinding.instance.removeObserver(this);
+      DeviceControls.inPip.removeListener(_onPipChanged);
+    });
+    DeviceControls.setSecure(settings.enabled);
     return AppLockState(settings: settings, locked: settings.enabled);
   }
 
   @override
   // ignore: avoid_renaming_method_parameters
   void didChangeAppLifecycleState(AppLifecycleState lifecycle) => onLifecycle(lifecycle);
+
+  /// Picture-in-picture counts as away: Android only reports "inactive" for
+  /// it, so the timer starts when the window opens and the time is checked
+  /// when it is expanded or closed (the lock screen then covers the app).
+  void _onPipChanged() {
+    final s = state;
+    if (!s.settings.enabled || s.authenticating) return;
+    if (DeviceControls.inPip.value) {
+      _backgroundSince ??= clock();
+    } else {
+      _checkAway();
+    }
+  }
 
   @visibleForTesting
   void onLifecycle(AppLifecycleState lifecycle) {
@@ -171,31 +215,69 @@ class AppLockNotifier extends Notifier<AppLockState> with WidgetsBindingObserver
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
         _backgroundSince ??= clock();
-      case AppLifecycleState.resumed:
-        final since = _backgroundSince;
-        _backgroundSince = null;
-        if (since == null || s.locked) return;
-        final away = clock().difference(since);
-        if (away >= Duration(minutes: s.settings.lockAfterMinutes)) {
-          state = s.copyWith(locked: true);
-        }
       case AppLifecycleState.inactive:
+        if (DeviceControls.inPip.value) _backgroundSince ??= clock();
+      case AppLifecycleState.resumed:
+        _checkAway();
       case AppLifecycleState.detached:
         break;
     }
   }
 
-  /// Shows the phone's prompt; unlocks when it says yes.
+  /// Back from the background or picture-in-picture: locks when it was away
+  /// long enough. A negative (impossible) time locks at once.
+  void _checkAway() {
+    final s = state;
+    final since = _backgroundSince;
+    _backgroundSince = null;
+    if (since == null || s.locked) return;
+    final away = clock() - since;
+    if (away.isNegative || away >= Duration(minutes: s.settings.lockAfterMinutes)) {
+      state = s.copyWith(locked: true);
+    }
+  }
+
+  /// Pause between the two screen-lock checks in [_definitelyNoScreenLock].
+  @visibleForTesting
+  static Duration recheckDelay = const Duration(milliseconds: 400);
+
+  /// True only when the phone says twice, a moment apart, that it has no
+  /// screen lock. One "no" can be a passing error (local_auth answers false
+  /// on any failure, for one while the Activity is not in front), and that
+  /// must never switch the lock off.
+  Future<bool> _definitelyNoScreenLock(DeviceAuthenticator auth) async {
+    if (await auth.isAvailable()) return false;
+    // Not in front (started behind the phone's own lock screen): no verdict.
+    final life = WidgetsBinding.instance.lifecycleState;
+    if (life != null && life != AppLifecycleState.resumed) return false;
+    await Future<void>.delayed(recheckDelay);
+    return !await auth.isAvailable();
+  }
+
+  /// Shows the phone's prompt; unlocks when it says yes. When the phone no
+  /// longer has a screen lock (removed in the phone's settings) nobody could
+  /// ever unlock: the lock turns itself off and AppLockGate says so.
   Future<bool> unlock() async {
     if (!state.locked || state.authenticating) return !state.locked;
     state = state.copyWith(authenticating: true);
     final auth = ref.read(deviceAuthenticatorProvider);
     var ok = false;
+    var noScreenLock = false;
     try {
-      ok = await auth.authenticate('Unlock MediaHub');
+      if (!await _definitelyNoScreenLock(auth)) {
+        ok = await auth.authenticate('Unlock MediaHub');
+      } else {
+        noScreenLock = true;
+      }
     } finally {
       _backgroundSince = null;
-      state = state.copyWith(authenticating: false, locked: !ok);
+      state = state.copyWith(authenticating: false, locked: !ok && !noScreenLock);
+    }
+    if (noScreenLock) {
+      DiagnosticsService.instance.logEvent('app_lock_off_no_screen_lock', {});
+      _save(state.settings.copyWith(enabled: false), locked: false);
+      state = state.copyWith(turnedOffNoScreenLock: state.turnedOffNoScreenLock + 1);
+      return true;
     }
     return ok;
   }
@@ -226,6 +308,7 @@ class AppLockNotifier extends Notifier<AppLockState> with WidgetsBindingObserver
   }
 
   void _save(AppLockSettings settings, {bool? locked}) {
+    if (settings.enabled != state.settings.enabled) DeviceControls.setSecure(settings.enabled);
     state = state.copyWith(settings: settings, locked: locked);
     final store = SettingsStore.instance;
     store.setBool(AppLockSettings.enabledKey, settings.enabled);
@@ -235,6 +318,10 @@ class AppLockNotifier extends Notifier<AppLockState> with WidgetsBindingObserver
 }
 
 final appLockProvider = NotifierProvider<AppLockNotifier, AppLockState>(AppLockNotifier.new);
+
+/// Whether the lock hides the Downloads tab right now (the whole app, or the
+/// Downloads and Online tabs): nothing of it may open over the lock screen.
+bool lockHidesDownloads(AppLockState s) => s.coversWholeApp || s.coversTab(4);
 
 /// Wraps the whole app (MaterialApp's builder): the lock screen covers every
 /// route while [AppLockState.coversWholeApp]. Never in picture-in-picture:
@@ -246,6 +333,11 @@ class AppLockGate extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen(appLockProvider.select((s) => s.turnedOffNoScreenLock), (_, _) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+        content: Text('App lock is off: this phone has no screen lock any more. Set one, then turn App lock on again.'),
+      ));
+    });
     final covered = ref.watch(appLockProvider.select((s) => s.coversWholeApp));
     return ValueListenableBuilder<bool>(
       valueListenable: DeviceControls.inPip,
@@ -253,8 +345,10 @@ class AppLockGate extends ConsumerWidget {
         fit: StackFit.expand,
         children: [
           // Kept in the tree, so the Online tab's page, the players and
-          // every screen's state live on behind the lock.
-          child,
+          // every screen's state live on behind the lock. Hidden from
+          // TalkBack / accessibility services while covered: the titles under
+          // the lock screen must not be readable through it.
+          ExcludeSemantics(excluding: covered && !inPip, child: child),
           if (covered && !inPip) const Positioned.fill(child: LockScreen()),
         ],
       ),
@@ -275,7 +369,7 @@ class AppLockTabCover extends ConsumerWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        child,
+        ExcludeSemantics(excluding: covered, child: child),
         if (covered) const Positioned.fill(child: LockScreen()),
       ],
     );

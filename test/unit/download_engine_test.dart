@@ -589,6 +589,43 @@ void main() {
       engine.dispose();
     });
 
+    test('Orphan .thumb cleanup on startup keeps covers a row still uses', () async {
+      final engine = DownloadEngine(
+        db: db,
+        httpClient: SafeHttpClient(seam: const TestSafeHttpClientSeam()),
+        downloadDir: tempDir,
+      );
+      final orphan = File('${tempDir.path}/1700000000777.thumb')..writeAsStringSync('x');
+      final owned = File('${tempDir.path}/1700000000888.thumb')..writeAsStringSync('x');
+      final shown = File('${tempDir.path}/1700000000999.thumb')..writeAsStringSync('x');
+      final other = File('${tempDir.path}/cover.thumb')..writeAsStringSync('x');
+      await engine.enqueueDownload(
+        id: '1700000000888',
+        url: Uri.parse('https://example.com/song.mp3'),
+        displayName: 'Owned',
+        suggestedFileName: 'song.mp3',
+      );
+      // A library row (its download row already gone) still shows this cover.
+      await db.into(db.mediaItemsTable).insert(MediaItemsTableCompanion.insert(
+            id: 'dl_shown',
+            uri: '${tempDir.path}/shown.mp3',
+            mediaType: 'audio',
+            title: 'Shown',
+            durationMs: 1,
+            sizeBytes: 1,
+            dateAdded: DateTime(2026),
+            artworkPath: Value(shown.path),
+          ));
+
+      await engine.reconcileOnStartup();
+
+      expect(orphan.existsSync(), isFalse);
+      expect(owned.existsSync(), isTrue);
+      expect(shown.existsSync(), isTrue);
+      expect(other.existsSync(), isTrue, reason: 'only <id>.thumb names');
+      engine.dispose();
+    });
+
     test('3 retries with backoff for transient error then fail', () async {
       final certFile = File('test/certs/localhost.crt');
       final keyFile = File('test/certs/localhost.key');

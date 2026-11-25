@@ -6,6 +6,7 @@ import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../core/logging/diagnostics_service.dart';
+import '../../core/storage/app_private_dir.dart';
 import '../../domain/models/media_item.dart';
 import '../../domain/models/playback_state.dart';
 import '../../domain/models/video_progress.dart';
@@ -444,7 +445,8 @@ class AppDatabase extends _$AppDatabase {
   }
 
   static QueryExecutor _openConnection() {
-    return driftDatabase(name: 'media_hub_db');
+    // iPhone: Application Support, out of the Files app (appPrivateDataDir).
+    return driftDatabase(name: 'media_hub_db', native: const DriftNativeOptions(databaseDirectory: appPrivateDataDir));
   }
 }
 

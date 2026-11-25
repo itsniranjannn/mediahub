@@ -34,6 +34,7 @@ import '../../personal/extractor_backend.dart';
 import '../../personal/extractor_errors.dart';
 import '../../personal/extractor_hosts.dart';
 import '../../personal/personal_tools_notifier.dart';
+import '../app_lock/app_lock.dart' show appLockProvider, lockHidesDownloads;
 import 'download_link_inbox.dart';
 import 'download_providers.dart';
 import 'downloads_notifier.dart';
@@ -116,6 +117,7 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
       _inboxCheckScheduled = false;
       if (!mounted) return;
       if (!TickerMode.getValuesNotifier(context).value.enabled) return;
+      if (lockHidesDownloads(ref.read(appLockProvider))) return;
       final link = ref.read(downloadLinkInboxProvider.notifier).take();
       if (link != null) _acceptHandedLink(link);
     });
@@ -318,7 +320,10 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     // whenever a new one arrives, once this tab is on screen (an inactive
     // shell branch has tickers off, and turning them on rebuilds this).
     final linkWaiting = ref.watch(downloadLinkInboxProvider.select((link) => link != null));
-    if (linkWaiting && TickerMode.valuesOf(context).enabled) _scheduleInboxCheck();
+    // Never behind the App lock screen: the quality sheet would open over it.
+    // Unlocking rebuilds this and takes the link then.
+    final lockedOut = ref.watch(appLockProvider.select(lockHidesDownloads));
+    if (linkWaiting && !lockedOut && TickerMode.valuesOf(context).enabled) _scheduleInboxCheck();
     // A waiting handed-over link stops "waiting" once the user inspects it.
     ref.listen(inspectionProvider.select((s) => s.isInspecting), (_, inspecting) {
       final handed = _handedLink;

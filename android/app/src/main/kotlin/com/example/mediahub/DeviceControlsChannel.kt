@@ -54,6 +54,12 @@ class DeviceControlsChannel(
 
         /** +6 dB is twice the amplitude: 200 % of full volume. */
         private const val MAX_BOOST_MB = 600
+
+        /**
+         * Whether FLAG_SECURE stays on in picture-in-picture. Checked on the API 37 emulator
+         * (2026-11-25): see docs/DECISIONS.md #20.
+         */
+        private const val SECURE_IN_PIP = true
     }
 
     private val appContext = context.applicationContext
@@ -69,8 +75,32 @@ class DeviceControlsChannel(
     /** Null: no buttons. Otherwise whether the middle button shows pause (playing) or play. */
     private var pipActionsPlaying: Boolean? = null
 
+    // --- App lock: keep the app out of screenshots and the Recents thumbnail ---
+    /** Dart's AppLockNotifier asks for it while App lock is on ("setSecure"). */
+    private var secureWanted = false
+
+    /**
+     * FLAG_SECURE (and on API 33+ setRecentsScreenshotEnabled(false)) while [secureWanted].
+     * Never while the Activity is in picture-in-picture when [SECURE_IN_PIP] is false: see
+     * its note. Called on every change, on attach and when picture-in-picture changes.
+     */
+    fun applySecure(a: Activity? = activity) {
+        val act = a ?: return
+        val inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && act.isInPictureInPictureMode
+        val on = secureWanted && (SECURE_IN_PIP || !inPip)
+        act.runOnUiThread {
+            if (on) {
+                act.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            } else {
+                act.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
+            if (Build.VERSION.SDK_INT >= 33) act.setRecentsScreenshotEnabled(!secureWanted)
+        }
+    }
+
     fun attach(activity: Activity) {
         activityRef = WeakReference(activity)
+        applySecure(activity)
         // A re-created Activity must learn the current PiP setup again (Android 12+ auto-enter).
         applyPipParams()
     }
@@ -248,6 +278,7 @@ class DeviceControlsChannel(
     }
 
     fun notifyPipChanged(inPip: Boolean) {
+        applySecure()
         channel.invokeMethod("pipChanged", inPip)
     }
 
@@ -444,6 +475,11 @@ class DeviceControlsChannel(
                     result.success(true)
                 }
                 "enterPip" -> result.success(enterPip())
+                "setSecure" -> {
+                    secureWanted = call.argument<Boolean>("on") ?: false
+                    applySecure()
+                    result.success(true)
+                }
                 "uiCoverCheck" -> {
                     val a = activity
                     if (a == null) {

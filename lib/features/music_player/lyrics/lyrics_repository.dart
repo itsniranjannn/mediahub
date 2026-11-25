@@ -78,6 +78,9 @@ class LrclibClient {
   }
 }
 
+/// The online lyrics cache's file name for [item] (`<sha1 of its id>.lrc`).
+String lyricsCacheFileName(MediaItem item) => '${sha1.convert(utf8.encode(item.id))}.lrc';
+
 /// Finds a song's lyrics: a `.lrc` file next to it first, then the lyrics
 /// inside the file, then (only when the user turned it on) LRCLIB, whose
 /// answer is kept on the phone so a song is looked up once.
@@ -143,7 +146,7 @@ class LyricsRepository {
     return null;
   }
 
-  String _cacheKey(MediaItem item) => sha1.convert(utf8.encode(item.id)).toString();
+  String _cacheKey(MediaItem item) => lyricsCacheFileName(item).replaceAll('.lrc', '');
 
   Future<Lyrics?> _online(MediaItem item) async {
     File? cached;
@@ -171,9 +174,49 @@ class LyricsRepository {
       if (cached != null) {
         await cached.parent.create(recursive: true);
         await cached.writeAsString(text, flush: true);
+        await pruneCache();
       }
     } catch (_) {}
     return Lyrics.parse(text, source: LyricsSource.online);
+  }
+
+  /// Most online lyrics kept on the phone; the oldest go first.
+  static const int maxCachedLyrics = 500;
+
+  /// Keeps the newest [maxCachedLyrics] files of the online lyrics cache.
+  /// Never throws.
+  Future<int> pruneCache({int keep = maxCachedLyrics}) async {
+    var deleted = 0;
+    try {
+      final dir = await _cacheDir();
+      if (!await dir.exists()) return 0;
+      final files = <(File, DateTime)>[];
+      await for (final e in dir.list(followLinks: false)) {
+        if (e is File && e.path.endsWith('.lrc')) {
+          try {
+            files.add((e, await e.lastModified()));
+          } catch (_) {}
+        }
+      }
+      if (files.length <= keep) return 0;
+      files.sort((a, b) => b.$2.compareTo(a.$2));
+      for (final (f, _) in files.skip(keep)) {
+        try {
+          await f.delete();
+          deleted++;
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return deleted;
+  }
+
+  /// Deletes [item]'s cached online lyrics (the song was deleted). Never throws.
+  Future<void> forget(MediaItem item) async {
+    _notOnline.remove(item.id);
+    try {
+      final f = File(p.join((await _cacheDir()).path, '${_cacheKey(item)}.lrc'));
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
   }
 }
 

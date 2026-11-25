@@ -187,7 +187,7 @@ built.
   - **Risk to check on the first build**: with file sharing on, the Files app shows *everything* in
     Documents, also `settings.json`, the diagnostics log and the database (`media_hub_db.sqlite`).
     Deleting those in Files loses favourites and playlists. The fix is moving them to Library/Application
-    Support with a one-time migration (section 8, small); not done blind without a Mac.
+    Support with a one-time migration: done on 2026-11-25 (section 5c).
 - **App lock**: `local_auth` (Face ID / Touch ID, the passcode as fallback). `Info.plist` has
   `NSFaceIDUsageDescription`. The lock screen covers the app or only the Downloads and Online tabs;
   music and the lock-screen controls keep working.
@@ -201,6 +201,36 @@ built.
 To try on the iPhone: Files app → On My iPhone → MediaHub → downloads shows the songs; "Save to phone" on
 a video asks for Photos once and the video appears in Photos; App lock with Face ID and with the
 passcode; lock, leave the app for the set minutes, come back (locked), music keeps playing meanwhile.
+
+## 5c. Fixed 2026-11-25 (security audit), iPhone side (written, never compiled)
+
+- **Private files out of the Files app.** `UIFileSharingEnabled` / `LSSupportsOpeningDocumentsInPlace`
+  stay on, because they are how downloaded songs show in the Files app (Save to phone for audio). But
+  Documents used to also hold `settings.json`, the database (`media_hub_db.sqlite` with `-wal`/`-shm`)
+  and `diagnostics.log`. Anyone with the phone could open `settings.json` in Files, set
+  `"app_lock_enabled": false` and walk past App lock, or delete the database.
+  - They now live in **Library/Application Support**, which the Files app never shows
+    (`lib/core/storage/app_private_dir.dart`, `appPrivateDataDir()`); Android keeps its private
+    `app_flutter` folder, nothing moves there.
+  - **One-time migration** at start, before anything opens them (`migratePrivateFilesOutOfDocuments()`
+    in `main.dart`): each of those files is renamed from Documents into Application Support (copy + delete
+    if a rename fails). If a file is already in Application Support, that copy wins and the Documents
+    copy is deleted. A file that cannot move stays and is tried again next start.
+  - **App lock reads its switch from Application Support only** (`SettingsStore` loads from
+    `appPrivateDataDir()`); an edited `settings.json` left in Documents is ignored and removed.
+  - What stays in Documents: `downloads/` (the user-visible music, with the downloads' covers and the
+    yt-dlp work folder, which is unused on iPhone) and `MediaHub/` exports. Caches were already outside
+    Documents: the media-session covers in `Library/Caches/np_art`, online lyrics in
+    `Application Support/lyrics`, artwork in memory.
+  - To check on the first build: Files → On My iPhone → MediaHub shows `downloads` only; settings,
+    favourites and playlists survive the update from a build that had them in Documents.
+- **App switcher snapshot.** While App lock is on, Dart sends `setSecure` on `mediahub/privacy_screen`
+  (`PrivacyScreenChannel` in `AppDelegate.swift`). It covers the window with a plain view and a lock
+  glyph when the scene resigns active (`UIScene.willDeactivateNotification`, the notification behind
+  `sceneWillResignActive`) and removes it when the scene is active again, so the app switcher never
+  shows a locked screen's content. `SceneDelegate` stays Flutter's own.
+- **App lock timing** uses a monotonic `Stopwatch`, not the wall clock (changing the date cannot skip it),
+  and turns itself off with a message when the phone no longer has a passcode.
 
 ## 6. First build on a Mac (checklist)
 
@@ -266,8 +296,8 @@ passcode; lock, leave the app for the set minutes, come back (locked), music kee
 
 ## 8. Still needs Swift or a Mac (with sizes)
 
-- **Small**: the share sheet; keeping downloads and the database out of iCloud backup (and moving them
-  out of Documents); a little extra background time for the screen-off YouTube hand-off and running
+- **Small**: the share sheet; keeping downloads and the database out of iCloud backup (the database,
+  settings and log left Documents on 2026-11-25, section 5c); a little extra background time for the screen-off YouTube hand-off and running
   downloads; video brightness; the volume-key display; covers and video thumbnails from the iPhone.
 - **Medium**: importing your own files (Files app, AirDrop, "Open in"); the Like heart on the lock
   screen; setting the system volume from the swipe; YouTube above 720p.

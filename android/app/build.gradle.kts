@@ -9,12 +9,14 @@ plugins {
 // Release signing: android/key.properties (git-ignored) points at the private family keystore.
 // A release build WITHOUT it is refused: a debug-signed "release" could not update the phones
 // (Android would ask to uninstall first, which deletes every download). For a quick local test
-// only, pass -Pmediahub.allowDebugSignedRelease=true to sign with the debug key anyway.
+// only, pass -PallowDebugSigning (or -Pmediahub.allowDebugSignedRelease=true) to sign with the debug key anyway.
 val keystoreProperties = Properties().apply {
     val file = rootProject.file("key.properties")
     if (file.exists()) file.inputStream().use { load(it) }
 }
-val allowDebugSignedRelease = (findProperty("mediahub.allowDebugSignedRelease") as String?) == "true"
+// -PallowDebugSigning (any value but "false") is the short spelling of the same switch.
+val allowDebugSignedRelease = (findProperty("mediahub.allowDebugSignedRelease") as String?) == "true" ||
+    (findProperty("allowDebugSigning") as String?).let { it != null && it != "false" }
 
 // Which CPU types the APK carries native code for. The family phones are all arm64, so release
 // builds ship arm64-v8a only (youtubedl-android's Python and ffmpeg payloads are ~4x smaller that
@@ -83,16 +85,28 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (keystoreProperties.isNotEmpty()) {
-                signingConfigs.getByName("family")
-            } else {
-                signingConfigs.getByName("debug")
+            // The debug key only when asked for explicitly (docs/DECISIONS.md #19); without
+            // key.properties and without the switch the task graph check above stops the build,
+            // and no signing config is set, so nothing can quietly fall back to the debug key.
+            signingConfig = when {
+                keystoreProperties.isNotEmpty() -> signingConfigs.getByName("family")
+                allowDebugSignedRelease -> signingConfigs.getByName("debug")
+                else -> null
             }
             // Smaller, harder to read, not debuggable.
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+    }
+
+    // Plugin assets MediaHub never loads: flutter_inappwebview's offline T-Rex page and its web
+    // (browser) support script. aapt's own defaults (dot files, CVS, thumbs.db ...) stay listed.
+    androidResources {
+        ignoreAssetsPatterns += listOf(
+            "!.svn", "!.git", "!.ds_store", "!*.scc", ".*", "<dir>_*", "!CVS", "!thumbs.db",
+            "!picasa.ini", "!*~", "!t_rex_runner", "!web_support.js",
+        )
     }
 
     packaging {

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app/app.dart';
+import 'core/storage/app_private_dir.dart';
 import 'core/storage/settings_store.dart';
 import 'core/logging/diagnostics_service.dart';
 import 'core/platform/other_audio_watcher.dart';
@@ -47,6 +48,8 @@ Future<void> _bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Draw behind the system bars (DESIGN.md 8.2; Android 15 enforces it anyway).
   unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+  // iPhone: settings, database and log leave the Files-visible Documents (once).
+  await migratePrivateFilesOutOfDocuments();
   await DiagnosticsService.instance.init();
   await SettingsStore.instance.load();
 
