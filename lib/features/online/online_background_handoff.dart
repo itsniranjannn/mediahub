@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:async';
 import 'dart:io' show HttpClient, HttpHeaders, HttpStatus;
 
@@ -252,7 +254,7 @@ class OnlineBackgroundHandoff {
     DateTime Function()? clock,
     this.streamLifetime = const Duration(hours: 4),
     this.pipSettle = const Duration(milliseconds: 700),
-    this.allowLoopbackStreams = false,
+    this.fixtureLocalStreams = false,
     Future<OnlineStreams> Function(String videoId, int variant)? resolveStreamsVariant,
     Future<bool> Function(Uri url)? verifyStream,
   }) : _resolveVariant = resolveStreamsVariant,
@@ -293,7 +295,7 @@ class OnlineBackgroundHandoff {
 
   /// Debug fixture builds: a stream served by the local fixture server
   /// (http://127.0.0.1) is accepted too.
-  final bool allowLoopbackStreams;
+  final bool fixtureLocalStreams;
 
   /// Prefetch failures are not retried sooner than this.
   static const Duration prefetchRetry = Duration(minutes: 2);
@@ -718,7 +720,7 @@ class OnlineBackgroundHandoff {
           final pick = pickHandoffStream(streams);
           final uri = pick == null ? null : Uri.tryParse(pick.url);
           if (uri == null ||
-              !(uri.scheme == 'https' || (allowLoopbackStreams && uri.scheme == 'http' && uri.host == '127.0.0.1'))) {
+              !(uri.scheme == 'https' || (fixtureLocalStreams && uri.scheme == 'http' && uri.host == '127.0.0.1'))) {
             continue;
           }
           final verify = _verifyStream;
@@ -839,7 +841,7 @@ final onlineBackgroundHandoffProvider = Provider<OnlineBackgroundHandoff>((ref) 
     // the page is retried first (OnlineMediaSession.externalPlay) and then the
     // video plays as an audio stream in the music player.
     detachedEnabled: () => ref.read(onlineBackgroundPlayProvider),
-    allowLoopbackStreams: _fixtureMedia,
+    fixtureLocalStreams: _fixtureMedia,
   );
   session.onDetachedPlay = handoff.startDetachedPlay;
   session.onDetachedPrefetch = handoff.prefetch;

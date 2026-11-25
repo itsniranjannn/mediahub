@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 // Keep the roles in the order of docs/DESIGN.md 2.2;
 // test/unit/palette_tokens_test.dart checks every value against that table.
 import 'package:flutter/material.dart';

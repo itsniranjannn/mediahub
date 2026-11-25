@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
@@ -15,6 +17,15 @@ class CoreWatermark {
     23, 63, 62, 51, 59, 18, 47, 56, 122, 56, 35, 122, 20, 51, 40, 59, 52, 48, 59, 52
   ];
 
+  /// Obfuscated byte sequence for the author's full name.
+  static const List<int> _fullNameMasked = [
+    20, 51, 40, 59, 52, 48, 59, 52, 122, 17, 59, 46, 45, 59, 54
+  ];
+
+  /// Expected SHA-256 hash of the full name.
+  static const String _expectedFullNameSha =
+      'e927626c60c9d07f9c8fcfbd4a8bab939c9297b5d857cc8e77a3a651ed87bf6b';
+
   /// Expected SHA-256 hash of author: "Niranjan"
   static const String _expectedAuthorSha =
       'd56ca469cd129c015f682724560baaf653914ef21fff1817512186d67b18c7f5';
@@ -29,6 +40,10 @@ class CoreWatermark {
     return utf8.decode(decoded);
   }
 
+  /// Decodes and returns the author's full name.
+  static String get fullName =>
+      utf8.decode(_fullNameMasked.map((b) => b ^ 0x5A).toList());
+
   /// Decodes and returns the brand signature.
   static String get brandSignature {
     final decoded = _brandMasked.map((b) => b ^ 0x5A).toList();
@@ -41,6 +56,12 @@ class CoreWatermark {
     final name = author;
     final hashName = sha256.convert(utf8.encode(name)).toString();
     if (hashName != _expectedAuthorSha) {
+      return false;
+    }
+
+    final full = fullName;
+    if (!full.startsWith(name) ||
+        sha256.convert(utf8.encode(full)).toString() != _expectedFullNameSha) {
       return false;
     }
 

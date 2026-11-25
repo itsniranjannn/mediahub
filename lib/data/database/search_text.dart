@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 /// Text folding for the library search (Music tab, playlists, albums).
 ///
 /// Both what is stored ([librarySearchKey], the `search_key` column) and what

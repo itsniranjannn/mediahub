@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 /// What kind of YouTube page a link opens.
 enum YoutubeLinkKind {
   /// `youtube.com/watch?v=<id>` (also `m.` and `music.` hosts).

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,7 +23,9 @@ class MediaHubApp extends ConsumerStatefulWidget {
   static void ensureStartup() {
     if (_started) return;
     _started = true;
-    assert(CoreWatermark.verifyIntegrity(), 'Authorship integrity check failed');
+    if (!CoreWatermark.verifyIntegrity()) {
+      throw StateError('Authorship integrity check failed');
+    }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge).ignore();
     LicenseRegistry.addLicense(_fontLicenseEntries);
   }

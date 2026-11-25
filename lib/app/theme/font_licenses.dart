@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 // The SIL Open Font License texts of the bundled fonts, verbatim from
 // assets/fonts/licenses/ (test/unit/font_licenses_test.dart keeps them equal).
 // Embedded as code so the licences page needs no extra asset bundle entry.

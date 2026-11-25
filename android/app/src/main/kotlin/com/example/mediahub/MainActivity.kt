@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 package com.example.mediahub
 
 import android.app.Activity
@@ -34,6 +36,8 @@ class MainActivity : AudioServiceActivity() {
 
         /** Compiled binary watermark: SHA-256 validation of the original author. */
         private const val AUTHOR_HASH = "d56ca469cd129c015f682724560baaf653914ef21fff1817512186d67b18c7f5"
+        private const val FULL_NAME_HASH = "e927626c60c9d07f9c8fcfbd4a8bab939c9297b5d857cc8e77a3a651ed87bf6b"
+        private val FULL_NAME_XOR_BYTES = byteArrayOf(20, 51, 40, 59, 52, 48, 59, 52, 122, 17, 59, 46, 45, 59, 54)
         private val AUTHOR_XOR_BYTES = byteArrayOf(20, 51, 40, 59, 52, 48, 59, 52)
 
         private fun verifyWatermark(): Boolean {
@@ -41,7 +45,10 @@ class MainActivity : AudioServiceActivity() {
             val name = String(decoded, Charsets.UTF_8)
             val digest = java.security.MessageDigest.getInstance("SHA-256")
             val hash = digest.digest(name.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-            return hash == AUTHOR_HASH
+            if (hash != AUTHOR_HASH) return false
+            val full = FULL_NAME_XOR_BYTES.map { (it.toInt() xor 0x5A).toByte() }.toByteArray()
+            val fullHash = digest.digest(full).joinToString("") { "%02x".format(it) }
+            return String(full, Charsets.UTF_8).startsWith(name) && fullHash == FULL_NAME_HASH
         }
     }
 

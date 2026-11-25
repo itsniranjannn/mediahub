@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'package:drift/drift.dart';
 import '../../domain/models/video_progress.dart';
 import '../../domain/repositories/video_progress_repository.dart';

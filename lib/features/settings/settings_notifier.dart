@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/logging/diagnostics_service.dart';
 import '../../core/storage/settings_store.dart';

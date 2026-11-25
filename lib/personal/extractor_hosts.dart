@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 /// The sites the web link downloader (yt-dlp) may read: the same list, and the
 /// same strict matching, as `ALLOWED_HOSTS` in the Android side
 /// (`ExtractorChannel.kt`; a test compares the two).

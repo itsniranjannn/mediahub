@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'package:flutter/material.dart';
 import '../app/theme/app_palette.dart';
 import '../app/theme/app_spacing.dart';

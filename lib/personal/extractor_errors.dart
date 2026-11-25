@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 /// What the web link downloader's error codes mean for the app, and the plain
 /// words shown for each.
 ///

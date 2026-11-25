@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Niranjan Katwal. All rights reserved.
+// MediaHub is proprietary software. See LICENSE in the project root.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -742,7 +744,7 @@ class _AboutCard extends StatelessWidget {
         _InfoRow(
           icon: Icons.code_rounded,
           title: 'Crafted with precision by',
-          body: CoreWatermark.author,
+          body: CoreWatermark.fullName,
         ),
         if (kDebugMode) ...[
           const _CardDivider.betweenRows(),
