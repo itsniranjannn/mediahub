@@ -63,3 +63,6 @@ local.properties
 test_media/
 *.zip
 
+
+*.apk
+MediaHub.apk
