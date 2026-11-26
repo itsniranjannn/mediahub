@@ -196,11 +196,17 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
       for (final p in progressList) p.mediaId: p,
     };
 
-    // Find items for "Continue watching"
-    final continueWatchingItems = state.items.where((item) {
-      final prog = progressMap[item.id];
-      return prog != null && prog.positionMs > 0;
-    }).toList();
+    final itemMap = {for (final item in state.items) item.id: item};
+    // Sort in-progress items by most recently watched (updatedAt descending)
+    final continueWatchingItems = <MediaItem>[];
+    for (final prog in progressList) {
+      if (prog.positionMs > 0) {
+        final item = itemMap[prog.mediaId];
+        if (item != null) {
+          continueWatchingItems.add(item);
+        }
+      }
+    }
     final showContinueWatching =
         continueWatchingItems.isNotEmpty && _searchController.text.isEmpty;
 

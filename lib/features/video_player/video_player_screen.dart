@@ -24,13 +24,11 @@ import 'video_queue.dart';
 /// The stage behind the picture: pure black in both themes (DESIGN.md 7.9).
 const Color _kStage = Color(0xFF000000);
 
-/// A light dimming layer over the whole picture while the controls show. The
-/// controls themselves sit on `overlay` scrims (top and bottom) or discs
-/// (the skip buttons), so they read on any frame, even a white one.
-const Color _kControlsVeil = Color(0x33000000);
+/// A light dimming layer over the whole picture while the controls show.
+const Color _kControlsVeil = Color(0x14000000);
 
 /// How far a control scrim fades out past its controls.
-const double _kScrimFade = 40;
+const double _kScrimFade = 24;
 
 /// The phone's volume counts as "at full" from here (the boost zone starts).
 const double _kFullVolume = 0.999;
@@ -1373,15 +1371,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
       );
     }
 
-    // White controls on `overlay` (DESIGN.md 7.9), whatever the frame: a
-    // scrim behind the top row and title and one behind the scrubber and
-    // times, each solid behind its controls and fading out past them; only
-    // a light veil over the middle of the picture. Every layer ignores
-    // touches, so taps and swipes on empty areas still reach the gesture
-    // detector underneath (tap hides the controls, swipes seek).
-    final overlay = palette.overlay;
+    // Subtle translucent gradient scrims so controls remain legible while the
+    // video picture remains crisp, clear, and visible without heavy black blocks.
+    final overlayColor = Colors.black.withValues(alpha: 0.45);
     Widget scrim({required bool top, required double solid}) {
-      final height = solid + _kScrimFade;
+      final height = solid * 0.8 + _kScrimFade;
       return Positioned(
         top: top ? 0 : null,
         bottom: top ? null : 0,
@@ -1394,8 +1388,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> with Widg
               gradient: LinearGradient(
                 begin: top ? Alignment.topCenter : Alignment.bottomCenter,
                 end: top ? Alignment.bottomCenter : Alignment.topCenter,
-                colors: [overlay, overlay, overlay.withValues(alpha: 0)],
-                stops: [0, solid / height, 1],
+                colors: [overlayColor, overlayColor.withValues(alpha: 0.15), Colors.transparent],
+                stops: const [0.0, 0.65, 1.0],
               ),
             ),
           ),
