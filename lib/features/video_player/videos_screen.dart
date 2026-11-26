@@ -211,35 +211,24 @@ class _VideosScreenState extends ConsumerState<VideosScreen> {
         ),
       SliverToBoxAdapter(child: _searchField(context, notifier)),
 
-      // Continue watching: the newest as a featured card, the rest in a rail.
+      // Continue watching: a sleek, compact horizontal rail without the giant 16:9 featured block.
       if (showContinueWatching) ...[
-        SliverToBoxAdapter(
-          child: Builder(builder: (context) {
-            final item = continueWatchingItems.first;
-            final prog = progressMap[item.id];
-            final timed = (prog != null && prog.durationMs > 0) ? prog : null;
-            return _FeaturedResumeCard(
-              item: item,
-              ratio: timed == null ? 0.0 : (timed.positionMs / timed.durationMs).clamp(0.0, 1.0),
-              remainingMs: timed == null ? null : timed.durationMs - timed.positionMs,
-              onTap: () => _openPlayer(context, item, list: continueWatchingItems),
-              onLongPress: () => _openMenu(context, item),
-            );
-          }),
+        const SliverToBoxAdapter(
+          child: SectionHeader(
+            title: 'Continue watching',
+            kicker: 'Pick up where you left off',
+            padding: EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, AppSpacing.xs4),
+          ),
         ),
-        if (continueWatchingItems.length > 1) ...[
-          const SliverToBoxAdapter(
-            child: SectionHeader(title: 'Continue watching', kicker: 'Pick up where you left off'),
+        SliverToBoxAdapter(
+          child: _ContinueWatchingRail(
+            items: continueWatchingItems,
+            progressMap: progressMap,
+            onOpen: (item) => _openPlayer(context, item, list: continueWatchingItems),
+            onMenu: _openMenu,
           ),
-          SliverToBoxAdapter(
-            child: _ContinueWatchingRail(
-              items: continueWatchingItems.sublist(1),
-              progressMap: progressMap,
-              onOpen: (item) => _openPlayer(context, item, list: continueWatchingItems),
-              onMenu: _openMenu,
-            ),
-          ),
-        ],
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.sm8)),
       ],
 
       if (state.items.isEmpty)
@@ -833,25 +822,23 @@ class _ResumeCard extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Featured resume card, filter chips and the video grid (Sindur v2)
+// Filter chips and the video grid (Sindur v2)
 // ---------------------------------------------------------------------------
 
 /// Which videos the grid shows.
 enum _VideoFilter { all, downloaded, onPhone }
 
-/// The amber resume line on an ink track, shared by the featured card and
-/// the grid cards.
+/// The amber resume line on an ink track for video grid and rail cards.
 class _ResumeLine extends StatelessWidget {
   final double ratio;
-  final double height;
-  const _ResumeLine({required this.ratio, this.height = 3});
+  const _ResumeLine({required this.ratio});
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     return LinearProgressIndicator(
       value: ratio,
-      minHeight: height,
+      minHeight: 3,
       borderRadius: BorderRadius.zero,
       backgroundColor: palette.overlay,
       valueColor: AlwaysStoppedAnimation<Color>(palette.navIndicator),
@@ -859,120 +846,6 @@ class _ResumeLine extends StatelessWidget {
   }
 }
 
-/// The most recent part-watched video as a large card: a full-width 16:9
-/// still with the amber resume line, then a kicker, the title and the time
-/// left beside a play disc, on a plum / indigo tinted surface.
-class _FeaturedResumeCard extends StatelessWidget {
-  final MediaItem item;
-  final double ratio;
-  final int? remainingMs;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
-
-  const _FeaturedResumeCard({
-    required this.item,
-    required this.ratio,
-    required this.remainingMs,
-    required this.onTap,
-    required this.onLongPress,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final type = context.typography;
-    final title = videoDisplayTitle(item.title);
-    final remaining = _ResumeCard._remainingLabel(remainingMs);
-    final radius = BorderRadius.circular(AppSpacing.cardRadius);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.lg16, AppSpacing.sm8, AppSpacing.lg16, AppSpacing.sm8),
-      child: Semantics(
-        button: true,
-        label: 'Continue watching $title, $remaining',
-        onTap: onTap,
-        onLongPress: onLongPress,
-        excludeSemantics: true,
-        child: Material(
-          color: palette.surfaceElevated,
-          borderRadius: radius,
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: onTap,
-            onLongPress: onLongPress,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: radius,
-                border: Border.all(color: palette.secondaryContainer),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        LayoutBuilder(
-                          builder: (context, c) => ArtworkThumbnail(
-                            uri: item.uri,
-                            artworkPath: item.artworkPath,
-                            width: c.maxWidth,
-                            height: c.maxHeight,
-                            borderRadius: 0,
-                            placeholderIcon: Icons.movie_outlined,
-                          ),
-                        ),
-                        Positioned(left: 0, right: 0, bottom: 0, child: _ResumeLine(ratio: ratio, height: 4)),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.all(AppSpacing.lg16),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'CONTINUE WATCHING',
-                                style: type.overline.copyWith(color: palette.primary),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: AppSpacing.xs4),
-                              Text(
-                                breakableTitle(title),
-                                style: type.cardTitle,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                remaining,
-                                style: type.metadata.copyWith(color: palette.textSecondary),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.md12),
-                        // Decorative: the whole card is the button.
-                        ExcludeSemantics(child: VoltDisc(icon: Icons.play_arrow_rounded, onPressed: onTap)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 /// All / Downloaded / On this phone.
 class _FilterChips extends StatelessWidget {
