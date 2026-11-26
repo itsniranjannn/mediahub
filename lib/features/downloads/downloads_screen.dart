@@ -28,7 +28,7 @@ import '../../domain/models/media_item.dart';
 import '../../domain/repositories/platform_resolver.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../shared/widgets/choice_dialogs.dart';
-import '../../shared/widgets/planet_backdrop.dart';
+import '../../shared/widgets/cosmos_backdrop.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../library/media_context_menu.dart' show isPathInside;
 import '../music_player/playback_notifier.dart';
@@ -343,7 +343,7 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     // (else the dock's light-on-ink icons vanish on the light theme).
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: AppTheme.barsFor(context.palette),
-      child: PlanetBackdrop(
+      child: CosmosBackdrop(
         child: Scaffold(
           backgroundColor: Colors.transparent,
           body: SafeArea(
@@ -1326,37 +1326,35 @@ class _Header extends StatelessWidget {
     ];
 
     return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.md12, bottom: AppSpacing.lg16),
+      padding: const EdgeInsets.only(top: AppSpacing.xs4, bottom: AppSpacing.sm8),
       child: EntranceFade(
         child: HeroBand(
-          glow: true,
+          glow: false,
           child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SparkMark(height: 4),
-          const SizedBox(height: AppSpacing.md12),
-          // One line, scaled down rather than clipped at large text sizes.
-          Semantics(
-            header: true,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: AlignmentDirectional.centerStart,
-              child: Text('Downloads', style: type.display, maxLines: 1),
-            ),
-          ),
-          if (shown.isNotEmpty) ...[
-            const SizedBox(height: AppSpacing.xs4),
-            Text(
-              shown.join(' · '),
-              semanticsLabel: spoken.join(', '),
-              style: type.overline.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
-            ),
-          ],
-          if (child != null) ...[
-            const SizedBox(height: AppSpacing.md12),
-            child!,
-          ],
-        ],
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // One line, scaled down rather than clipped at large text sizes.
+              Semantics(
+                header: true,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text('Downloads', style: type.screenTitle, maxLines: 1),
+                ),
+              ),
+              if (shown.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  shown.join(' · '),
+                  semanticsLabel: spoken.join(', '),
+                  style: type.overline.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+                ),
+              ],
+              if (child != null) ...[
+                const SizedBox(height: AppSpacing.sm8),
+                child!,
+              ],
+            ],
           ),
         ),
       ),
@@ -1552,15 +1550,16 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
               errorMaxLines: 2,
               helperText: _inlineUrlError == null ? linkHelperText : null,
               helperMaxLines: 2,
-              contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16, vertical: AppSpacing.md12),
+              contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md12, vertical: AppSpacing.sm8),
+              isDense: true,
               prefixIcon: const Padding(
                 padding: EdgeInsetsDirectional.only(start: AppSpacing.xs4),
-                child: Icon(Icons.link_rounded),
+                child: Icon(Icons.link_rounded, size: 20),
               ),
               suffixIcon: Padding(
                 padding: const EdgeInsetsDirectional.only(end: AppSpacing.xs4),
                 child: IconButton(
-                  icon: const Icon(Icons.content_paste_rounded),
+                  icon: const Icon(Icons.content_paste_rounded, size: 20),
                   tooltip: 'Paste from clipboard',
                   onPressed: _pasteFromClipboard,
                 ),
@@ -1574,7 +1573,7 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
             ),
           ),
           if (handed != null) ...[
-            const SizedBox(height: AppSpacing.md12),
+            const SizedBox(height: AppSpacing.sm8),
             Semantics(
               liveRegion: true,
               child: _Callout(
@@ -1586,7 +1585,7 @@ class _UrlCardState extends ConsumerState<_UrlCard> {
               ),
             ),
           ],
-          const SizedBox(height: AppSpacing.md12),
+          const SizedBox(height: AppSpacing.sm8),
           if (isInspecting)
             ConstrainedBox(
               constraints: const BoxConstraints(minHeight: VoltButton.height),
@@ -2136,8 +2135,8 @@ class _DownloadCard extends ConsumerWidget {
     final stateColor = _toneColor(palette, stateTone);
 
     return SurfaceCard(
-      color: context.palette.surface.withValues(alpha: 0.84),
-      padding: const EdgeInsets.all(AppSpacing.md12),
+      color: context.palette.surface.withValues(alpha: 0.82),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md12, vertical: AppSpacing.sm8),
       onTap: onTap,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2155,7 +2154,7 @@ class _DownloadCard extends ConsumerWidget {
                       breakableTitle(title),
                       semanticsLabel: title,
                       style: type.bodyStrong,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
@@ -2186,19 +2185,17 @@ class _DownloadCard extends ConsumerWidget {
             ],
           ),
           if (showProgress) ...[
-            const SizedBox(height: AppSpacing.md12),
-            // Sindur v2: a bold 8 dp bar in the slider colour (amber on ink,
-            // wine on sand); a paused or waiting bar is muted, and its word
-            // says why.
+            const SizedBox(height: AppSpacing.sm8),
+            // Slim progress bar for sleek compact look
             LinearProgressIndicator(
               value: knownTotal ? progressVal : (isActive ? null : 0),
-              minHeight: 8,
-              borderRadius: BorderRadius.circular(4),
+              minHeight: 4,
+              borderRadius: BorderRadius.circular(2),
               color: isActive ? palette.sliderActive : palette.textMuted,
               backgroundColor: palette.surfacePressed,
             ),
           ],
-          const SizedBox(height: AppSpacing.sm8),
+          const SizedBox(height: 6),
           LayoutBuilder(
             builder: (context, constraints) {
               final stateLine = <Widget>[
