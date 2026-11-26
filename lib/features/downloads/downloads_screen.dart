@@ -28,6 +28,7 @@ import '../../domain/models/media_item.dart';
 import '../../domain/repositories/platform_resolver.dart';
 import '../../data/repositories/library_repository_impl.dart';
 import '../../shared/widgets/choice_dialogs.dart';
+import '../../shared/widgets/planet_backdrop.dart';
 import '../../shared/widgets/ui_kit.dart';
 import '../library/media_context_menu.dart' show isPathInside;
 import '../music_player/playback_notifier.dart';
@@ -342,81 +343,84 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     // (else the dock's light-on-ink icons vanish on the light theme).
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: AppTheme.barsFor(context.palette),
+      child: PlanetBackdrop(
         child: Scaffold(
-        body: SafeArea(
-          bottom: false,
-          child: CustomScrollView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            slivers: [
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
-                sliver: SliverList.list(
-                  children: [
-                    _Header(
-                      active: activeCount,
-                      saved: savedCount,
-                      freeBytes: storageAsync.asData?.value.freeBytes,
-                      // The paste-link field is the hero's main element.
-                      child: _UrlCard(
-                        controller: _urlController,
-                        handedLink: _handedLink,
-                        busy: _linkFlowBusy,
-                        onChooseQuality: (uri) => _openQualityChoice(uri),
+          backgroundColor: Colors.transparent,
+          body: SafeArea(
+            bottom: false,
+            child: CustomScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg16),
+                  sliver: SliverList.list(
+                    children: [
+                      _Header(
+                        active: activeCount,
+                        saved: savedCount,
+                        freeBytes: storageAsync.asData?.value.freeBytes,
+                        // The paste-link field is the hero's main element.
+                        child: _UrlCard(
+                          controller: _urlController,
+                          handedLink: _handedLink,
+                          busy: _linkFlowBusy,
+                          onChooseQuality: (uri) => _openQualityChoice(uri),
+                        ),
                       ),
-                    ),
-                    if (inspection.errorMessage != null && !inspection.isInspecting) ...[
+                      if (inspection.errorMessage != null && !inspection.isInspecting) ...[
+                        const SizedBox(height: AppSpacing.md12),
+                        _Callout(
+                          icon: Icons.error_outline_rounded,
+                          tone: _Tone.error,
+                          text: inspection.errorMessage!,
+                        ),
+                      ],
+                      if (inspection.result != null) ...[
+                        const SizedBox(height: AppSpacing.lg16),
+                        _buildInspectionResultCard(inspection.result!),
+                      ],
+                      if (_notificationPermissionDenied) ...[
+                        const SizedBox(height: AppSpacing.md12),
+                        const _Callout(
+                          icon: Icons.notifications_off_rounded,
+                          tone: _Tone.warning,
+                          text:
+                              'Notifications are disabled. Downloads still run in the background, but progress will not show in the status bar.',
+                        ),
+                      ],
+                      const SectionHeader(
+                        title: 'Your downloads',
+                        padding: EdgeInsets.fromLTRB(0, AppSpacing.xxl24, 0, AppSpacing.xs4),
+                      ),
+                      storageAsync.when(
+                        data: (info) => _StorageStats(info: info),
+                        loading: () => const SizedBox.shrink(),
+                        error: (_, _) => const SizedBox.shrink(),
+                      ),
                       const SizedBox(height: AppSpacing.md12),
-                      _Callout(
+                    ],
+                  ),
+                ),
+                ...downloadsAsync.when(
+                  data: _downloadSlivers,
+                  loading: () => const [
+                    SliverToBoxAdapter(child: _SkeletonRows()),
+                    _BackgroundNoticeSliver.end(),
+                  ],
+                  error: (err, _) => [
+                    SliverToBoxAdapter(
+                      child: EmptyHint(
                         icon: Icons.error_outline_rounded,
-                        tone: _Tone.error,
-                        text: inspection.errorMessage!,
+                        title: 'Could not load downloads',
+                        message: 'Failed to load downloads: $err',
                       ),
-                    ],
-                    if (inspection.result != null) ...[
-                      const SizedBox(height: AppSpacing.lg16),
-                      _buildInspectionResultCard(inspection.result!),
-                    ],
-                    if (_notificationPermissionDenied) ...[
-                      const SizedBox(height: AppSpacing.md12),
-                      const _Callout(
-                        icon: Icons.notifications_off_rounded,
-                        tone: _Tone.warning,
-                        text:
-                            'Notifications are disabled. Downloads still run in the background, but progress will not show in the status bar.',
-                      ),
-                    ],
-                    const SectionHeader(
-                      title: 'Your downloads',
-                      padding: EdgeInsets.fromLTRB(0, AppSpacing.xxl24, 0, AppSpacing.xs4),
                     ),
-                    storageAsync.when(
-                      data: (info) => _StorageStats(info: info),
-                      loading: () => const SizedBox.shrink(),
-                      error: (_, _) => const SizedBox.shrink(),
-                    ),
-                    const SizedBox(height: AppSpacing.md12),
+                    const _BackgroundNoticeSliver.end(),
                   ],
                 ),
-              ),
-              ...downloadsAsync.when(
-                data: _downloadSlivers,
-                loading: () => const [
-                  SliverToBoxAdapter(child: _SkeletonRows()),
-                  _BackgroundNoticeSliver.end(),
-                ],
-                error: (err, _) => [
-                  SliverToBoxAdapter(
-                    child: EmptyHint(
-                      icon: Icons.error_outline_rounded,
-                      title: 'Could not load downloads',
-                      message: 'Failed to load downloads: $err',
-                    ),
-                  ),
-                  const _BackgroundNoticeSliver.end(),
-                ],
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl32)),
-            ],
+                const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.xxxl32)),
+              ],
+            ),
           ),
         ),
       ),
@@ -476,6 +480,7 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     if (knownPlatform != null) {
       final canDownload = downloaderEnabled || YoutubeLink.parse(info.uri) != null;
       return SurfaceCard(
+        color: context.palette.surface.withValues(alpha: 0.84),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -545,6 +550,7 @@ class _DownloadsScreenState extends ConsumerState<_DownloadsView> {
     }
 
     return SurfaceCard(
+      color: context.palette.surface.withValues(alpha: 0.84),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1727,9 +1733,9 @@ class _Callout extends StatelessWidget {
           ? const EdgeInsets.symmetric(horizontal: AppSpacing.md12, vertical: AppSpacing.sm8)
           : const EdgeInsets.all(AppSpacing.md12),
       decoration: BoxDecoration(
-        color: tinted ? color.withValues(alpha: 0.08) : palette.surface,
+        color: tinted ? color.withValues(alpha: 0.12) : palette.surface.withValues(alpha: 0.84),
         borderRadius: BorderRadius.circular(AppSpacing.radiusThumb),
-        border: Border.all(color: tinted ? color.withValues(alpha: 0.35) : palette.divider),
+        border: Border.all(color: tinted ? color.withValues(alpha: 0.4) : palette.divider.withValues(alpha: 0.5)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2130,6 +2136,7 @@ class _DownloadCard extends ConsumerWidget {
     final stateColor = _toneColor(palette, stateTone);
 
     return SurfaceCard(
+      color: context.palette.surface.withValues(alpha: 0.84),
       padding: const EdgeInsets.all(AppSpacing.md12),
       onTap: onTap,
       child: Column(
