@@ -14,7 +14,11 @@ workflows:
       - name: CocoaPods installation
         script: |
           cd ios
-          pod install --repo-update
+          if [ -f Podfile ]; then
+            pod install --repo-update
+          else
+            echo "No Podfile found; flutter build ios will handle dependencies."
+          fi
       - name: Flutter build iOS (no code sign for testing)
         script: |
           flutter build ios --release --no-codesign
