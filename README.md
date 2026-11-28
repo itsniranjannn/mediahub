@@ -14,7 +14,7 @@
 ![Flutter](https://img.shields.io/badge/Flutter-3.47-02569B?style=for-the-badge&logo=flutter&logoColor=white)
 ![Dart](https://img.shields.io/badge/Dart-3.13-0175C2?style=for-the-badge&logo=dart&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-ready-3DDC84?style=for-the-badge&logo=android&logoColor=white)
-![iOS](https://img.shields.io/badge/iOS-in%20progress-000000?style=for-the-badge&logo=apple&logoColor=white)
+![iOS](https://img.shields.io/badge/iOS-ready-000000?style=for-the-badge&logo=apple&logoColor=white)
 <br/>
 ![Riverpod](https://img.shields.io/badge/State-Riverpod%203-81021F?style=flat-square)
 ![Drift](https://img.shields.io/badge/DB-Drift-381932?style=flat-square)
